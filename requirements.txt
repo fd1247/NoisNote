@@ -1,0 +1,8 @@
+PySide6
+SoundCard
+httpx[socks]
+scipy
+numpy
+pydub
+soundfile
+onnxruntime-directml

@@ -1,0 +1,43 @@
+{
+  "llama_cpp": {
+    "version": "b7798",
+    "download_url": "https://github.com/ggml-org/llama.cpp/releases/download/b7798/llama-b7798-bin-win-vulkan-x64.zip",
+    "source": "ggml-org/llama.cpp Official GitHub Release",
+    "license": "MIT",
+    "notes": "预编译 Windows Vulkan 版本，作者原样下载，未做任何修改。含全部 CPU 指令集变体（x64/sse42/haswell/skylakex/cannonlake/icelake/cascadelake/cooperlake/sapphirerapids/zen4 等）及 Vulkan 加速后端。",
+    "files": {
+      "ggml.dll": {"sha256": "63113df193a48bfec68558d1b87496301d38d0d3e57929ae6d9bd5d24158ae1b", "size": 95744},
+      "ggml-base.dll": {"sha256": "31adbd02adbd4318eaa7ae4d9d2021f3226ef6d66a27ca04b47ad7bad0e512af", "size": 674304},
+      "llama.dll": {"sha256": "6a48488ac97f88aea76c25ebbda7f6e2255fbd84614fd3053f70b9496feac830", "size": 2601984},
+      "ggml-cpu-x64.dll": {"sha256": "36a1d168b3ace47086069308a3d31e347bf6927fe604f022d3e973c78c275518", "size": 719360},
+      "ggml-cpu-sse42.dll": {"sha256": "f9ac585538b4ee7ac01d5a0de6305d2e8c112d92079cd98e2d9613603b596af6", "size": 728064},
+      "ggml-cpu-alderlake.dll": {"sha256": "5d6bf6508b969d221b1b153aeb929d4d33078e5945d85259d6f87b36f4c4193c", "size": 999936},
+      "ggml-cpu-cannonlake.dll": {"sha256": "2056f51ec922b8ecd7d1500d2f93fa626225dd61b5015c15935bb7bbec83b5db", "size": 1234944},
+      "ggml-cpu-cascadelake.dll": {"sha256": "7d8f27a1a83287c1232bbc364bd183dd26476835bb1dfd7ff6125b197e8b6305", "size": 1222656},
+      "ggml-cpu-cooperlake.dll": {"sha256": "bb27118c063ba05dd73dae8d9d0044f0413671c6e6bce0bbe1782712c894a0f0", "size": 1223168},
+      "ggml-cpu-haswell.dll": {"sha256": "267af9b4ff4f570bf221dba36b0ea4f3d2093af67674dd3da333075d6924049b", "size": 1003520},
+      "ggml-cpu-icelake.dll": {"sha256": "4aa443f68d76ab030df56be650eefaa6c7b750d87e9880fc0c9fdd08d34859fb", "size": 1229312},
+      "ggml-cpu-ivybridge.dll": {"sha256": "5f97f22803ff5271fff28db9b6fc0e8bb3e858a380582ef0513d72e17ea3b2ac", "size": 908800},
+      "ggml-cpu-piledriver.dll": {"sha256": "2c499ffa2e85c3eee9cb0342e8d9a51c40c7aac8ebf2ac8702c7105d17e4df4b", "size": 911872},
+      "ggml-cpu-sandybridge.dll": {"sha256": "096ce8b568a312bbbcaf449eb7b8e6c9b5aecca79ac2fbdd37639c332efe0a02", "size": 889856},
+      "ggml-cpu-sapphirerapids.dll": {"sha256": "2057165b92ee52ea44c87bd7c28463f141b91d89352b522c3312e0f604c09b35", "size": 1492992},
+      "ggml-cpu-skylakex.dll": {"sha256": "cc40f93cf9427a2993bd2d3b70f7849ec10c5320db7a9afec8eef5d1289272ac", "size": 1227776},
+      "ggml-cpu-zen4.dll": {"sha256": "0d92c1eea13186a50d2c2ac693967dfb02da69d27b6df1c446364b68d8b797d3", "size": 1230336},
+      "ggml-vulkan.dll": {"sha256": "130a4db21f894405aa6524756785ee42e2c7b962d82290f336b11e830c183689", "size": 55677440},
+      "ggml-rpc.dll": {"sha256": "2562d2ccc1c5a0d377823e8bd5026cf8c6f18590b08ecb52aff79733862687a8", "size": 142336},
+      "libomp140.x86_64.dll": {"sha256": "9ab1cb787e52b2a36133899c01c1db1f876067d1471cd224ead85f40a8152b99", "size": 634936},
+      "mtmd.dll": {"sha256": "ca6940aec61fa84f00526fa9ed3348380492a601c16389b18b13b400aa640f4b", "size": 849408},
+      "llama-quantize.exe": {"sha256": "97846d53b38052c38a21f18b916932db93ba9abb0f76007cbd1df83f7a4ea840", "size": 356864}
+    }
+  },
+  "qwen3_asr_gguf_python": {
+    "source": "HaujetZhao/Qwen3-ASR-GGUF GitHub Release zip",
+    "notes": "上游 PyInstaller 打包产物的 qwen_asr_gguf/ 目录，Python 推理源码。应用在运行时通过 monkey patch 扩展分片进度和 Windows 跨盘 relpath 修复，不修改 vendor 源文件。",
+    "applied_patches": [
+      "audio_recorder/services/qwen_asr_runtime_utils._patch_llama_relpath_for_windows",
+      "audio_recorder/services/qwen_asr_runtime_utils._patch_qwen_asr_chunk_progress"
+    ]
+  },
+  "integrated_date": "2025-01-25",
+  "notes": "此文件由 audio_recorder 项目维护。llama.cpp DLL 来源透明可溯，可通过官方 Release 独立升级。Python 推理代码来自上游 Qwen3-ASR-GGUF release zip，运行时通过 monkey patch 扩展。"
+}

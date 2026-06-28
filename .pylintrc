@@ -1,0 +1,5 @@
+[MASTER]
+extension-pkg-allow-list=PySide6
+
+[MESSAGES CONTROL]
+disable=no-name-in-module,no-member

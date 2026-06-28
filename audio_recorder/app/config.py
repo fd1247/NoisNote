@@ -1,0 +1,357 @@
+"""配置管理模块。"""
+from __future__ import annotations
+
+import copy
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# 配置目录：%APPDATA%\AudioRecord（Windows）或 ~/.config/AudioRecord（其他平台）
+if sys.platform == "win32":
+    APPDATA = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    CONFIG_DIR = APPDATA / "AudioRecord"
+else:
+    CONFIG_DIR = Path.home() / ".config" / "AudioRecord"
+
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# 默认用户数据根目录
+DEFAULT_DATA_ROOT = Path.home() / "Documents" / "AudioRecorder"
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_QWEN3_ASR_GGUF_TOOL_DIR = REPO_ROOT / "vendor" / "qwen3-asr-gguf"
+# 旧 demo vendor 路径，兼容迁移前的本地环境
+DEV_QWEN3_ASR_GGUF_TOOL_DIR = (
+    REPO_ROOT / "demo" / "model_test" / "llama-cpp" / "vendor" / "Qwen3-ASR-Transcribe"
+)
+
+QWEN3_ASR_GGUF_REQUIRED_FILES = [
+    "qwen3_asr_encoder_frontend.int4.onnx",
+    "qwen3_asr_encoder_backend.int4.onnx",
+    "qwen3_asr_llm.q4_k.gguf",
+]
+
+QWEN3_ASR_GGUF_06B_ID = "Qwen3-ASR-0.6B-GGUF"
+QWEN3_ASR_GGUF_06B_SLUG = "Qwen3-ASR-GGUF-0.6B"
+QWEN3_ASR_GGUF_17B_ID = "Qwen3-ASR-1.7B-GGUF"
+QWEN3_ASR_GGUF_17B_SLUG = "Qwen3-ASR-GGUF-1.7B"
+
+QWEN3_ASR_GGUF_06B_URL = (
+    "https://github.com/HaujetZhao/Qwen3-ASR-GGUF/releases/download/models/"
+    "Qwen3-ASR-0.6B-gguf.zip"
+)
+QWEN3_ASR_GGUF_17B_URL = (
+    "https://github.com/HaujetZhao/Qwen3-ASR-GGUF/releases/download/models/"
+    "Qwen3-ASR-1.7B-gguf.zip"
+)
+QWEN3_ASR_GGUF_MODELSCOPE_REVISION = "v1.0.0"
+QWEN3_ASR_GGUF_06B_MODELSCOPE_ID = "luciacx/Qwen3-ASR-GGUF-0.6B-mixed"
+QWEN3_ASR_GGUF_17B_MODELSCOPE_ID = "luciacx/Qwen3-ASR-GGUF-1.7B-mixed"
+
+QWEN3_ASR_GGUF_06B_FILES: list[dict[str, str | int]] = [
+    {"name": "qwen3_asr_encoder_frontend.int4.onnx", "size": 20_343_991},
+    {"name": "qwen3_asr_encoder_backend.int4.onnx", "size": 94_750_816},
+    {"name": "qwen3_asr_llm.q4_k.gguf", "size": 484_215_360},
+]
+QWEN3_ASR_GGUF_17B_FILES: list[dict[str, str | int]] = [
+    {"name": "qwen3_asr_encoder_frontend.int4.onnx", "size": 20_876_699},
+    {"name": "qwen3_asr_encoder_backend.int4.onnx", "size": 164_740_452},
+    {"name": "qwen3_asr_llm.q4_k.gguf", "size": 1_282_434_624},
+]
+
+# Anthropic API 常量
+ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-20250514"
+ANTHROPIC_API_VERSION = "2023-06-01"
+
+
+def _modelscope_resolve_base(modelscope_id: str) -> str:
+    return (
+        f"https://www.modelscope.cn/models/{modelscope_id}/resolve/"
+        f"{QWEN3_ASR_GGUF_MODELSCOPE_REVISION}/"
+    )
+
+
+def _qwen3_asr_download_sources(
+    modelscope_id: str,
+    files: list[dict[str, str | int]],
+    github_url: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "modelscope",
+            "type": "files",
+            "base_url": _modelscope_resolve_base(modelscope_id),
+            "revision": QWEN3_ASR_GGUF_MODELSCOPE_REVISION,
+            "files": files,
+        },
+        {
+            "name": "github",
+            "type": "archive",
+            "url": github_url,
+        },
+    ]
+
+DEFAULT_MODEL_CATALOG = [
+    {
+        "name": QWEN3_ASR_GGUF_06B_ID,
+        "alias": "qwen3-asr-gguf-0.6b",
+        "display_name": "Qwen3-ASR-0.6B GGUF",
+        "modelscope_id": QWEN3_ASR_GGUF_06B_MODELSCOPE_ID,
+        "download_url": _modelscope_resolve_base(QWEN3_ASR_GGUF_06B_MODELSCOPE_ID),
+        "download_sources": _qwen3_asr_download_sources(
+            QWEN3_ASR_GGUF_06B_MODELSCOPE_ID,
+            QWEN3_ASR_GGUF_06B_FILES,
+            QWEN3_ASR_GGUF_06B_URL,
+        ),
+        "revision": QWEN3_ASR_GGUF_MODELSCOPE_REVISION,
+        "model_type": "asr",
+        "backend": "qwen3_asr_gguf",
+        "adapter": "qwen3_asr_gguf",
+        "model_size": "0.6B",
+        "local_dir_name": QWEN3_ASR_GGUF_06B_SLUG,
+        "description": "轻量版，速度更快，适合日常录音和长音频转录",
+        "recommended": True,
+        "required_files": QWEN3_ASR_GGUF_REQUIRED_FILES,
+        "estimated_size_bytes": sum(int(item["size"]) for item in QWEN3_ASR_GGUF_06B_FILES),
+    },
+    {
+        "name": QWEN3_ASR_GGUF_17B_ID,
+        "alias": "qwen3-asr-gguf-1.7b",
+        "display_name": "Qwen3-ASR-1.7B GGUF",
+        "modelscope_id": QWEN3_ASR_GGUF_17B_MODELSCOPE_ID,
+        "download_url": _modelscope_resolve_base(QWEN3_ASR_GGUF_17B_MODELSCOPE_ID),
+        "download_sources": _qwen3_asr_download_sources(
+            QWEN3_ASR_GGUF_17B_MODELSCOPE_ID,
+            QWEN3_ASR_GGUF_17B_FILES,
+            QWEN3_ASR_GGUF_17B_URL,
+        ),
+        "revision": QWEN3_ASR_GGUF_MODELSCOPE_REVISION,
+        "model_type": "asr",
+        "backend": "qwen3_asr_gguf",
+        "adapter": "qwen3_asr_gguf",
+        "model_size": "1.7B",
+        "local_dir_name": QWEN3_ASR_GGUF_17B_SLUG,
+        "description": "高精度版，资源占用更高，适合对准确率要求更高的场景",
+        "recommended": False,
+        "required_files": QWEN3_ASR_GGUF_REQUIRED_FILES,
+        "estimated_size_bytes": sum(int(item["size"]) for item in QWEN3_ASR_GGUF_17B_FILES),
+    },
+]
+
+DEFAULT_MODEL_CATALOG_BY_NAME = {
+    item["name"]: item
+    for item in DEFAULT_MODEL_CATALOG
+}
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "demo_audio_imported": False,
+    "data_root": str(DEFAULT_DATA_ROOT),
+    "selected_asr": {
+        "model": QWEN3_ASR_GGUF_06B_ID,
+        "model_path": "",
+        "device": "auto",
+    },
+    "qwen3_asr_gguf": {
+        "tool_dir": str(DEFAULT_QWEN3_ASR_GGUF_TOOL_DIR),
+        "chunk_size": 40.0,
+        "memory_num": 1,
+        "n_ctx": 2048,
+        "context": "",
+        "hotwords": [],
+    },
+    "llm": {
+        "provider": "openai",
+        "api_key": "",
+        "model": "gpt-4o-mini",
+        "base_url": "https://api.openai.com/v1",
+    },
+    "audio": {
+        "auto_transcribe": False,
+        "auto_summarize": False,
+        "capture": {
+            "mode": "system",
+            "system_device_id": "",
+            "microphone_device_id": "",
+            "sample_rate": 16000,
+            "channels": 1,
+            "sample_format": "pcm_s16le",
+            "chunk_size": 1024,
+            "silence_threshold": 2,
+            "silence_hint_seconds": 5,
+        },
+        "preprocessing": {
+            "ffmpeg_path": "",
+            "target_sample_rate": 16000,
+            "target_channels": 1,
+            "target_format": "wav",
+        },
+    },
+    "models": {
+        "downloaded": {},
+    },
+}
+
+
+def get_data_root(config: dict | None = None) -> Path:
+    """获取用户数据根目录。"""
+    cfg = config or {}
+    return Path(cfg.get("data_root", str(DEFAULT_DATA_ROOT))).expanduser()
+
+
+def get_output_dir(config: dict | None = None) -> Path:
+    """获取录音输出目录（data_root/data）。"""
+    return get_data_root(config) / "data"
+
+
+def get_model_root_dir(config: dict | None = None) -> Path:
+    """获取模型根目录（data_root/models）。"""
+    return get_data_root(config) / "models"
+
+
+def get_log_dir(config: dict | None = None) -> Path:
+    """获取日志目录（data_root/logs）。"""
+    return get_data_root(config) / "logs"
+
+
+def ensure_dirs(config: dict | None = None) -> None:
+    """确保应用需要的目录存在。"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    data_root = get_data_root(config)
+    data_root.mkdir(parents=True, exist_ok=True)
+    (data_root / "data").mkdir(parents=True, exist_ok=True)
+    (data_root / "models").mkdir(parents=True, exist_ok=True)
+    (data_root / "logs").mkdir(parents=True, exist_ok=True)
+
+
+def get_config() -> dict:
+    """读取配置；不存在或损坏时重建默认配置。"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            if not isinstance(config, dict):
+                raise ValueError("配置文件格式无效")
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("配置文件损坏，将重建默认配置: %s", exc)
+            config = _create_default_config()
+        else:
+            config, changed = _merge_defaults(config, DEFAULT_CONFIG)
+            config, normalized = _normalize_model_config(config)
+            if changed or normalized:
+                save_config(config)
+    else:
+        config = _create_default_config()
+
+    ensure_dirs(config)
+    return config
+
+
+def _create_default_config() -> dict:
+    """创建并保存默认配置。"""
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    save_config(config)
+    logger.info("已创建默认配置文件: %s", CONFIG_FILE)
+    return config
+
+
+def save_config(config: dict) -> None:
+    """保存配置到文件。"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def update_config(key: str, value, sub_key: str | None = None) -> dict:
+    """更新单个配置项。"""
+    config = get_config()
+    if sub_key:
+        config[key][sub_key] = value
+    else:
+        config[key] = value
+    save_config(config)
+    return config
+
+
+def get_qwen3_asr_gguf_tool_dir(config: dict | None = None) -> Path:
+    """返回 GGUF 推理工具目录，按优先级查找。"""
+    candidates = _qwen3_asr_gguf_tool_dir_candidates(config or get_config())
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def _qwen3_asr_gguf_tool_dir_candidates(config: dict) -> list[Path]:
+    """按优先级返回 GGUF 推理工具目录候选，兼容源码和 PyInstaller 包。"""
+    configured_value = config.get("qwen3_asr_gguf", {}).get("tool_dir")
+    candidates: list[Path] = []
+
+    def add(path: Path) -> None:
+        expanded = path.expanduser()
+        if expanded not in candidates:
+            candidates.append(expanded)
+
+    if configured_value:
+        add(Path(str(configured_value)))
+    add(DEFAULT_QWEN3_ASR_GGUF_TOOL_DIR)
+
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        root = Path(str(bundle_root))
+        add(root / "vendor" / "qwen3-asr-gguf")
+        # 兼容历史 spec 中误把目标写成 _internal/vendor 的包内布局。
+        add(root / "_internal" / "vendor" / "qwen3-asr-gguf")
+
+    if getattr(sys, "frozen", False):
+        exe_root = Path(sys.executable).resolve().parent
+        add(exe_root / "_internal" / "vendor" / "qwen3-asr-gguf")
+
+    add(DEV_QWEN3_ASR_GGUF_TOOL_DIR)
+    return candidates
+
+
+def _merge_defaults(config: dict, defaults: dict) -> tuple[dict, bool]:
+    """递归补齐缺失配置，保留用户已有值。"""
+    changed = False
+    merged = copy.deepcopy(config)
+    for key, value in defaults.items():
+        if key not in merged:
+            merged[key] = copy.deepcopy(value)
+            changed = True
+        elif isinstance(value, dict) and isinstance(merged[key], dict):
+            merged[key], sub_changed = _merge_defaults(merged[key], value)
+            changed = changed or sub_changed
+    return merged, changed
+
+
+def _normalize_model_config(config: dict) -> tuple[dict, bool]:
+    """标准化模型配置，确保设备和模型值有效。"""
+    changed = False
+    models = config.setdefault("models", {})
+
+    asr = config.setdefault("selected_asr", {})
+    device = str(asr.get("device") or "auto").lower()
+    if device == "cuda":
+        asr["device"] = "gpu"
+        changed = True
+    elif device not in {"auto", "cpu", "gpu"}:
+        asr["device"] = "auto"
+        changed = True
+
+    current_model = asr.get("model")
+    if current_model not in DEFAULT_MODEL_CATALOG_BY_NAME:
+        asr["model"] = QWEN3_ASR_GGUF_06B_ID
+        asr["model_path"] = ""
+        changed = True
+
+    return config, changed
+
+

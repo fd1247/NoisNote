@@ -1,0 +1,44 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and coverage output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE and local tooling
+.idea/
+.vscode/
+.claude/
+.agents/
+
+# Local runtime output
+*.log
+*.tmp
+.tmp/
+demo/
+experimental/
+
+# Build output
+build/
+*.spec.bak
+
+# Vendor binaries (large files, downloaded via scripts/download_deps.py)
+vendor/qwen3-asr-gguf/qwen_asr_gguf/inference/bin/
+vendor/ffmpeg/
+
+# doc
+docs/
+RELEASES.md
+
+# 内置测试音频（从本地复制，不提交到仓库）
+audio_recorder/assets/测试音频.mp3
