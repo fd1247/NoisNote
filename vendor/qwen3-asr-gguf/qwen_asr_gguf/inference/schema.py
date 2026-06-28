@@ -117,7 +117,7 @@ class TranscribeResult:
 @dataclass(frozen=True)
 class ASRProgress:
     """转录分片进度（供 progress_callback 回调使用）。
-    字段与 audio_recorder.domain.qwen_asr.Qwen3AsrGgufProgress 兼容。"""
+    字段与 src.asr.types.Qwen3AsrGgufProgress 兼容。"""
     stage: str
     current_chunk: int
     total_chunks: int

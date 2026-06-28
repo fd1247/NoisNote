@@ -19,7 +19,7 @@ major.minor.patch[-pre_release]
 
 ### 版本号定义位置
 
-版本号集中定义在 `audio_recorder/version.py`：
+版本号集中定义在 `src/version.py`：
 
 ```python
 APP_VERSION = VersionInfo(0, 1, 0, "")
@@ -37,7 +37,7 @@ APP_VERSION = VersionInfo(0, 1, 0, "")
 | 启动日志 | 记录版本号到日志 |
 | exe 文件属性 | 嵌入 Windows 版本信息（打包时） |
 | GitHub Release tag | `v0.1.0` 格式 |
-| zip 文件名 | `AudioRecorder-0.1.0.zip` |
+| zip 文件名 | `NoisNote-0.1.0.zip` |
 
 ## 发布流程
 
@@ -54,7 +54,7 @@ APP_VERSION = VersionInfo(0, 1, 0, "")
    gh auth login
    ```
 
-3. 确保 `vendor/ffmpeg/` 目录包含 ffmpeg.exe 和 ffprobe.exe（静态编译版本）
+3. 运行 `python scripts/download_deps.py` 下载 llama.cpp DLL 和 ffmpeg 到 `vendor/` 目录
 
 ### 完整发布步骤
 
@@ -66,7 +66,7 @@ python scripts/release.py --version 0.2.0
 
 ```
 1. 检查 Git 工作目录是否干净
-2. 更新 audio_recorder/version.py 中的版本号
+2. 更新 src/version.py 中的版本号
 3. 提交版本号变更 (git commit)
 4. 创建 Git tag (git tag v0.2.0)
 5. 推送到 GitHub (git push)
@@ -86,9 +86,9 @@ python scripts/release.py --version 0.2.0 --dry-run
 
 | 产物 | 路径 | 说明 |
 |------|------|------|
-| 便携版目录 | `dist/AudioRecorder/` | 包含 exe 和所有依赖 |
-| zip 压缩包 | `dist/AudioRecorder-{version}.zip` | 用户下载的分发包 |
-| SHA256 校验文件 | `dist/AudioRecorder-{version}.zip.sha256` | 完整性校验 |
+| 便携版目录 | `dist/NoisNote/` | 包含 exe 和所有依赖 |
+| zip 压缩包 | `dist/NoisNote-{version}.zip` | 用户下载的分发包 |
+| SHA256 校验文件 | `dist/NoisNote-{version}.zip.sha256` | 完整性校验 |
 
 ### 发布后检查
 
@@ -113,7 +113,7 @@ build.py
   +-- 调用 PyInstaller 执行 build.spec
   |     +-- 收集依赖（PySide6、numpy、scipy、onnxruntime）
   |     +-- 收集资源（assets、ffmpeg、vendor/qwen3-asr-gguf）
-  |     +-- 生成 dist/AudioRecorder/ 目录
+  |     +-- 生成 dist/NoisNote/ 目录
   +-- 创建 zip 压缩包
   +-- 生成 SHA256 校验文件
 ```
@@ -122,9 +122,9 @@ build.py
 
 | 内容 | 来源路径 | 打包后路径 |
 |------|---------|-----------|
-| 应用代码 | `audio_recorder/` | `_internal/audio_recorder/` |
-| 应用资源 | `audio_recorder/assets/` | `_internal/audio_recorder/assets/` |
-| ffmpeg | `vendor/ffmpeg/` | `_internal/audio_recorder/vendor/ffmpeg/` |
+| 应用代码 | `src/` | `_internal/src/` |
+| 应用资源 | `src/assets/` | `_internal/src/assets/` |
+| ffmpeg | `vendor/ffmpeg/` | `_internal/src/vendor/ffmpeg/` |
 | GGUF 推理工具 | `vendor/qwen3-asr-gguf/` | `_internal/vendor/qwen3-asr-gguf/` |
 | PySide6 插件 | 自动收集 | `_internal/PySide6/` |
 | numpy / scipy | 自动收集 | `_internal/numpy/`、`_internal/scipy/` |
@@ -182,10 +182,10 @@ build.py
 
 | 数据 | 路径 |
 |------|------|
-| 配置文件 | `%APPDATA%/AudioRecord/config.json` |
-| 历史记录 | `~/Documents/AudioRecorder/data/` |
-| 模型文件 | `~/Documents/AudioRecorder/models/` |
-| 日志文件 | `~/Documents/AudioRecorder/logs/` |
+| 配置文件 | `%APPDATA%/NoisNote/config.json` |
+| 历史记录 | `~/Documents/NoisNote/data/` |
+| 模型文件 | `~/Documents/NoisNote/models/` |
+| 日志文件 | `~/Documents/NoisNote/logs/` |
 
 ## 常见问题
 
@@ -195,7 +195,7 @@ build.py
 2. 如版本号已更新但未提交，手动提交或回退
 3. 如 tag 已创建但未推送，手动推送：`git push origin v0.2.0`
 4. 如构建失败，修复后手动执行 `python scripts/build.py`
-5. 手动创建 Release：`gh release create v0.2.0 dist/AudioRecorder-0.2.0.zip dist/AudioRecorder-0.2.0.zip.sha256`
+5. 手动创建 Release：`gh release create v0.2.0 dist/NoisNote-0.2.0.zip dist/NoisNote-0.2.0.zip.sha256`
 
 ### 如何创建预发布版本？
 
@@ -203,9 +203,9 @@ build.py
 python scripts/release.py --version 0.2.0-beta
 ```
 
-### 如何准备 ffmpeg？
+### 如何准备 ffmpeg 和 llama.cpp DLL？
 
-从 [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) 下载 `ffmpeg-master-latest-win64-gpl.zip`，将 `ffmpeg.exe` 和 `ffprobe.exe` 放入 `vendor/ffmpeg/` 目录。
+运行 `python scripts/download_deps.py` 自动下载。脚本从 BtbN/FFmpeg-Builds 下载 ffmpeg，从 GitHub llama.cpp Releases 下载预编译 DLL，并校验 SHA-256。
 
 ### 打包后体积多大？
 

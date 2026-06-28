@@ -24,7 +24,7 @@
 ## Qwen3-ASR 模型文件
 
 - **来源**：阿里 Qwen3-ASR 官方模型 + HaujetZhao 量化转换
-- **说明**：模型文件不在仓库中，运行前通过 ModelScope 下载到用户数据目录 `~/Documents/AudioRecorder/models/`
+- **说明**：模型文件不在仓库中，运行前通过 ModelScope 下载到用户数据目录 `~/Documents/NoisNote/models/`
 - **下载清单**：
   - `qwen3_asr_encoder_frontend.int4.onnx`
   - `qwen3_asr_encoder_backend.int4.onnx`

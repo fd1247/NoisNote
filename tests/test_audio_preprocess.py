@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from audio_recorder.audio.preprocess import (
+from src.audio.preprocess import (
     AudioInputError,
     AudioPreprocessRequest,
     build_ffmpeg_normalize_command,
@@ -16,7 +16,7 @@ from audio_recorder.audio.preprocess import (
     probe_media,
     source_kind_for_path,
 )
-from audio_recorder.utils.ffmpeg import check_ffmpeg_available, resolve_ffmpeg_path
+from src.utils.ffmpeg import check_ffmpeg_available, resolve_ffmpeg_path
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000, channels: int = 1) -> None:
@@ -89,7 +89,7 @@ def test_build_ffmpeg_command_uses_asr_standard_format(tmp_path: Path) -> None:
 
 
 def test_check_ffmpeg_available_reports_missing(monkeypatch) -> None:
-    monkeypatch.setattr("audio_recorder.utils.ffmpeg_runtime.shutil.which", lambda name: None)
+    monkeypatch.setattr("src.utils.ffmpeg_runtime.shutil.which", lambda name: None)
 
     assert resolve_ffmpeg_path({}) is None
     result = check_ffmpeg_available({})
@@ -102,9 +102,9 @@ def test_check_ffmpeg_available_accepts_configured_paths(monkeypatch, tmp_path: 
     ffprobe = tmp_path / "ffprobe.exe"
     ffmpeg.write_text("", encoding="utf-8")
     ffprobe.write_text("", encoding="utf-8")
-    monkeypatch.setattr("audio_recorder.utils.ffmpeg_runtime.shutil.which", lambda name: None)
+    monkeypatch.setattr("src.utils.ffmpeg_runtime.shutil.which", lambda name: None)
     monkeypatch.setattr(
-        "audio_recorder.utils.ffmpeg_runtime.subprocess.run",
+        "src.utils.ffmpeg_runtime.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0),
     )
 

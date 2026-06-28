@@ -17,8 +17,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 SESSION_ID = uuid.uuid4().hex[:12]
-LOGGER_NAME = "audio_recorder"
-DEFAULT_LOG_DIR = Path.home() / "Documents" / "AudioRecorder" / "logs"
+LOGGER_NAME = "NoisNote"
+DEFAULT_LOG_DIR = Path.home() / "Documents" / "NoisNote" / "logs"
 LOG_DIR_ENV = "AUDIO_RECORDER_LOG_DIR"
 
 _SENSITIVE_KEYS = {

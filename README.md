@@ -30,8 +30,8 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/fd1247/AudioRecorder.git
-cd AudioRecorder
+git clone https://github.com/fd1247/NoisNote.git
+cd NoisNote
 
 # 2. 安装 Python 依赖
 pip install -r requirements.txt
@@ -45,10 +45,10 @@ python main.py
 
 ### 方式二：打包运行
 
-1. 从 [GitHub Releases](https://github.com/fd1247/AudioRecorder/releases) 下载最新版本的 `AudioRecorder-{version}.zip`
+1. 从 [GitHub Releases](https://github.com/fd1247/NoisNote/releases) 下载最新版本的 `NoisNote-{version}.zip`
 2. 解压到任意目录
 3. 确保已安装 [VC++ Redistributable x64](https://aka.ms/vs/17/release/vc_redist.x64.exe)
-4. 运行 `AudioRecorder.exe`
+4. 运行 `NoisNote.exe`
 
 ## 快速上手
 
@@ -113,10 +113,10 @@ python main.py
 
 ### 文件存储位置
 
-所有用户数据默认保存在 `文档/AudioRecorder/` 目录下：
+所有用户数据默认保存在 `文档/NoisNote/` 目录下：
 
 ```
-AudioRecorder/
+NoisNote/
 ├── data/          # 历史记录（每条一个文件夹）
 │   ├── 20250627_143022/
 │   │   ├── audio.wav           # 音频文件

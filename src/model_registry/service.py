@@ -27,7 +27,7 @@ class ModelService:
         self.root_dir = Path(
             models_config.setdefault(
                 "root_dir",
-                str(Path.home() / "Documents" / "AudioRecorder" / "models"),
+                str(Path.home() / "Documents" / "NoisNote" / "models"),
             )
         ).expanduser()
         models_config["root_dir"] = str(self.root_dir)

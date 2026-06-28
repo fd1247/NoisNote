@@ -9,9 +9,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from audio_recorder.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
-from audio_recorder.history.service import HistoryService, HistoryStatus
-from audio_recorder.app.main_window import MainWindow
+from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
+from src.history.service import HistoryService, HistoryStatus
+from src.app.main_window import MainWindow
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -50,10 +50,10 @@ def make_config(root: Path) -> dict:
 
 def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     config = make_config(tmp_path)
-    monkeypatch.setattr("audio_recorder.app.main_window.get_config", lambda: config)
-    monkeypatch.setattr("audio_recorder.app.main_window.save_config", lambda _config: None)
-    monkeypatch.setattr("audio_recorder.app.main_window.ensure_dirs", lambda _config=None: None)
-    monkeypatch.setattr("audio_recorder.app.main_window.AudioRecorder", lambda output_dir: None)
+    monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
+    monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     app.processEvents()
@@ -261,7 +261,7 @@ def test_retry_transcription_cancel_keeps_generated_files(monkeypatch, tmp_path:
         window.current_record = record
         started: list[Path] = []
         monkeypatch.setattr(
-            "audio_recorder.handlers.transcription.confirm_without_icon",
+            "src.handlers.transcription.confirm_without_icon",
             lambda *args, **kwargs: False,
         )
         monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": started.append(audio_file))
@@ -293,7 +293,7 @@ def test_retry_transcription_confirm_text_is_user_friendly(monkeypatch, tmp_path
             captured["cancel_text"] = cancel_text
             return False
 
-        monkeypatch.setattr("audio_recorder.handlers.transcription.confirm_without_icon", fake_confirm)
+        monkeypatch.setattr("src.handlers.transcription.confirm_without_icon", fake_confirm)
 
         assert not window._confirm_retranscription(record)
         assert captured["title"] == "重新转录"
@@ -324,7 +324,7 @@ def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tm
         window.current_items = [record]
         started: list[tuple[Path, str]] = []
         monkeypatch.setattr(
-            "audio_recorder.handlers.transcription.confirm_without_icon",
+            "src.handlers.transcription.confirm_without_icon",
             lambda *args, **kwargs: True,
         )
         monkeypatch.setattr(
@@ -389,7 +389,7 @@ def test_delete_history_record_uses_unified_confirm_dialog(monkeypatch, tmp_path
             captured["cancel_text"] = cancel_text
             return False
 
-        monkeypatch.setattr("audio_recorder.app.main_window.confirm_without_icon", fake_confirm)
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", fake_confirm)
 
         window.delete_current_record()
 

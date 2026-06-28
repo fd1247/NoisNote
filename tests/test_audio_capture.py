@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from audio_recorder.audio import (
+from src.audio import (
     AudioRecorder,
     CaptureDeviceInfo,
     CaptureDeviceUnavailable,
@@ -12,8 +12,8 @@ from audio_recorder.audio import (
     list_capture_devices,
     validate_capture_settings,
 )
-from audio_recorder.audio import device_manager as dm_module
-from audio_recorder.audio import recorder as rec_module
+from src.audio import device_manager as dm_module
+from src.audio import recorder as rec_module
 
 
 # ---- Fake soundcard 对象 ----

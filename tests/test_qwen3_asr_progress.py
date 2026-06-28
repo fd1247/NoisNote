@@ -4,12 +4,12 @@ import types
 import wave
 from pathlib import Path
 
-from audio_recorder.asr.runtime import (
+from src.asr.runtime import (
     Qwen3AsrGgufProgress,
     Qwen3AsrGgufRuntime,
     Qwen3AsrGgufRuntimeConfig,
 )
-from audio_recorder.asr.engine import ProgressReporter, TranscriptionProgress
+from src.asr.engine import ProgressReporter, TranscriptionProgress
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:

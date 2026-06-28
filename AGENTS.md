@@ -20,7 +20,7 @@ This file provides guidance to Codex when working in this repository.
 | LLM 总结 | OpenAI 兼容 API / Anthropic 兼容 API                |
 | 音频处理 | ffmpeg / ffprobe                                   |
 | 模型下载 | ModelScope（优先）+ GitHub（备用）                  |
-| 日志     | JSON Lines，写入 `~/Documents/AudioRecorder/logs/` |
+| 日志     | JSON Lines，写入 `~/Documents/NoisNote/logs/` |
 | 测试     | pytest，Qt 测试使用 `QT_QPA_PLATFORM=offscreen`     |
 | 打包     | PyInstaller（onedir 模式）                          |
 
@@ -44,7 +44,7 @@ pip install -r requirements.txt
 
 ```text
 main.py                                  # 应用入口
-audio_recorder/
+src/
   __init__.py                           # 包版本信息
   app/                                  # 应用核心
     application.py                      # QApplication 初始化、日志、异常钩子
@@ -102,9 +102,9 @@ audio_recorder/
   utils/                                # 通用工具
     logging.py                          # JSON Lines 日志初始化、脱敏
     ffmpeg.py                           # ffmpeg/ffprobe 发现
-vendor/qwen3-asr-gguf/                  # Qwen3-ASR-GGUF 第三方源码 + llama.cpp DLL
-  qwen_asr_gguf/inference/              # ASR 推理 Python 源码（上游 e790e3b + 定制）
-  qwen_asr_gguf/inference/bin/          # llama.cpp b7798 预编译 DLL（Windows Vulkan）
+vendor/qwen3-asr-gguf/                  # Qwen3-ASR-GGUF 第三方 Python 源码
+  qwen_asr_gguf/inference/              # ASR 推理源码（上游 e790e3b + 3 处定制）
+  qwen_asr_gguf/inference/bin/          # llama.cpp DLL（.gitignored, 由 download_deps.py 下载）
 docs/                                   # 文档
   modules/                              # 各模块架构文档
   roadmap/                              # 路线图
@@ -120,10 +120,10 @@ scripts/                                # 构建和发布脚本
 配置文件存储在系统 AppData 目录，用户数据存储在 Documents：
 
 ```text
-%APPDATA%/AudioRecord/
+%APPDATA%/NoisNote/
   config.json
 
-~/Documents/AudioRecorder/
+~/Documents/NoisNote/
   data/                                  # 历史记录
   models/                                # ASR 模型
   logs/                                  # 日志
@@ -160,7 +160,7 @@ MainWindow 通过 Python 多重继承组装功能，每个 Mixin 对应 `handler
 
 ### Vendor 依赖
 
-Qwen3-ASR-GGUF 推理引擎以源码形式集成在 `vendor/qwen3-asr-gguf/` 中，运行时通过 `sys.path.insert` + `ctypes.CDLL` 动态加载。llama.cpp DLL 来自官方预编译的 `llama-b7798-bin-win-vulkan-x64.zip`。项目对上游源码做了 3 处定制，详见 `vendor/qwen3-asr-gguf/VENDOR_SOURCE.md`。
+Qwen3-ASR-GGUF 推理引擎以源码形式集成在 `vendor/qwen3-asr-gguf/` 中，运行时通过 `sys.path.insert` + `ctypes.CDLL` 动态加载。llama.cpp DLL 来自官方预编译的 `llama-b7798-bin-win-vulkan-x64.zip`，由 `scripts/download_deps.py` 下载到 `vendor/qwen3-asr-gguf/qwen_asr_gguf/inference/bin/`（该目录已 .gitignore）。项目对上游源码做了 3 处定制，详见 `vendor/qwen3-asr-gguf/VENDOR_SOURCE.md`。
 
 ### 模型管理
 
@@ -171,7 +171,7 @@ Qwen3-ASR-GGUF 推理引擎以源码形式集成在 `vendor/qwen3-asr-gguf/` 中
 - 目标运行环境是 Windows 10/11。录音模块依赖 WASAPI Loopback，不可移植到其他平台。
 - 默认设备策略偏保守，`auto` 映射到 CPU。
 - GPU 推理路径仅实现 DirectML（Windows），无 CUDA/CoreML 适配。
-- 仅识别 `~/Documents/AudioRecorder/models/` 下的模型目录。
+- 仅识别 `~/Documents/NoisNote/models/` 下的模型目录。
 - 快捷键页面是预留入口，快捷键体系尚未完成。
 
 ## 开发规范

@@ -79,7 +79,7 @@ def download_llama() -> bool:
 
     print(f"[llama.cpp] 下载 {url} ...")
     try:
-        req = Request(url, headers={"User-Agent": "AudioRecorder/1.0"})
+        req = Request(url, headers={"User-Agent": "NoisNote/1.0"})
         with urlopen(req, timeout=60) as resp:
             zip_data = resp.read()
     except Exception as e:
@@ -145,7 +145,7 @@ def download_ffmpeg() -> bool:
 
     print(f"[ffmpeg] 下载 {FFMPEG_URL} ...")
     try:
-        req = Request(FFMPEG_URL, headers={"User-Agent": "AudioRecorder/1.0"})
+        req = Request(FFMPEG_URL, headers={"User-Agent": "NoisNote/1.0"})
         with urlopen(req, timeout=120) as resp:
             zip_data = resp.read()
     except Exception as e:

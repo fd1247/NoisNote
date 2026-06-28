@@ -6,10 +6,10 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from audio_recorder.app.config import QWEN3_ASR_GGUF_REQUIRED_FILES
-from audio_recorder.model_registry.worker import ModelDownloadWorker
-from audio_recorder.model_registry.download import default_gguf_downloader
-from audio_recorder.model_registry.service import ModelCatalogEntry, format_size
+from src.app.config import QWEN3_ASR_GGUF_REQUIRED_FILES
+from src.model_registry.worker import ModelDownloadWorker
+from src.model_registry.download import default_gguf_downloader
+from src.model_registry.service import ModelCatalogEntry, format_size
 
 
 def make_entry() -> ModelCatalogEntry:

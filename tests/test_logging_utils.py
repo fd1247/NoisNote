@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from audio_recorder.utils.logging import (
+from src.utils.logging import (
     file_context,
     init_logging,
     log_event,

@@ -18,16 +18,16 @@ ROOT = Path(SPECPATH).parent
 
 # 版本信息
 sys.path.insert(0, str(ROOT))
-from audio_recorder.app.version import get_version_string, get_version_tuple
+from src.app.version import get_version_string, get_version_tuple
 
 # 应用配置
-APP_NAME = "AudioRecorder"
+APP_NAME = "NoisNote"
 APP_VERSION = get_version_string()
 APP_VERSION_TUPLE = get_version_tuple()
 
 # 路径配置
 ENTRY_POINT = str(ROOT / "main.py")
-ICON_PATH = str(ROOT / "audio_recorder" / "assets" / "icon.ico")
+ICON_PATH = str(ROOT / "src" / "assets" / "icon.ico")
 FFMPEG_DIR = str(ROOT / "vendor" / "ffmpeg")
 VENDOR_QWEN = str(ROOT / "vendor" / "qwen3-asr-gguf")
 
@@ -148,9 +148,9 @@ all_datas = _filter_pyside6_datas(pyside6_datas) + _filter_datas_by_package(nump
 all_binaries = _filter_pyside6_binaries(pyside6_binaries) + _filter_binaries_by_package(numpy_binaries + scipy_binaries + onnxruntime_binaries + soundfile_binaries)
 
 # 内置测试音频（历史记录为空时自动导入）
-_test_audio_src = ROOT / "audio_recorder" / "assets" / "测试音频.mp3"
+_test_audio_src = ROOT / "src" / "assets" / "测试音频.mp3"
 if _test_audio_src.exists():
-    all_datas.append((str(_test_audio_src), "audio_recorder/assets"))
+    all_datas.append((str(_test_audio_src), "src/assets"))
 all_hiddenimports = numpy_hiddenimports + scipy_hiddenimports + onnxruntime_hiddenimports + soundfile_hiddenimports
 
 # ============================================================
@@ -180,7 +180,7 @@ for dll_path in _openssl_dlls:
 # ============================================================
 app_datas = [
     # 应用资源文件
-    (str(ROOT / "audio_recorder" / "assets"), "audio_recorder/assets"),
+    (str(ROOT / "src" / "assets"), "src/assets"),
 ]
 
 # 添加 ffmpeg（只包含 exe 文件）

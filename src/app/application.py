@@ -69,7 +69,7 @@ def main() -> int:
         context={"log_dir": log_dir, "version": version},
     )
     app = QApplication(sys.argv)
-    app.setApplicationName("音频转录与总结工具")
+    app.setApplicationName("NoisNote")
     app.setApplicationVersion(version)
     app.setStyleSheet(APP_STYLESHEET)
 

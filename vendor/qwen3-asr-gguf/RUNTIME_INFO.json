@@ -34,10 +34,10 @@
     "source": "HaujetZhao/Qwen3-ASR-GGUF GitHub Release zip",
     "notes": "上游 PyInstaller 打包产物的 qwen_asr_gguf/ 目录，Python 推理源码。应用在运行时通过 monkey patch 扩展分片进度和 Windows 跨盘 relpath 修复，不修改 vendor 源文件。",
     "applied_patches": [
-      "audio_recorder/services/qwen_asr_runtime_utils._patch_llama_relpath_for_windows",
-      "audio_recorder/services/qwen_asr_runtime_utils._patch_qwen_asr_chunk_progress"
+      "src.asr.runtime._patch_llama_relpath_for_windows",
+      "src.asr.runtime._patch_qwen_asr_chunk_progress"
     ]
   },
   "integrated_date": "2025-01-25",
-  "notes": "此文件由 audio_recorder 项目维护。llama.cpp DLL 来源透明可溯，可通过官方 Release 独立升级。Python 推理代码来自上游 Qwen3-ASR-GGUF release zip，运行时通过 monkey patch 扩展。"
+  "notes": "此文件由 NoisNote 项目维护。llama.cpp DLL 来源透明可溯，可通过官方 Release 独立升级。Python 推理代码来自上游 Qwen3-ASR-GGUF release zip，运行时通过 monkey patch 扩展。"
 }

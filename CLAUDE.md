@@ -51,12 +51,12 @@ python -B model_test/llama-cpp/qwen3_asr_gguf_release_demo.py --init-only
 
 ### 入口和应用流
 
-`main.py` -> `audio_recorder.qt_app.main()` -> 初始化日志 -> 创建 QApplication -> 实例化 MainWindow -> 进入 Qt 事件循环
+`main.py` -> `src.app.application.main()` -> 初始化日志 -> 创建 QApplication -> 实例化 MainWindow -> 进入 Qt 事件循环
 
 ### 模块分层
 
 ```
-audio_recorder/
+src/
 ├── qt_app.py                    # QApplication 初始化
 ├── qt_main_window.py            # 主窗口骨架、导航和历史记录操作
 ├── handlers/                    # MainWindow 的业务逻辑 mixin
@@ -78,17 +78,17 @@ audio_recorder/
 
 2. **后台任务**: 耗时任务（转录、总结、模型下载）在 `QThread` 后台线程执行，通过 Qt signal/slot 通知 UI，绝不直接操作 Qt 控件。
 
-3. **历史记录存储**: 每条记录是 `~/Documents/AudioRecorder/recordings/<record_id>/` 下的独立文件夹，包含 audio.wav、transcript.txt、summary.txt、export.md、metadata.json。
+3. **历史记录存储**: 每条记录是 `~/Documents/NoisNote/recordings/<record_id>/` 下的独立文件夹，包含 audio.wav、transcript.txt、summary.txt、export.md、metadata.json。
 
-4. **模型管理**: 模型存储在 `~/Documents/AudioRecorder/models/`，以 GGUF zip 包形式下载。正式模型清单只包含 `Qwen3-ASR-0.6B-GGUF` 和 `Qwen3-ASR-1.7B-GGUF`。
+4. **模型管理**: 模型存储在 `~/Documents/NoisNote/models/`，以 GGUF zip 包形式下载。正式模型清单只包含 `Qwen3-ASR-0.6B-GGUF` 和 `Qwen3-ASR-1.7B-GGUF`。
 
-5. **配置结构**: 配置文件 `~/Documents/AudioRecorder/config.json`，主要配置段：`funasr`（ASR 配置）、`qwen3_asr_gguf`（GGUF 运行参数）、`llm`（API 配置）、`audio`（录音和自动化开关）、`models`（模型清单）。
+5. **配置结构**: 配置文件 `~/Documents/NoisNote/config.json`，主要配置段：`funasr`（ASR 配置）、`qwen3_asr_gguf`（GGUF 运行参数）、`llm`（API 配置）、`audio`（录音和自动化开关）、`models`（模型清单）。
 
 ## 当前约束
 
 - **平台**: 仅支持 Windows 10/11，WASAPI loopback 依赖 Windows 音频子系统
 - **设备策略**: 默认设备策略偏保守，`auto` 会映射到 CPU
-- **模型识别**: 应用只识别 `~/Documents/AudioRecorder/models/` 下的模型目录
+- **模型识别**: 应用只识别 `~/Documents/NoisNote/models/` 下的模型目录
 - **快捷键**: 快捷键页是预留入口，快捷键体系尚未完成
 - **旧代码**: Flet 界面代码已清理，当前只维护 PySide6 实现
 

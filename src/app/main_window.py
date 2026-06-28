@@ -53,7 +53,7 @@ from .update import check_for_update_async
 
 
 class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, TranscriptionHandlers, SummaryHandlers, SettingsHandlers, QMainWindow):
-    """音频转录与总结工具主窗口。"""
+    """NoisNote主窗口。"""
 
     def __init__(self):
         super().__init__()
@@ -79,7 +79,7 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.summary_markdown_text = ""
         self.active_task_ids: dict[str, str] = {}
 
-        self.setWindowTitle("音频转录与总结工具")
+        self.setWindowTitle("NoisNote")
         self.setWindowIcon(make_app_icon())
         self.resize(1100, 760)
         self.setMinimumSize(880, 620)
@@ -291,7 +291,7 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         """定位内置测试音频文件路径。"""
         bundle_root = getattr(sys, "_MEIPASS", None)
         if bundle_root:
-            candidate = Path(str(bundle_root)) / "audio_recorder" / "assets" / "测试音频.mp3"
+            candidate = Path(str(bundle_root)) / "src" / "assets" / "测试音频.mp3"
             if candidate.exists():
                 return candidate
         # 开发环境：项目源码目录

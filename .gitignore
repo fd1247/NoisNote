@@ -38,7 +38,3 @@ vendor/ffmpeg/
 
 # doc
 docs/
-RELEASES.md
-
-# 内置测试音频（从本地复制，不提交到仓库）
-audio_recorder/assets/测试音频.mp3

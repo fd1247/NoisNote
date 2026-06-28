@@ -3,7 +3,7 @@ from __future__ import annotations
 import wave
 from pathlib import Path
 
-from audio_recorder.asr.engine import ProgressReporter, TranscriptionProgress, _wav_duration
+from src.asr.engine import ProgressReporter, TranscriptionProgress, _wav_duration
 
 
 def write_wav(path: Path, frames: int = 48000, rate: int = 16000) -> None:

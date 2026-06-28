@@ -10,11 +10,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QMimeData, Qt, QUrl
 
-from audio_recorder.audio.preprocess import AudioPreprocessResult
-from audio_recorder.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
-from audio_recorder.history.service import HistoryService, HistoryStatus
-from audio_recorder.app.main_window import MainWindow
-from audio_recorder.asr.engine import TranscriptionProgress
+from src.audio.preprocess import AudioPreprocessResult
+from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
+from src.history.service import HistoryService, HistoryStatus
+from src.app.main_window import MainWindow
+from src.asr.engine import TranscriptionProgress
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -95,10 +95,10 @@ class FakeRecorder:
 
 def make_window(monkeypatch, tmp_path: Path, config: dict | None = None) -> MainWindow:
     config = config or make_config(tmp_path)
-    monkeypatch.setattr("audio_recorder.app.main_window.get_config", lambda: config)
-    monkeypatch.setattr("audio_recorder.app.main_window.save_config", lambda _config: None)
-    monkeypatch.setattr("audio_recorder.app.main_window.ensure_dirs", lambda _config=None: None)
-    monkeypatch.setattr("audio_recorder.app.main_window.AudioRecorder", FakeRecorder)
+    monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
+    monkeypatch.setattr("src.app.main_window.AudioRecorder", FakeRecorder)
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     app.processEvents()

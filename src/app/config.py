@@ -11,17 +11,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 配置目录：%APPDATA%\AudioRecord（Windows）或 ~/.config/AudioRecord（其他平台）
+# 配置目录：%APPDATA%\NoisNote（Windows）或 ~/.config/NoisNote（其他平台）
 if sys.platform == "win32":
     APPDATA = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    CONFIG_DIR = APPDATA / "AudioRecord"
+    CONFIG_DIR = APPDATA / "NoisNote"
 else:
-    CONFIG_DIR = Path.home() / ".config" / "AudioRecord"
+    CONFIG_DIR = Path.home() / ".config" / "NoisNote"
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # 默认用户数据根目录
-DEFAULT_DATA_ROOT = Path.home() / "Documents" / "AudioRecorder"
+DEFAULT_DATA_ROOT = Path.home() / "Documents" / "NoisNote"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_QWEN3_ASR_GGUF_TOOL_DIR = REPO_ROOT / "vendor" / "qwen3-asr-gguf"

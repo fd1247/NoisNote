@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from audio_recorder.history.service import HistoryRecord, HistoryService, HistoryStatus
+from src.history.service import HistoryRecord, HistoryService, HistoryStatus
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:

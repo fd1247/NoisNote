@@ -1,6 +1,6 @@
 # UTF-8
 #
-# 音频转录与总结工具 - Windows exe 版本信息
+# NoisNote - Windows exe 版本信息
 # 此文件由 build.py 自动生成，请勿手动编辑
 #
 
@@ -21,14 +21,14 @@ VSVersionInfo(
         StringTable(
           u'080404B0',
           [
-            StringStruct(u'CompanyName', u'AudioRecorder'),
-            StringStruct(u'FileDescription', u'音频转录与总结工具'),
+            StringStruct(u'CompanyName', u'NoisNote'),
+            StringStruct(u'FileDescription', u'NoisNote'),
             StringStruct(u'FileVersion', u'0.1.0'),
-            StringStruct(u'InternalName', u'AudioRecorder'),
-            StringStruct(u'OriginalFilename', u'AudioRecorder.exe'),
-            StringStruct(u'ProductName', u'音频转录与总结工具'),
+            StringStruct(u'InternalName', u'NoisNote'),
+            StringStruct(u'OriginalFilename', u'NoisNote.exe'),
+            StringStruct(u'ProductName', u'NoisNote'),
             StringStruct(u'ProductVersion', u'0.1.0'),
-            StringStruct(u'LegalCopyright', u'Copyright (c) 2024 AudioRecorder'),
+            StringStruct(u'LegalCopyright', u'Copyright (c) 2024 NoisNote'),
           ]
         )
       ]

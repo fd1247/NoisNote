@@ -9,8 +9,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from audio_recorder.app import config as config_module
-from audio_recorder.app.config import (
+from src.app import config as config_module
+from src.app.config import (
     DEFAULT_MODEL_CATALOG,
     QWEN3_ASR_GGUF_MODELSCOPE_REVISION,
     QWEN3_ASR_GGUF_06B_ID,
@@ -20,15 +20,15 @@ from audio_recorder.app.config import (
     QWEN3_ASR_GGUF_REQUIRED_FILES,
     get_qwen3_asr_gguf_tool_dir,
 )
-from audio_recorder.app.main_window import MainWindow, SettingsPanel
-from audio_recorder.model_registry.downloader import ModelDownloadManager
-from audio_recorder.model_registry.service import DownloadTaskState, ModelService, ModelStatus
-from audio_recorder.asr.runtime import (
+from src.app.main_window import MainWindow, SettingsPanel
+from src.model_registry.downloader import ModelDownloadManager
+from src.model_registry.service import DownloadTaskState, ModelService, ModelStatus
+from src.asr.runtime import (
     Qwen3AsrGgufResult,
     build_context,
     resolve_device_mode,
 )
-from audio_recorder.asr.engine import TranscriptionEngine
+from src.asr.engine import TranscriptionEngine
 
 
 def make_config(root: Path) -> dict:
@@ -201,7 +201,7 @@ def test_download_disk_space_check_reports_required_and_available(monkeypatch, t
     assert entry is not None
     entry = type(entry)(**{**entry.__dict__, "estimated_size_bytes": 1000})
     monkeypatch.setattr(
-        "audio_recorder.model_registry.service.shutil.disk_usage",
+        "src.model_registry.service.shutil.disk_usage",
         lambda path: SimpleNamespace(free=900),
     )
 
@@ -375,7 +375,7 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
     saved_configs: list[dict] = []
     info_messages: list[str] = []
     confirmation: dict[str, str] = {}
-    monkeypatch.setattr("audio_recorder.ui.model_panel.save_config", lambda value: saved_configs.append(value))
+    monkeypatch.setattr("src.ui.model_panel.save_config", lambda value: saved_configs.append(value))
 
     def fake_confirm(parent, title, text, confirm_text="OK", cancel_text="取消"):
         confirmation["title"] = title
@@ -384,9 +384,9 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
         confirmation["cancel_text"] = cancel_text
         return True
 
-    monkeypatch.setattr("audio_recorder.ui.model_panel.confirm_without_icon", fake_confirm)
+    monkeypatch.setattr("src.ui.model_panel.confirm_without_icon", fake_confirm)
     monkeypatch.setattr(
-        "audio_recorder.ui.model_panel.QMessageBox.information",
+        "src.ui.model_panel.QMessageBox.information",
         lambda parent, title, message: info_messages.append(message),
     )
 
@@ -425,7 +425,7 @@ def test_model_manager_cancel_delete_keeps_downloaded_model(monkeypatch, tmp_pat
     manager = ModelDownloadManager(config)
     panel = SettingsPanel(config, manager)
     monkeypatch.setattr(
-        "audio_recorder.ui.model_panel.confirm_without_icon",
+        "src.ui.model_panel.confirm_without_icon",
         lambda *args, **kwargs: False,
     )
 
@@ -525,9 +525,9 @@ def test_download_manager_rejects_download_when_disk_space_is_insufficient(monke
 def test_main_window_settings_mode_reuses_main_surface(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     config = make_config(tmp_path)
-    monkeypatch.setattr("audio_recorder.app.main_window.get_config", lambda: config)
-    monkeypatch.setattr("audio_recorder.app.main_window.ensure_dirs", lambda _config=None: None)
-    monkeypatch.setattr("audio_recorder.app.main_window.AudioRecorder", lambda: None)
+    monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
+    monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda: None)
     window = MainWindow()
     try:
         window.show_settings()
@@ -598,7 +598,7 @@ def test_transcription_engine_uses_gguf_runtime(monkeypatch, tmp_path: Path) -> 
         def close(self):
             captured["closed"] = True
 
-    monkeypatch.setattr("audio_recorder.asr.engine.Qwen3AsrGgufRuntime", FakeRuntime)
+    monkeypatch.setattr("src.asr.engine.Qwen3AsrGgufRuntime", FakeRuntime)
     model_dir = tmp_path / "models" / QWEN3_ASR_GGUF_06B_SLUG
     write_required_model_files(model_dir)
     config = make_config(tmp_path)

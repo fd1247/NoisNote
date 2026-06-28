@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from audio_recorder.ui.widgets.dialogs import _ConfirmDialog, confirm_without_icon
+from src.ui.widgets.dialogs import _ConfirmDialog, confirm_without_icon
 
 
 def test_confirm_dialog_default_button_texts_are_confirm_and_cancel() -> None:

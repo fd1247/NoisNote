@@ -81,7 +81,7 @@ class AudioRecorder:
         self._volume_callback: VolumeCallback | None = None
         self._device_name: str = "未检测到设备"
         self.output_dir = Path(output_dir) if output_dir else (
-            Path.home() / "Documents" / "AudioRecorder" / "recordings"
+            Path.home() / "Documents" / "NoisNote" / "recordings"
         )
         self._mic_device = None  # soundcard.Microphone 对象
 

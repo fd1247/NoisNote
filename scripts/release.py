@@ -1,5 +1,5 @@
 """
-发布脚本 - 音频转录与总结工具
+发布脚本 - NoisNote
 
 自动化 GitHub Release 发布流程：
 1. 检查工作目录是否干净
@@ -26,12 +26,12 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 
 # 配置
-APP_NAME = "AudioRecorder"
-VERSION_FILE = ROOT / "audio_recorder" / "version.py"
+APP_NAME = "NoisNote"
+VERSION_FILE = ROOT / "src" / "version.py"
 BUILD_SCRIPT = ROOT / "build.py"
 DIST_DIR = ROOT / "dist"
 GITHUB_OWNER = "fd1247"
-GITHUB_REPO = "AudioRecorder"
+GITHUB_REPO = "NoisNote"
 
 # 日志配置
 logging.basicConfig(
@@ -183,7 +183,7 @@ def run_build() -> bool:
 
 def generate_release_notes(version: str) -> str:
     """生成 release notes 模板"""
-    return f"""## 音频转录与总结工具 v{version}
+    return f"""## NoisNote v{version}
 
 ### 新增功能
 - 应用打包为便携版 exe，无需安装 Python 和依赖
@@ -200,10 +200,10 @@ def generate_release_notes(version: str) -> str:
 - 部分杀毒软件可能误报，请添加信任
 
 ### 下载
-- 下载 `AudioRecorder-{version}.zip`，解压后运行 `AudioRecorder.exe`
+- 下载 `NoisNote-{version}.zip`，解压后运行 `NoisNote.exe`
 
 ### SHA256 校验
-- 校验文件：`AudioRecorder-{version}.zip.sha256`
+- 校验文件：`NoisNote-{version}.zip.sha256`
 """
 
 
@@ -256,7 +256,7 @@ def create_github_release(version: str) -> bool:
 def main() -> int:
     """主函数"""
     parser = argparse.ArgumentParser(
-        description="音频转录与总结工具发布脚本",
+        description="NoisNote发布脚本",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:

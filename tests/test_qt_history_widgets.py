@@ -8,8 +8,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from audio_recorder.history.service import HistoryRecord, HistoryStatus
-from audio_recorder.ui.widgets.history_item import HistoryListItemWidget
+from src.history.service import HistoryRecord, HistoryStatus
+from src.ui.widgets.history_item import HistoryListItemWidget
 
 
 class DummyHistoryActions:

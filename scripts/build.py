@@ -1,5 +1,5 @@
 """
-构建脚本 - 音频转录与总结工具
+构建脚本 - NoisNote
 
 执行完整构建流程：
 1. 读取版本号
@@ -26,10 +26,10 @@ ROOT = Path(__file__).parent.parent
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, str(ROOT))
 
-from audio_recorder.app.version import get_version_string, get_version_tuple  # noqa: E402
+from src.app.version import get_version_string, get_version_tuple  # noqa: E402
 
 # 配置
-APP_NAME = "AudioRecorder"
+APP_NAME = "NoisNote"
 BUILD_DIR = ROOT / "build"
 DIST_DIR = BUILD_DIR / "dist"
 OUTPUT_DIR = DIST_DIR / APP_NAME
@@ -58,7 +58,7 @@ def generate_version_info() -> None:
 
     content = f"""# UTF-8
 #
-# 音频转录与总结工具 - Windows exe 版本信息
+# NoisNote - Windows exe 版本信息
 # 此文件由 build.py 自动生成，请勿手动编辑
 #
 
@@ -79,14 +79,14 @@ VSVersionInfo(
         StringTable(
           u'080404B0',
           [
-            StringStruct(u'CompanyName', u'AudioRecorder'),
-            StringStruct(u'FileDescription', u'音频转录与总结工具'),
+            StringStruct(u'CompanyName', u'NoisNote'),
+            StringStruct(u'FileDescription', u'NoisNote'),
             StringStruct(u'FileVersion', u'{version_str}'),
-            StringStruct(u'InternalName', u'AudioRecorder'),
-            StringStruct(u'OriginalFilename', u'AudioRecorder.exe'),
-            StringStruct(u'ProductName', u'音频转录与总结工具'),
+            StringStruct(u'InternalName', u'NoisNote'),
+            StringStruct(u'OriginalFilename', u'NoisNote.exe'),
+            StringStruct(u'ProductName', u'NoisNote'),
             StringStruct(u'ProductVersion', u'{version_str}'),
-            StringStruct(u'LegalCopyright', u'Copyright (c) 2024 AudioRecorder'),
+            StringStruct(u'LegalCopyright', u'Copyright (c) 2024 NoisNote'),
           ]
         )
       ]
