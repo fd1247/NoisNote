@@ -4,9 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-音频转录与总结工具是一个面向 Windows 的 PySide6 / Qt Widgets 桌面应用。应用用于录制系统音频、录制麦克风或导入本地音视频文件，将输入保存为历史记录，再通过本地 ASR 模型转录文字，并可调用 OpenAI 兼容的 LLM API 生成总结。
+音频转录与总结工具是一个面向 Windows 的 PySide6 / Qt Widgets 桌面应用。用于录制系统音频、录制麦克风或导入本地音视频文件，将输入保存为历史记录，再通过本地 ASR 模型转录文字，并可调用 OpenAI 兼容的 LLM API 生成总结。
 
-主流程：创建录音或导入音视频 -> 保存历史记录 -> ASR 转录 -> 可选 LLM 总结 -> 查看结果和关联文件
+```text
+创建录音或导入音视频 -> 保存历史记录 -> ASR 转录 -> 可选 LLM 总结 -> 查看结果
+```
+
+## 技术栈
+
+|   层级   |                        技术                        |
+| -------- | -------------------------------------------------- |
+| GUI      | PySide6 / Qt Widgets                               |
+| 系统音频 | SoundCard (WASAPI Loopback)                        |
+| ASR 推理 | Qwen3-ASR GGUF（ONNX + llama.cpp），本地模型推理     |
+| LLM 总结 | OpenAI 兼容 API / Anthropic 兼容 API                |
+| 音频处理 | ffmpeg / ffprobe                                   |
+| 模型下载 | ModelScope（优先）+ GitHub（备用）                  |
+| 日志     | JSON Lines，写入 `~/Documents/NoisNote/logs/` |
+| 测试     | pytest，Qt 测试使用 `QT_QPA_PLATFORM=offscreen`     |
+| 打包     | PyInstaller（onedir 模式）                          |
 
 ## 常用命令
 
@@ -14,97 +30,172 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 启动应用
 python main.py
 
-# 安装依赖
-pip install -r requirements.txt
-
-# 运行当前稳定的单元测试
+# 运行常规单元测试
 python -m pytest tests/test_qt_history.py tests/test_qt_models_gguf.py tests/test_qt_model_workers.py -q
 
 # 运行 WASAPI 录音手动测试（需要 Windows 音频设备）
 python tests/test_wasapi_record.py
 
-# 运行 GGUF demo 手动测试（需要本地模型和运行环境）
-python -B model_test/llama-cpp/qwen3_asr_gguf_release_demo.py --init-only
+# 安装依赖
+pip install -r requirements.txt
 ```
 
-## 静态分析
+## 项目结构
 
-- **pylint**: 配置在 `.pylintrc`，已允许 PySide6 扩展并禁用 `no-name-in-module` 和 `no-member`
-- **ruff**: 用于代码风格检查
-- **mypy**: 用于类型检查
-
-## 技术栈
-
-| 层级 | 技术 |
-|---|---|
-| GUI | PySide6 / Qt Widgets |
-| 系统音频捕获 | `pyaudiowpatch` (WASAPI loopback) |
-| ASR 引擎 | Qwen3-ASR GGUF (llama-cpp 本地推理) |
-| 模型下载 | ModelScope (主源)，保留备用下载源扩展 |
-| LLM 总结 | `httpx` 调用 OpenAI 兼容 Chat Completions API |
-| 音频处理 | `scipy`, `numpy`, `pydub`, `ffmpeg`/`ffprobe` |
-| GPU 加速 | `onnxruntime-directml` |
-| 日志 | 自定义 JSON Lines 结构化日志 |
-| 测试 | `pytest`，Qt 测试使用 `QT_QPA_PLATFORM=offscreen` |
-
-## 架构概览
-
-### 入口和应用流
-
-`main.py` -> `src.app.application.main()` -> 初始化日志 -> 创建 QApplication -> 实例化 MainWindow -> 进入 Qt 事件循环
-
-### 模块分层
-
-```
+```text
+main.py                                  # 应用入口
 src/
-├── qt_app.py                    # QApplication 初始化
-├── qt_main_window.py            # 主窗口骨架、导航和历史记录操作
-├── handlers/                    # MainWindow 的业务逻辑 mixin
-│   ├── recording_handlers.py    # 录音设备/流程/状态
-│   ├── import_handlers.py       # 本地音视频导入、拖拽导入
-│   ├── processing_handlers.py   # 处理状态、结果保存、worker 清理
-│   ├── transcription_handlers.py# ASR 转录和进度
-│   ├── summary_handlers.py      # LLM 总结和进度
-│   └── settings_handlers.py     # 设置导航、配置保存、模型下载回调
-├── ui/                          # Qt 界面构造、控件和样式
-├── services/                    # 外部服务封装
-├── domain/                      # 领域数据结构
-└── utils/                       # 通用工具
+  __init__.py                           # 包版本信息
+  app/                                  # 应用核心
+    application.py                      # QApplication 初始化、日志、异常钩子
+    main_window.py                      # 主窗口骨架、UI 布局、Mixin 组装
+    config.py                           # 默认配置、配置读写、模型清单
+    version.py                          # 语义化版本号
+    update.py                           # GitHub Releases 更新检查
+    diagnostics.py                      # ASR 运行时诊断工具
+  audio/                                # 音频录制模块
+    recorder.py                         # AudioRecorder 录制引擎
+    device_manager.py                   # DeviceManager WASAPI 设备管理
+    types.py                            # CaptureMode、CaptureSettings 等数据类
+    preprocess.py                       # 音视频探测、格式转换
+  asr/                                  # ASR 转录引擎
+    engine.py                           # TranscriptionEngine 高层封装
+    runtime.py                          # Qwen3AsrGgufRuntime vendor 封装
+    types.py                            # ASR 数据模型、进度类型
+    utils.py                            # 转录文本清理
+  llm/                                  # LLM 总结服务
+    summarizer.py                       # Summarizer OpenAI 兼容 API 调用
+  history/                              # 历史记录管理
+    service.py                          # HistoryService CRUD 公开入口
+    storage.py                          # 文件存储和元数据管理
+    types.py                            # HistoryRecord、HistoryStatus
+  model_registry/                       # 模型下载管理
+    service.py                          # ModelService 模型目录与校验
+    downloader.py                       # ModelDownloadManager 任务生命周期
+    worker.py                           # ModelDownloadWorker 下载线程
+    download.py                         # 下载源选择、文件下载、解压、校验
+    types.py                            # ModelStatus、ModelCatalogEntry 等
+  handlers/                             # MainWindow Mixin
+    media_import.py                     # 文件导入和拖拽
+    recording.py                        # 录音设备和流程
+    processing.py                       # 处理状态和结果保存
+    transcription.py                    # ASR 转录和重新转录
+    summary.py                          # LLM 总结
+    settings.py                         # 设置导航和配置保存
+  workers/                              # 后台线程
+    transcription.py                    # TranscriptionWorker
+    summary.py                          # SummaryWorker
+    preprocess.py                       # AudioPreprocessWorker
+  ui/                                   # Qt 界面组件
+    styles.py                           # 全局 Qt 样式表
+    icons.py                            # 程序化 SVG 图标
+    sidebar.py                          # 侧边栏构建
+    recording.py                        # 录音页面
+    content.py                          # 转录/总结内容标签页
+    result.py                           # 结果状态辅助
+    settings.py                         # 设置面板
+    model_panel.py                      # 模型管理子页面
+    widgets/                            # 可复用组件
+      history_item.py                   # 历史记录列表项
+      dialogs.py                        # 确认对话框
+      update_dialog.py                  # 版本更新对话框
+  utils/                                # 通用工具
+    logging.py                          # JSON Lines 日志初始化、脱敏
+    ffmpeg.py                           # ffmpeg/ffprobe 发现
+vendor/qwen3-asr-gguf/                  # Qwen3-ASR-GGUF 第三方 Python 源码
+  qwen_asr_gguf/inference/              # ASR 推理源码（上游 e790e3b + 3 处定制）
+  qwen_asr_gguf/inference/bin/          # llama.cpp DLL（.gitignored, 由 download_deps.py 下载）
+docs/                                   # 文档
+  modules/                              # 各模块架构文档
+  roadmap/                              # 路线图
+  dev/                                  # 开发阶段文档
+tests/                                  # 单元测试
+scripts/                                # 构建和发布脚本
 ```
 
-### 关键设计决策
+## 核心设计
 
-1. **Handler Mixin 模式**: `MainWindow` 通过 mixin 组合不同业务逻辑（录音、导入、转录、总结、设置），每个 handler 负责独立的功能域。
+### 数据目录
 
-2. **后台任务**: 耗时任务（转录、总结、模型下载）在 `QThread` 后台线程执行，通过 Qt signal/slot 通知 UI，绝不直接操作 Qt 控件。
+配置文件存储在系统 AppData 目录，用户数据存储在 Documents：
 
-3. **历史记录存储**: 每条记录是 `~/Documents/NoisNote/recordings/<record_id>/` 下的独立文件夹，包含 audio.wav、transcript.txt、summary.txt、export.md、metadata.json。
+```text
+%APPDATA%/NoisNote/
+  config.json
 
-4. **模型管理**: 模型存储在 `~/Documents/NoisNote/models/`，以 GGUF zip 包形式下载。正式模型清单只包含 `Qwen3-ASR-0.6B-GGUF` 和 `Qwen3-ASR-1.7B-GGUF`。
+~/Documents/NoisNote/
+  data/                                  # 历史记录
+  models/                                # ASR 模型
+  logs/                                  # 日志
+```
 
-5. **配置结构**: 配置文件 `~/Documents/NoisNote/config.json`，主要配置段：`funasr`（ASR 配置）、`qwen3_asr_gguf`（GGUF 运行参数）、`llm`（API 配置）、`audio`（录音和自动化开关）、`models`（模型清单）。
+历史记录采用"一条记录一个文件夹"的结构。导入音频默认记录源文件路径，不复制源文件。导入视频在开始转录时才提取音轨。下载中的模型先写入 `.download-<name>` 临时目录，校验通过后再移动到最终目录。
+
+### 配置结构
+
+主要配置段：
+
+- `selected_asr`：ASR 模型名、模型路径、推理设备
+- `qwen3_asr_gguf`：GGUF runtime 工具目录、chunk、上下文和热词等运行参数
+- `llm`：API Key、模型名、Base URL、供应商
+- `audio`：录音模式、设备选择、自动转录/总结开关、预处理参数
+- `models`：已下载模型记录
+
+`config.py` 负责补齐新增默认字段，并通过 `_normalize_model_config` 迁移旧模型名。
+
+### MainWindow Mixin 架构
+
+MainWindow 通过 Python 多重继承组装功能，每个 Mixin 对应 `handlers/` 目录下的一个文件。Mixin 之间不应直接互相调用，公共逻辑提取到 MainWindow 自身。
+
+### 后台任务
+
+耗时任务不能在 UI 线程中执行：
+
+- 转录：`TranscriptionWorker` (QThread)
+- 总结：`SummaryWorker` (QThread)
+- 音频预处理：`AudioPreprocessWorker` (QThread)
+- 模型下载：`ModelDownloadWorker`，生命周期由 `ModelDownloadManager` 管理
+
+后台线程不得直接操作 Qt 控件，只能通过 signal/slot 通知 UI。
+
+### Vendor 依赖
+
+Qwen3-ASR-GGUF 推理引擎以源码形式集成在 `vendor/qwen3-asr-gguf/` 中，运行时通过 `sys.path.insert` + `ctypes.CDLL` 动态加载。llama.cpp DLL 来自官方预编译的 `llama-b7798-bin-win-vulkan-x64.zip`，由 `scripts/download_deps.py` 下载到 `vendor/qwen3-asr-gguf/qwen_asr_gguf/inference/bin/`（该目录已 .gitignore）。项目对上游源码做了 3 处定制，详见 `vendor/qwen3-asr-gguf/VENDOR_SOURCE.md`。
+
+### 模型管理
+
+正式模型清单仅包含 `Qwen3-ASR-0.6B-GGUF` 和 `Qwen3-ASR-1.7B-GGUF`。以 `name` 作为主键，`alias` 仅用于兼容旧配置。新增模型需同步 `app/config.py`、`asr/runtime.py`、`model_registry/service.py` 和测试文件。
 
 ## 当前约束
 
-- **平台**: 仅支持 Windows 10/11，WASAPI loopback 依赖 Windows 音频子系统
-- **设备策略**: 默认设备策略偏保守，`auto` 会映射到 CPU
-- **模型识别**: 应用只识别 `~/Documents/NoisNote/models/` 下的模型目录
-- **快捷键**: 快捷键页是预留入口，快捷键体系尚未完成
-- **旧代码**: Flet 界面代码已清理，当前只维护 PySide6 实现
-
-## 测试说明
-
-- Qt 测试使用 `QT_QPA_PLATFORM=offscreen` 环境变量
-- **核心稳定测试**: `test_qt_history.py`, `test_qt_models_gguf.py`, `test_qt_model_workers.py`
-- **手动测试**: `test_wasapi_record.py`（需要真实音频设备）、模型 demo（需要本地模型）
-- 真实模型推理和长时间音频转录不要在自动验证中运行
+- 目标运行环境是 Windows 10/11。录音模块依赖 WASAPI Loopback，不可移植到其他平台。
+- 默认设备策略偏保守，`auto` 映射到 CPU。
+- GPU 推理路径仅实现 DirectML（Windows），无 CUDA/CoreML 适配。
+- 仅识别 `~/Documents/NoisNote/models/` 下的模型目录。
+- 快捷键页面是预留入口，快捷键体系尚未完成。
 
 ## 开发规范
 
-- 代码注释和文档使用中文，编码 UTF-8
-- 代码中不使用 emoji
-- 不要直接改动用户本地数据目录，除非用户明确要求迁移或清理
-- 不要提交 API Key、模型文件、录音文件、缓存和本地 IDE 配置
-- 变更历史记录、模型管理或配置结构时，需要补充对应单元测试
-- 项目还未发布，不要做兼容性处理；如果旧代码要改，直接改成最合适的
-- 最终发布给用户的config.json配置，不要包含应用内固定的参数
+- 注释使用中文，文档使用中文，编码 UTF-8。
+- 代码中不使用 emoji。
+- 不要直接改动用户本地数据目录，除非用户明确要求。
+- 不要提交 API Key、模型文件、录音文件、缓存和本地 IDE 配置。
+- 变更历史记录、模型管理或配置结构时，需补充对应单元测试。
+- UI 变更应保持浅色主界面和设置覆盖页的现有风格。
+- 项目还未发布，不要做兼容性处理。旧代码要改就直接改成最合适的。
+
+## 验证建议
+
+代码改动后优先运行：
+
+```bash
+python -m pytest tests/test_qt_history.py tests/test_qt_models_gguf.py tests/test_qt_model_workers.py -q
+```
+
+默认不要在自动化验证中运行真实模型推理（Qwen3-ASR、CUDA、长音频转录、模型下载）。这些任务耗时长，应在用户终端手动执行。Codex 可协助分析 stdout、结果文件和日志，但不通过前台管道直接运行。
+
+以下测试依赖本机设备或网络，默认只作为手动验收：
+
+```bash
+python tests/test_wasapi_record.py
+```

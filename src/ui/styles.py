@@ -5,6 +5,7 @@ from pathlib import Path
 
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets"
 _COMBO_ARROW_PATH = (_ASSET_DIR / "svg" / "下拉.svg").as_posix()
+_CHECK_MARK_PATH = (_ASSET_DIR / "svg" / "check-white.svg").as_posix()
 
 
 APP_STYLESHEET = """
@@ -41,6 +42,16 @@ QFrame#ModelListPanel {
     background: #ffffff;
     border: 1px solid #e5e7eb;
     border-radius: 6px;
+}
+QFrame#HotwordPanel {
+    background: #ffffff;
+    border: 1px solid #dfe5ee;
+    border-radius: 8px;
+}
+QFrame#HotwordMetricCard {
+    background: #ffffff;
+    border: 1px solid #dfe5ee;
+    border-radius: 8px;
 }
 QFrame#HistoryItem {
     background: transparent;
@@ -87,6 +98,49 @@ QLabel#SectionTitle {
 QLabel#Muted {
     color: #6b7280;
 }
+QLabel#HotwordHeroTitle {
+    color: #111827;
+    font-size: 22px;
+    font-weight: 700;
+}
+QLabel#HotwordHeroIcon {
+    background: #eff6ff;
+    border-radius: 15px;
+    color: #2563eb;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#HotwordMetricIcon {
+    background: #eff6ff;
+    border-radius: 17px;
+    color: #2563eb;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#HotwordMetricTitle {
+    color: #374151;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel#HotwordMetricValue {
+    color: #2563eb;
+    font-size: 24px;
+    font-weight: 700;
+}
+QLabel#HotwordMetricSuffix {
+    color: #4b5563;
+    font-size: 14px;
+    font-weight: 600;
+}
+QLabel#HotwordStatusPill,
+QLabel#HotwordCountPill {
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    color: #374151;
+    font-weight: 600;
+    padding: 6px 10px;
+}
 QLabel#ConfirmDialogMessage {
     color: #111827;
     font-size: 14px;
@@ -103,6 +157,25 @@ QLabel#TimerLabel {
 }
 QCheckBox {
     color: #374151;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #b8c1d0;
+    border-radius: 4px;
+    background: #ffffff;
+}
+QCheckBox::indicator:hover {
+    border-color: #2563eb;
+}
+QCheckBox::indicator:checked {
+    background: #2563eb;
+    border-color: #2563eb;
+    image: url("__CHECK_MARK_PATH__");
+}
+QCheckBox::indicator:disabled {
+    background: #f3f4f6;
+    border-color: #d1d5db;
 }
 QTabWidget::pane {
     border: 1px solid #d1d5db;
@@ -282,6 +355,17 @@ QPushButton#DangerButton {
 QPushButton#DangerButton:hover {
     background: #b91c1c;
 }
+QPushButton#DangerSmallButton {
+    background: #ffffff;
+    border-color: #fecaca;
+    color: #b91c1c;
+    font-weight: 600;
+    padding: 5px 10px;
+    min-width: 52px;
+}
+QPushButton#DangerSmallButton:hover {
+    background: #fef2f2;
+}
 QPushButton#SuccessButton {
     background: #e8f5ee;
     border-color: #b7e2ca;
@@ -291,6 +375,10 @@ QPushButton#SuccessButton {
 QPushButton#SmallButton {
     padding: 5px 10px;
     min-width: 52px;
+}
+QPushButton#HotwordIconButton {
+    padding: 4px 8px;
+    min-width: 34px;
 }
 QPushButton#ResultTabButton {
     background: transparent;
@@ -398,8 +486,21 @@ QComboBox QAbstractItemView {
 QPlainTextEdit {
     line-height: 1.4;
 }
+QPlainTextEdit#HotwordWordsEditor {
+    background: #ffffff;
+    border-color: #d8dee8;
+    border-radius: 7px;
+    padding: 10px;
+}
 QTextBrowser#MarkdownView {
     line-height: 1.45;
+}
+QLineEdit#HotwordSearchBox {
+    background: #ffffff;
+    border: 1px solid #d8dee8;
+    border-radius: 7px;
+    min-height: 28px;
+    padding: 7px 10px;
 }
 QListWidget {
     background: transparent;
@@ -409,6 +510,12 @@ QListWidget {
 QListWidget#ModelList {
     background: #ffffff;
     border: none;
+}
+QListWidget#HotwordSetList {
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px;
 }
 QListWidget::item {
     padding: 2px;
@@ -430,6 +537,35 @@ QListWidget#ModelList::item:hover {
 QListWidget#ModelList::item:selected {
     background: #e8eefc;
     color: #111827;
+}
+QListWidget#HotwordSetList::item {
+    background: #ffffff;
+    border: 1px solid #e6ebf2;
+    border-radius: 7px;
+    color: #111827;
+    padding: 0;
+}
+QListWidget#HotwordSetList::item:hover {
+    background: #f9fbff;
+    border-color: #cddaf0;
+}
+QListWidget#HotwordSetList::item:selected {
+    background: #edf4ff;
+    border-color: #76a9ff;
+    color: #111827;
+}
+QWidget#HotwordSetItemContent {
+    background: transparent;
+}
+QLabel#HotwordSetItemTitle {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+}
+QLabel#HotwordSetItemCount {
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 400;
 }
 QTreeWidget#ModelTree {
     background: #ffffff;
@@ -477,4 +613,4 @@ QProgressBar::chunk {
     background: #22c55e;
     border-radius: 4px;
 }
-""".replace("__COMBO_ARROW_PATH__", _COMBO_ARROW_PATH)
+""".replace("__COMBO_ARROW_PATH__", _COMBO_ARROW_PATH).replace("__CHECK_MARK_PATH__", _CHECK_MARK_PATH)

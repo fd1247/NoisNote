@@ -16,6 +16,7 @@ _ICON_MAP: dict[str, str] = {
     "settings": "设置.svg",
     "general": "设置.svg",
     "models": "模型.svg",
+    "hotwords": "热词管理.svg",
     "shortcuts": "快捷键.svg",
     "import": "导入.svg",
     "record": "麦克风.svg",
@@ -51,4 +52,3 @@ def make_combo_arrow_icon() -> QIcon:
     """加载下拉框箭头图标。"""
     svg_path = _SVG_DIR / "下拉.svg"
     return QIcon(str(svg_path)) if svg_path.exists() else QIcon()
-

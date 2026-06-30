@@ -32,7 +32,6 @@ def make_config(root: Path) -> dict:
             "memory_num": 1,
             "n_ctx": 2048,
             "context": "",
-            "hotwords": [],
         },
         "llm": {"api_key": "", "model": "gpt-4o-mini", "base_url": "https://api.openai.com/v1"},
         "audio": {

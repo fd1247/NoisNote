@@ -61,6 +61,7 @@ class HistoryStorageMixin:
             "import_strategy",
             "source_size_bytes",
             "asr",
+            "hotword_sets",
         ):
             if key in existing:
                 metadata[key] = existing[key]

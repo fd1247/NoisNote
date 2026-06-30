@@ -152,6 +152,8 @@ DEFAULT_MODEL_CATALOG_BY_NAME = {
 DEFAULT_CONFIG: dict[str, Any] = {
     "demo_audio_imported": False,
     "data_root": str(DEFAULT_DATA_ROOT),
+    "hotword_sets": [],  # 热词表列表
+    "active_hotword_set_ids": [],  # 激活的热词表ID列表
     "selected_asr": {
         "model": QWEN3_ASR_GGUF_06B_ID,
         "model_path": "",
@@ -163,7 +165,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "memory_num": 1,
         "n_ctx": 2048,
         "context": "",
-        "hotwords": [],
     },
     "llm": {
         "provider": "openai",
@@ -353,5 +354,4 @@ def _normalize_model_config(config: dict) -> tuple[dict, bool]:
         changed = True
 
     return config, changed
-
 

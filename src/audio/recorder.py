@@ -33,7 +33,8 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 # 每次读取的音频块时长（秒），决定设备切换响应延迟
-_BLOCK_DURATION = 0.1  # 100ms
+# 值越小缓冲区溢出风险越高，值越大线程调度容错性越强
+_BLOCK_DURATION = 0.2  # 200ms
 
 # 读取超时倍数：read_duration 超过 _BLOCK_DURATION * 此值时认为设备断连
 _READ_TIMEOUT_MULTIPLIER = 3

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # GitHub 仓库信息
 GITHUB_OWNER = "fd1247"
-GITHUB_REPO = "AudioRecorder"
+GITHUB_REPO = "NoisNote"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 
 # 缓存过期时间（秒）

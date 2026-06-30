@@ -153,10 +153,12 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.settings_back_button = controls.back_button
         self.settings_general_button = controls.general_button
         self.settings_models_button = controls.models_button
+        self.settings_hotwords_button = controls.hotwords_button
         self.settings_shortcuts_button = controls.shortcuts_button
         self.settings_nav_buttons = [
             self.settings_general_button,
             self.settings_models_button,
+            self.settings_hotwords_button,
             self.settings_shortcuts_button,
         ]
         return sidebar
@@ -183,6 +185,7 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.settings_panel = SettingsPanel(self.config, self.model_download_manager, self)
         self.settings_panel.saved.connect(self._apply_settings_config)
         self.settings_panel.cancelled.connect(self.hide_settings)
+        self.settings_panel.hotwords_changed.connect(self._persist_settings_config)
         self.content_stack.addWidget(self.recording_page)
         self.content_stack.addWidget(self.history_page)
         self.content_stack.addWidget(self.settings_panel)

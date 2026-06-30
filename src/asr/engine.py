@@ -114,9 +114,6 @@ class TranscriptionEngine:
         local_model_path = asr_config.get("model_path") or ""
         model_dir = Path(local_model_path).expanduser() if local_model_path else service.get_target_dir(entry)
         gguf_config = self.config.get("qwen3_asr_gguf", {})
-        hotwords = gguf_config.get("hotwords") or []
-        if isinstance(hotwords, str):
-            hotwords = [part.strip() for part in hotwords.split(",") if part.strip()]
 
         return Qwen3AsrGgufRuntimeConfig(
             model_dir=model_dir.resolve(),
@@ -128,8 +125,17 @@ class TranscriptionEngine:
             memory_num=int(gguf_config.get("memory_num") or 1),
             n_ctx=int(gguf_config.get("n_ctx") or 2048),
             context=str(gguf_config.get("context") or ""),
-            hotwords=list(hotwords),
+            hotwords=self._resolve_active_hotwords(),
         )
+
+    def _resolve_active_hotwords(self) -> list[str]:
+        """从激活的热词表解析运行时热词。"""
+        try:
+            from ..hotwords.service import HotwordService
+
+            return HotwordService(self.config).resolve_active_hotwords()
+        except Exception:
+            return []
 
     def _failure_diagnostics(self, error: Qwen3AsrGgufError) -> dict[str, Any]:
         """构造失败场景写入 metadata 的诊断结构。"""
@@ -153,7 +159,7 @@ class TranscriptionEngine:
             "runtime": {},
             "timings": {},
             "performance": {},
-            "hotwords": list(self.config.get("qwen3_asr_gguf", {}).get("hotwords") or []),
+            "hotwords": self._resolve_active_hotwords(),
             "context_enabled": bool(self.config.get("qwen3_asr_gguf", {}).get("context")),
             "error": {
                 **error.to_metadata(),

@@ -23,6 +23,7 @@ class SettingsHandlers:
         titles = {
             "general": "通用",
             "models": "模型",
+            "hotwords": "",
             "shortcuts": "快捷键",
         }
         self.settings_panel.show_section(section)
@@ -31,6 +32,7 @@ class SettingsHandlers:
         button_map = {
             "general": self.settings_general_button,
             "models": self.settings_models_button,
+            "hotwords": self.settings_hotwords_button,
             "shortcuts": self.settings_shortcuts_button,
         }
         button_map.get(section, self.settings_general_button).setChecked(True)
@@ -52,6 +54,13 @@ class SettingsHandlers:
         self._set_status("")
 
     def _apply_settings_config(self, updated_config: dict) -> None:
+        self._persist_settings_config(updated_config)
+        self.load_recordings()
+        self.hide_settings()
+        self._set_status("配置已保存")
+
+    def _persist_settings_config(self, updated_config: dict) -> None:
+        """保存设置配置并同步依赖，不切换当前页面。"""
         self.config = updated_config
         save_config(self.config)
         output_dir = get_output_dir(self.config)
@@ -62,11 +71,9 @@ class SettingsHandlers:
         self.model_download_manager.service = ModelService(self.config)
         self.settings_panel.config = self.config
         self.settings_panel.model_service = ModelService(self.config)
+        self.settings_panel._sync_hotword_service()
         self.settings_panel.model_manager.config = self.config
         self.settings_panel.model_manager.service = ModelService(self.config)
-        self.load_recordings()
-        self.hide_settings()
-        self._set_status("配置已保存")
 
     def _refresh_settings_after_model_change(self) -> None:
         self.settings_panel._refresh_asr_model_options()
@@ -79,4 +86,3 @@ class SettingsHandlers:
 
     def _on_model_download_cancelled(self, name: str) -> None:
         self._set_status("模型下载已取消")
-

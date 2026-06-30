@@ -121,7 +121,7 @@ def run_pyinstaller() -> bool:
         "--noconfirm",
         "--clean",
         "--distpath", str(DIST_DIR),
-        "--workpath", str(BUILD_DIR / "build"),
+        "--workpath", str(BUILD_DIR),
         str(SPEC_FILE),
     ]
 
@@ -136,10 +136,11 @@ def run_pyinstaller() -> bool:
             text=True,
         )
         logger.info("PyInstaller 输出:\n%s", result.stdout)
-        return True
     except subprocess.CalledProcessError as e:
         logger.error("PyInstaller 执行失败:\n%s", e.stderr)
         return False
+
+    return True
 
 
 def cleanup_build_output() -> None:

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from src.app import config as config_module
@@ -53,7 +54,6 @@ def make_config(root: Path) -> dict:
             "memory_num": 1,
             "n_ctx": 2048,
             "context": "",
-            "hotwords": [],
         },
         "llm": {"api_key": "", "model": "gpt-4o-mini", "base_url": "https://api.openai.com/v1"},
         "audio": {
@@ -283,6 +283,43 @@ def test_settings_dialog_lists_downloaded_models_and_saves_path(tmp_path: Path) 
         panel.auto_transcribe.setChecked(False)
         updated = panel.updated_config()
         assert updated["audio"]["auto_transcribe"] is False
+    finally:
+        panel.close()
+        manager.deleteLater()
+        app.processEvents()
+
+
+def test_settings_hotword_activation_uses_replaced_config(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    config = make_config(tmp_path)
+    hotword_set = {
+        "id": "hotword-set-1",
+        "name": "项目术语",
+        "description": "会议常用词",
+        "words": ["NoisNote", "Qwen3-ASR"],
+    }
+    config["hotword_sets"] = [dict(hotword_set)]
+    config["active_hotword_set_ids"] = []
+    manager = ModelDownloadManager(config)
+    panel = SettingsPanel(config, manager)
+
+    replaced_config = dict(config)
+    replaced_config["hotword_sets"] = [dict(hotword_set)]
+    replaced_config["active_hotword_set_ids"] = []
+    panel.config = replaced_config
+
+    try:
+        panel.reset_from_config()
+        panel.show_section("hotwords")
+
+        item = panel.hotword_set_list.item(0)
+        item.setCheckState(Qt.CheckState.Checked)
+        app.processEvents()
+
+        updated = panel.updated_config()
+
+        assert replaced_config["active_hotword_set_ids"] == ["hotword-set-1"]
+        assert updated["active_hotword_set_ids"] == ["hotword-set-1"]
     finally:
         panel.close()
         manager.deleteLater()
@@ -604,6 +641,15 @@ def test_transcription_engine_uses_gguf_runtime(monkeypatch, tmp_path: Path) -> 
     config = make_config(tmp_path)
     config["selected_asr"]["model_path"] = str(model_dir)
     config["selected_asr"]["device"] = "gpu"
+    config["hotword_sets"] = [
+        {
+            "id": "hotword-set-1",
+            "name": "项目术语",
+            "description": "",
+            "words": ["NoisNote", "Qwen3-ASR"],
+        }
+    ]
+    config["active_hotword_set_ids"] = ["hotword-set-1"]
 
     engine = TranscriptionEngine(config)
     text = engine.transcribe("audio.wav")
@@ -614,5 +660,6 @@ def test_transcription_engine_uses_gguf_runtime(monkeypatch, tmp_path: Path) -> 
     assert captured["runtime_config"].model_dir == model_dir.resolve()
     assert captured["runtime_config"].model_size == "0.6B"
     assert captured["runtime_config"].requested_device == "gpu"
+    assert captured["runtime_config"].hotwords == ["NoisNote", "Qwen3-ASR"]
     assert engine.last_diagnostics["performance"]["rtf"] == 0.02
     assert captured["closed"] is True

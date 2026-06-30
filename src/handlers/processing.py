@@ -80,6 +80,23 @@ class ProcessingHandlers:
         if catalog_item:
             context["adapter"] = catalog_item.get("adapter", "")
             context["model_size"] = catalog_item.get("model_size", "")
+
+        # 添加热词表信息
+        try:
+            from ..hotwords.service import HotwordService
+            hotword_service = HotwordService(self.config)
+            active_sets = hotword_service.get_active_hotword_sets()
+            context["hotword_sets"] = [
+                {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "word_count": len(s.get("words", [])),
+                }
+                for s in active_sets
+            ]
+        except Exception:
+            context["hotword_sets"] = []
+
         if diagnostics:
             context["timings"] = diagnostics.get("timings", {})
             context["performance"] = diagnostics.get("performance", {})
