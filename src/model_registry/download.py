@@ -151,7 +151,8 @@ def _download_model_files(
         raise RuntimeError("模型清单缺少 ModelScope 文件列表")
 
     base_url = base_url.rstrip("/") + "/"
-    progress = _DownloadProgress(_files_total_size(files))
+    total_size = _files_total_size(files)
+    progress = _DownloadProgress(total_size)
     for file_info in files:
         if should_cancel():
             raise RuntimeError("下载已取消")
@@ -162,7 +163,16 @@ def _download_model_files(
         url = str(file_info.get("url") or f"{base_url}{file_name}")
         target_path = download_dir / file_name
         partial_path = download_dir / f"{file_name}.part"
-        _download_file(url, partial_path, file_name, expected_size, progress, on_progress, should_cancel)
+        _download_file(
+            url,
+            partial_path,
+            file_name,
+            expected_size,
+            progress,
+            on_progress,
+            should_cancel,
+            infer_total_size=total_size is not None,
+        )
         partial_path.replace(target_path)
         if expected_size is not None and target_path.stat().st_size != expected_size:
             raise RuntimeError(f"{file_name} 文件大小不一致，请重新下载。")
@@ -176,6 +186,7 @@ def _download_file(
     progress: _DownloadProgress,
     on_progress: ProgressCallback,
     should_cancel: CancelChecker,
+    infer_total_size: bool = True,
 ) -> None:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme == "file":
@@ -183,14 +194,16 @@ def _download_file(
         if not source_path.is_file():
             raise RuntimeError("本地模型文件不存在")
         with source_path.open("rb") as response, open(target_path, "wb") as output:
-            progress.ensure_total_size(source_path.stat().st_size or estimated_size)
+            if infer_total_size:
+                progress.ensure_total_size(source_path.stat().st_size or estimated_size)
             _copy_download_stream(response, output, display_name, progress, on_progress, should_cancel)
         return
     if parsed.scheme not in {"http", "https"}:
         raise RuntimeError("模型下载地址协议不受支持")
     request = urllib.request.Request(url, headers={"User-Agent": "AudioRecorder/1.0"})
     with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-        progress.ensure_total_size(_response_size(response) or estimated_size)
+        if infer_total_size:
+            progress.ensure_total_size(_response_size(response) or estimated_size)
         with open(target_path, "wb") as output:
             _copy_download_stream(response, output, display_name, progress, on_progress, should_cancel)
 

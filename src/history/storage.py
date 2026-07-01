@@ -61,6 +61,7 @@ class HistoryStorageMixin:
             "import_strategy",
             "source_size_bytes",
             "asr",
+            "timestamps",
             "hotword_sets",
         ):
             if key in existing:

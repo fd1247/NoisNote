@@ -9,7 +9,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ..app.config import QWEN3_ASR_GGUF_REQUIRED_FILES, get_qwen3_asr_gguf_tool_dir
+from ..app.config import (
+    QWEN3_ASR_GGUF_REQUIRED_FILES,
+    QWEN3_FORCE_ALIGNER_GGUF_REQUIRED_FILES,
+    get_qwen3_asr_gguf_tool_dir,
+)
 from .types import (
     DeviceResolution,
     Qwen3AsrGgufError,
@@ -23,6 +27,7 @@ from .utils import (
     _round_seconds,
     _strip_hotword_prompt_leak,
 )
+from .timestamps import alignment_items_to_timeline, is_timeline_monotonic, timeline_to_dicts
 from ..utils.logging import log_event
 
 ProgressCallback = Callable[[object], None]
@@ -39,6 +44,14 @@ __all__ = [
     "build_context",
     "resolve_device_mode",
 ]
+
+
+def _alignment_items(result: Any) -> list[Any]:
+    alignment = getattr(result, "alignment", None)
+    items = getattr(alignment, "items", None)
+    if items is None:
+        return []
+    return list(items)
 
 
 class Qwen3AsrGgufRuntime:
@@ -68,7 +81,24 @@ class Qwen3AsrGgufRuntime:
                   context={"tool_dir": str(tool_dir)})
         start = time.perf_counter()
         try:
-            ASREngineConfig, _AlignerConfig, QwenASREngine = self._import_engine(tool_dir)
+            ASREngineConfig, AlignerConfig, QwenASREngine = self._import_engine(tool_dir)
+            align_config = None
+            if self.config.enable_timestamps:
+                if self.config.aligner_model_dir is None:
+                    raise Qwen3AsrGgufError(
+                        "时间戳对齐模型未配置，已无法启用时间戳。",
+                        "aligner_model_dir is None",
+                        "MissingAlignerConfig",
+                    )
+                align_config = AlignerConfig(
+                    model_dir=str(self.config.aligner_model_dir),
+                    encoder_frontend_fn="qwen3_aligner_encoder_frontend.int4.onnx",
+                    encoder_backend_fn="qwen3_aligner_encoder_backend.int4.onnx",
+                    llm_fn="qwen3_aligner_llm.q4_k.gguf",
+                    onnx_provider=self.device.onnx_provider,
+                    llm_use_gpu=self.device.llm_use_gpu,
+                    n_ctx=int(self.config.n_ctx),
+                )
             engine_config = ASREngineConfig(
                 model_dir=str(self.config.model_dir),
                 # 显式指定模型文件名：当前下载的模型是 int4/q4_k 量化版本，
@@ -82,7 +112,8 @@ class Qwen3AsrGgufRuntime:
                 chunk_size=float(self.config.chunk_size),
                 memory_num=int(self.config.memory_num),
                 verbose=False,
-                enable_aligner=False,
+                enable_aligner=bool(self.config.enable_timestamps),
+                align_config=align_config,
             )
             log_event("asr.load.engine_create", level="INFO", module="asr")
             with contextlib.redirect_stdout(io.StringIO()):
@@ -158,15 +189,17 @@ class Qwen3AsrGgufRuntime:
                 "EmptyTranscription",
             )
 
+        timeline = alignment_items_to_timeline(_alignment_items(result))
         diagnostics = self._build_diagnostics(
             audio,
             text,
             transcribe_seconds,
             getattr(result, "performance", None),
+            timeline,
         )
         if on_progress:
             on_progress("转录完成")
-        return Qwen3AsrGgufResult(text=text, diagnostics=diagnostics)
+        return Qwen3AsrGgufResult(text=text, diagnostics=diagnostics, timeline=timeline)
 
     def close(self) -> None:
         """关闭底层 engine。"""
@@ -210,6 +243,25 @@ class Qwen3AsrGgufRuntime:
                 "missing_files=" + ", ".join(missing),
                 "MissingModelFile",
             )
+        if self.config.enable_timestamps:
+            aligner_dir = self.config.aligner_model_dir.expanduser() if self.config.aligner_model_dir else None
+            if aligner_dir is None or not aligner_dir.exists() or not aligner_dir.is_dir():
+                raise Qwen3AsrGgufError(
+                    "时间戳对齐模型未下载，已无法启用时间戳。",
+                    str(aligner_dir or ""),
+                    "MissingAlignerDirectory",
+                )
+            missing_aligner = [
+                file_name
+                for file_name in QWEN3_FORCE_ALIGNER_GGUF_REQUIRED_FILES
+                if not (aligner_dir / file_name).exists()
+            ]
+            if missing_aligner:
+                raise Qwen3AsrGgufError(
+                    "时间戳对齐模型文件不完整，已无法启用时间戳。",
+                    "missing_files=" + ", ".join(missing_aligner),
+                    "MissingAlignerModelFile",
+                )
 
     def _import_engine(self, tool_dir: Path):
         if str(tool_dir) not in sys.path:
@@ -254,7 +306,9 @@ class Qwen3AsrGgufRuntime:
         text: str,
         transcribe_seconds: float,
         performance: Any,
+        timeline: list[Any] | None = None,
     ) -> dict[str, Any]:
+        timeline = timeline or []
         timings = {
             "model_load_seconds": _round_seconds(self.model_load_seconds),
             "transcribe_seconds": _round_seconds(transcribe_seconds),
@@ -290,6 +344,16 @@ class Qwen3AsrGgufRuntime:
             "performance": performance or {},
             "hotwords": list(self.config.hotwords),
             "context_enabled": bool(build_context(self.config.context, self.config.hotwords)),
+            "timestamps": {
+                "requested": bool(self.config.request_timestamps),
+                "enabled": bool(self.config.enable_timestamps and timeline),
+                "aligner_model_name": self.config.aligner_model_name,
+                "aligner_model_dir": str(self.config.aligner_model_dir or ""),
+                "items_count": len(timeline),
+                "monotonic": is_timeline_monotonic(timeline),
+                "degrade_reason": self.config.timestamp_degrade_reason,
+            },
+            "timeline": timeline_to_dicts(timeline),
             "text_length": len(text),
             "error": None,
         }

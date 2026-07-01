@@ -50,6 +50,11 @@ class Qwen3AsrGgufRuntimeConfig:
     context: str = ""
     hotwords: list[str] = field(default_factory=list)
     language: str | None = None
+    request_timestamps: bool = False
+    enable_timestamps: bool = False
+    aligner_model_dir: Path | None = None
+    aligner_model_name: str = ""
+    timestamp_degrade_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,16 @@ class Qwen3AsrGgufResult:
 
     text: str
     diagnostics: dict[str, Any]
+    timeline: list["TimelineSegment"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TimelineSegment:
+    """转录时间轴片段。"""
+
+    start: float
+    end: float
+    text: str
 
 
 @dataclass(frozen=True)

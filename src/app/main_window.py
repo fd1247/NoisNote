@@ -222,26 +222,50 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
             self.manual_summarize,
             self.retry_transcription,
             self.copy_panel_text,
+            self.export_result,
         )
         self.result_stack = controls.result_stack
         self.transcript_tab_button = controls.transcript_tab_button
+        self.timeline_tab_button = controls.timeline_tab_button
         self.summary_tab_button = controls.summary_tab_button
         self.transcript_status = controls.transcript_status
         self.transcript_progress = controls.transcript_progress
         self.transcript_text = controls.transcript_text
         self.transcript_copy_button = controls.transcript_copy_button
         self.retry_transcription_button = controls.retry_transcription_button
+        self.timeline_status = controls.timeline_status
+        self.timeline_text = controls.timeline_text
+        self.timeline_copy_button = controls.timeline_copy_button
         self.summary_status = controls.summary_status
         self.summary_progress = controls.summary_progress
         self.summary_text = controls.summary_text
         self.summary_copy_button = controls.summary_copy_button
         self.manual_summary_button = controls.manual_summary_button
+        self.export_button = controls.export_button
         self._set_result_tab("transcript")
         return page
 
     def _set_transcript_text(self, text: str) -> None:
         """写入转录文本，并同步当前页复制按钮。"""
         set_transcript_text(self, text)
+
+    def _set_timeline_text(self, text: str) -> None:
+        """写入逐句时间轴，并同步复制按钮。"""
+        self.timeline_text.setPlainText(text)
+        self.timeline_copy_button.setVisible(bool(text.strip()))
+
+    def _timeline_display_text(self, record: HistoryRecord) -> str:
+        """把结构化时间轴格式化为详情页可读文本。"""
+        items = self.history_service.read_timeline(record)
+        lines: list[str] = []
+        for item in items:
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            start = _format_timeline_seconds(item.get("start", 0.0))
+            end = _format_timeline_seconds(item.get("end", 0.0))
+            lines.append(f"{start} - {end}  {text}")
+        return "\n".join(lines)
 
     def _set_result_tab(self, kind: str) -> None:
         """切换详情结果区标签，并保留用户的当前选择。"""
@@ -337,6 +361,8 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.content_stack.setCurrentWidget(self.history_page)
         self.page_title_label.setText(recording.record_dir.name)
         self._set_transcript_text(self.history_service.read_transcript(recording))
+        self._set_timeline_text(self._timeline_display_text(recording))
+        self.timeline_tab_button.setVisible(recording.has_timeline)
         self._set_summary_text(self.history_service.read_summary(recording))
         if recording.input_error:
             self.transcript_status.setText(f"音频处理失败：{recording.input_error.get('message') or recording.error_message}")
@@ -345,6 +371,9 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         else:
             self.transcript_status.setText("已加载转录" if recording.has_transcript else "暂无转录")
         self.summary_status.setText("已加载总结" if recording.has_summary else "暂无总结")
+        self.timeline_status.setText("已加载逐句时间轴" if recording.has_timeline else "暂无逐句时间轴")
+        if not recording.has_timeline and self.active_result_tab == "timeline":
+            self._set_result_tab("transcript")
         self.manual_summary_button.setVisible(recording.has_transcript and not recording.has_summary)
         self._update_retry_transcription_button(recording)
         self._sync_detail_processing_view()
@@ -414,6 +443,9 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         if kind == "transcript":
             text = self.transcript_text.toPlainText()
             label = "转录文字"
+        elif kind == "timeline":
+            text = self.timeline_text.toPlainText()
+            label = "逐句时间轴"
         else:
             text = self.summary_markdown_text
             label = "总结内容"
@@ -423,6 +455,39 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
             return
         QApplication.clipboard().setText(text)
         self._set_status(f"已复制{label}")
+
+    def export_result(self) -> None:
+        """按用户选择导出当前记录结果。"""
+        if not self.current_record:
+            self._show_error("请先选择或生成一条录音")
+            return
+        options = ["txt（原始转录文字）"]
+        if self.current_record.has_timeline:
+            options.append("srt字幕（srt文件）")
+        options.append("markdown（总结结果）")
+        selected, ok = QInputDialog.getItem(
+            self,
+            "导出结果",
+            "导出格式",
+            options,
+            0,
+            False,
+        )
+        if not ok or not selected:
+            return
+        try:
+            if selected.startswith("txt"):
+                path = self.history_service.export_transcript_txt(self.current_record)
+            elif selected.startswith("srt"):
+                path = self.history_service.export_timeline_srt(self.current_record)
+            else:
+                path = self.history_service.export_summary_markdown(self.current_record)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        self.current_record = self.history_service.refresh_metadata(self.current_record)
+        self._set_status(f"已导出：{path.name}")
+        self.load_recordings()
 
     def export_markdown(self) -> None:
         if not self.current_record:
@@ -572,3 +637,15 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
                 message="已是最新版本",
                 context={"current_version": update_info.current_version},
             )
+
+
+def _format_timeline_seconds(value: object) -> str:
+    try:
+        seconds = max(0.0, float(value))
+    except (TypeError, ValueError):
+        seconds = 0.0
+    total = int(seconds)
+    millis = int(round((seconds - total) * 1000))
+    minutes = total // 60
+    secs = total % 60
+    return f"{minutes:02d}:{secs:02d}.{millis:03d}"

@@ -78,7 +78,7 @@ def write_required_model_files(model_dir: Path) -> None:
 def test_catalog_only_returns_gguf_asr_and_target_inside_root(tmp_path: Path) -> None:
     service = ModelService(make_config(tmp_path))
 
-    catalog = service.get_catalog()
+    catalog = service.get_asr_catalog()
 
     assert [entry.name for entry in catalog] == [
         QWEN3_ASR_GGUF_06B_ID,
@@ -266,7 +266,7 @@ def test_settings_dialog_lists_downloaded_models_and_saves_path(tmp_path: Path) 
         assert panel.model_manager.available_group.text(0) == "可下载"
         assert panel.model_manager.downloading_group is None
         assert panel.model_manager.downloaded_group.childCount() == 1
-        assert panel.model_manager.available_group.childCount() == 1
+        assert panel.model_manager.available_group.childCount() == 2
         downloaded_item = panel.model_manager.downloaded_group.child(0)
         downloaded_widget = panel.model_manager.model_tree.itemWidget(downloaded_item, 0)
         panel.model_manager.model_tree.setCurrentItem(downloaded_item)

@@ -22,13 +22,16 @@ def set_transcript_text(owner: ResultStateOwner, text: str) -> None:
 
 def set_result_tab(owner: ResultStateOwner, kind: str) -> None:
     """切换详情结果区标签，并保留用户的当前选择。"""
-    if kind not in {"transcript", "summary"}:
+    if kind not in {"transcript", "timeline", "summary"}:
         kind = "transcript"
     owner.active_result_tab = kind
     if hasattr(owner, "result_stack"):
-        owner.result_stack.setCurrentIndex(0 if kind == "transcript" else 1)  # type: ignore[attr-defined]
+        index_map = {"transcript": 0, "timeline": 1, "summary": 2}
+        owner.result_stack.setCurrentIndex(index_map[kind])  # type: ignore[attr-defined]
     if hasattr(owner, "transcript_tab_button"):
         owner.transcript_tab_button.setChecked(kind == "transcript")  # type: ignore[attr-defined]
+    if hasattr(owner, "timeline_tab_button"):
+        owner.timeline_tab_button.setChecked(kind == "timeline")  # type: ignore[attr-defined]
     if hasattr(owner, "summary_tab_button"):
         owner.summary_tab_button.setChecked(kind == "summary")  # type: ignore[attr-defined]
 

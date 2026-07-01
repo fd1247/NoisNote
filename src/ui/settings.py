@@ -123,6 +123,9 @@ class SettingsPanel(QWidget):
         self._sync_hotword_service()
         self._refresh_asr_model_options()
         self.asr_device.setCurrentText(self.config["selected_asr"].get("device", "cpu"))
+        self.enable_timestamps.setChecked(
+            bool(self.config.get("qwen3_asr_gguf", {}).get("enable_timestamps", False))
+        )
         self.api_key.setText(self.config["llm"].get("api_key", ""))
         self.llm_model.setText(self.config["llm"].get("model", "gpt-4o-mini"))
         self.base_url.setText(self.config["llm"].get("base_url", "https://api.openai.com/v1"))
@@ -155,6 +158,15 @@ class SettingsPanel(QWidget):
         self.asr_device.addItems(["auto", "cpu", "gpu"])
         self.asr_device.setToolTip("gpu 会尝试启用 GGUF 路线可用的 GPU/DirectML 加速")
         self.asr_device.setCurrentText(self.config["selected_asr"].get("device", "cpu"))
+
+        self.enable_timestamps = QCheckBox("启用时间戳")
+        self.enable_timestamps.setToolTip("启用后会在转录时尝试使用时间戳对齐模型生成逐句时间轴")
+        self.enable_timestamps.setChecked(
+            bool(self.config.get("qwen3_asr_gguf", {}).get("enable_timestamps", False))
+        )
+        self.timestamp_hint = QLabel("需要先在模型管理中下载 Qwen3-ForceAligner 时间戳对齐模型。")
+        self.timestamp_hint.setObjectName("Muted")
+        self.timestamp_hint.setWordWrap(True)
 
         # LLM 服务商选择
         self.llm_provider = QComboBox()
@@ -192,18 +204,25 @@ class SettingsPanel(QWidget):
         form.addWidget(self.asr_model, 0, 1)
         form.addWidget(self._make_label("推理设备"), 1, 0)
         form.addWidget(self.asr_device, 1, 1)
-        form.addWidget(self._make_label("LLM 服务商"), 2, 0)
-        form.addWidget(self.llm_provider, 2, 1)
-        form.addWidget(self._make_label("LLM API Key"), 3, 0)
-        form.addWidget(self.api_key, 3, 1)
-        form.addWidget(self._make_label("LLM 模型"), 4, 0)
-        form.addWidget(self.llm_model, 4, 1)
-        form.addWidget(self._make_label("Base URL"), 5, 0)
-        form.addWidget(self.base_url, 5, 1)
-        form.addWidget(self._make_label("自动转录"), 6, 0)
-        form.addWidget(self.auto_transcribe, 6, 1)
-        form.addWidget(self._make_label("自动总结"), 7, 0)
-        form.addWidget(self.auto_summarize, 7, 1)
+        form.addWidget(self._make_label("时间戳"), 2, 0)
+        timestamp_box = QVBoxLayout()
+        timestamp_box.setContentsMargins(0, 0, 0, 0)
+        timestamp_box.setSpacing(4)
+        timestamp_box.addWidget(self.enable_timestamps)
+        timestamp_box.addWidget(self.timestamp_hint)
+        form.addLayout(timestamp_box, 2, 1)
+        form.addWidget(self._make_label("LLM 服务商"), 3, 0)
+        form.addWidget(self.llm_provider, 3, 1)
+        form.addWidget(self._make_label("LLM API Key"), 4, 0)
+        form.addWidget(self.api_key, 4, 1)
+        form.addWidget(self._make_label("LLM 模型"), 5, 0)
+        form.addWidget(self.llm_model, 5, 1)
+        form.addWidget(self._make_label("Base URL"), 6, 0)
+        form.addWidget(self.base_url, 6, 1)
+        form.addWidget(self._make_label("自动转录"), 7, 0)
+        form.addWidget(self.auto_transcribe, 7, 1)
+        form.addWidget(self._make_label("自动总结"), 8, 0)
+        form.addWidget(self.auto_summarize, 8, 1)
 
         layout.addLayout(form)
 
@@ -245,7 +264,7 @@ class SettingsPanel(QWidget):
         current_model = self.config["selected_asr"].get("model", "")
         self.asr_model.blockSignals(True)
         self.asr_model.clear()
-        downloaded_models = self.model_service.get_downloaded_models()
+        downloaded_models = self.model_service.get_downloaded_asr_models()
         if downloaded_models:
             for info in downloaded_models:
                 self.asr_model.addItem(info.entry.display_name, info.entry.name)
@@ -309,6 +328,7 @@ class SettingsPanel(QWidget):
         """返回更新后的配置副本。"""
         config = dict(self.config)
         config["selected_asr"] = dict(self.config.get("selected_asr", {}))
+        config["qwen3_asr_gguf"] = dict(self.config.get("qwen3_asr_gguf", {}))
         config["llm"] = dict(self.config.get("llm", {}))
         config["audio"] = dict(self.config.get("audio", {}))
 
@@ -317,6 +337,7 @@ class SettingsPanel(QWidget):
         selected_model_path = self.model_service.resolve_selected_model_path(selected_model)
         config["selected_asr"]["model_path"] = str(selected_model_path) if selected_model_path else ""
         config["selected_asr"]["device"] = self.asr_device.currentText()
+        config["qwen3_asr_gguf"]["enable_timestamps"] = self.enable_timestamps.isChecked()
 
         provider = self._current_provider()
         config["llm"]["provider"] = provider

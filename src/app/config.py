@@ -35,11 +35,18 @@ QWEN3_ASR_GGUF_REQUIRED_FILES = [
     "qwen3_asr_encoder_backend.int4.onnx",
     "qwen3_asr_llm.q4_k.gguf",
 ]
+QWEN3_FORCE_ALIGNER_GGUF_REQUIRED_FILES = [
+    "qwen3_aligner_encoder_frontend.int4.onnx",
+    "qwen3_aligner_encoder_backend.int4.onnx",
+    "qwen3_aligner_llm.q4_k.gguf",
+]
 
 QWEN3_ASR_GGUF_06B_ID = "Qwen3-ASR-0.6B-GGUF"
 QWEN3_ASR_GGUF_06B_SLUG = "Qwen3-ASR-GGUF-0.6B"
 QWEN3_ASR_GGUF_17B_ID = "Qwen3-ASR-1.7B-GGUF"
 QWEN3_ASR_GGUF_17B_SLUG = "Qwen3-ASR-GGUF-1.7B"
+QWEN3_FORCE_ALIGNER_GGUF_06B_ID = "Qwen3-ForceAligner-GGUF-0.6B"
+QWEN3_FORCE_ALIGNER_GGUF_06B_SLUG = "Qwen3-ForceAligner-0.6B-gguf"
 
 QWEN3_ASR_GGUF_06B_URL = (
     "https://github.com/HaujetZhao/Qwen3-ASR-GGUF/releases/download/models/"
@@ -49,9 +56,14 @@ QWEN3_ASR_GGUF_17B_URL = (
     "https://github.com/HaujetZhao/Qwen3-ASR-GGUF/releases/download/models/"
     "Qwen3-ASR-1.7B-gguf.zip"
 )
+QWEN3_FORCE_ALIGNER_GGUF_06B_URL = (
+    "https://github.com/HaujetZhao/Qwen3-ASR-GGUF/releases/download/models/"
+    "Qwen3-ForceAligner-0.6B-gguf.zip"
+)
 QWEN3_ASR_GGUF_MODELSCOPE_REVISION = "v1.0.0"
 QWEN3_ASR_GGUF_06B_MODELSCOPE_ID = "luciacx/Qwen3-ASR-GGUF-0.6B-mixed"
 QWEN3_ASR_GGUF_17B_MODELSCOPE_ID = "luciacx/Qwen3-ASR-GGUF-1.7B-mixed"
+QWEN3_FORCE_ALIGNER_GGUF_06B_MODELSCOPE_ID = "luciacx/Qwen3-ForceAligner-GGUF-0.6B-mixed"
 
 QWEN3_ASR_GGUF_06B_FILES: list[dict[str, str | int]] = [
     {"name": "qwen3_asr_encoder_frontend.int4.onnx", "size": 20_343_991},
@@ -62,6 +74,11 @@ QWEN3_ASR_GGUF_17B_FILES: list[dict[str, str | int]] = [
     {"name": "qwen3_asr_encoder_frontend.int4.onnx", "size": 20_876_699},
     {"name": "qwen3_asr_encoder_backend.int4.onnx", "size": 164_740_452},
     {"name": "qwen3_asr_llm.q4_k.gguf", "size": 1_282_434_624},
+]
+QWEN3_FORCE_ALIGNER_GGUF_06B_FILES: list[dict[str, str | int]] = [
+    {"name": "qwen3_aligner_encoder_frontend.int4.onnx", "size": 20_876_727},
+    {"name": "qwen3_aligner_encoder_backend.int4.onnx", "size": 164_176_179},
+    {"name": "qwen3_aligner_llm.q4_k.gguf", "size": 484_399_552},
 ]
 
 # Anthropic API 常量
@@ -142,11 +159,47 @@ DEFAULT_MODEL_CATALOG = [
         "required_files": QWEN3_ASR_GGUF_REQUIRED_FILES,
         "estimated_size_bytes": sum(int(item["size"]) for item in QWEN3_ASR_GGUF_17B_FILES),
     },
+    {
+        "name": QWEN3_FORCE_ALIGNER_GGUF_06B_ID,
+        "alias": "qwen3-force-aligner-gguf-0.6b",
+        "display_name": "Qwen3-ForceAligner-0.6B GGUF",
+        "modelscope_id": QWEN3_FORCE_ALIGNER_GGUF_06B_MODELSCOPE_ID,
+        "download_url": _modelscope_resolve_base(QWEN3_FORCE_ALIGNER_GGUF_06B_MODELSCOPE_ID),
+        "download_sources": [
+            {
+                "name": "modelscope",
+                "type": "files",
+                "base_url": _modelscope_resolve_base(QWEN3_FORCE_ALIGNER_GGUF_06B_MODELSCOPE_ID),
+                "revision": QWEN3_ASR_GGUF_MODELSCOPE_REVISION,
+                "files": QWEN3_FORCE_ALIGNER_GGUF_06B_FILES,
+            },
+            {
+                "name": "github",
+                "type": "archive",
+                "url": QWEN3_FORCE_ALIGNER_GGUF_06B_URL,
+            },
+        ],
+        "revision": QWEN3_ASR_GGUF_MODELSCOPE_REVISION,
+        "model_type": "auxiliary",
+        "backend": "qwen3_asr_gguf",
+        "adapter": "qwen3_force_aligner_gguf",
+        "model_size": "0.6B",
+        "local_dir_name": QWEN3_FORCE_ALIGNER_GGUF_06B_SLUG,
+        "description": "时间戳对齐辅助模型，用于生成逐句时间轴和 SRT 字幕",
+        "recommended": False,
+        "required_files": QWEN3_FORCE_ALIGNER_GGUF_REQUIRED_FILES,
+        "estimated_size_bytes": sum(int(item["size"]) for item in QWEN3_FORCE_ALIGNER_GGUF_06B_FILES),
+    },
 ]
 
 DEFAULT_MODEL_CATALOG_BY_NAME = {
     item["name"]: item
     for item in DEFAULT_MODEL_CATALOG
+}
+DEFAULT_ASR_MODEL_CATALOG_BY_NAME = {
+    item["name"]: item
+    for item in DEFAULT_MODEL_CATALOG
+    if item.get("model_type") == "asr"
 }
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -165,6 +218,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "memory_num": 1,
         "n_ctx": 2048,
         "context": "",
+        "enable_timestamps": False,
     },
     "llm": {
         "provider": "openai",
@@ -348,10 +402,9 @@ def _normalize_model_config(config: dict) -> tuple[dict, bool]:
         changed = True
 
     current_model = asr.get("model")
-    if current_model not in DEFAULT_MODEL_CATALOG_BY_NAME:
+    if current_model not in DEFAULT_ASR_MODEL_CATALOG_BY_NAME:
         asr["model"] = QWEN3_ASR_GGUF_06B_ID
         asr["model_path"] = ""
         changed = True
 
     return config, changed
-

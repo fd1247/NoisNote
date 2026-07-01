@@ -423,7 +423,7 @@ def test_result_tabs_keep_current_selection_when_switching_records(monkeypatch, 
         window._load_history_record(records["b"])
 
         assert window.active_result_tab == "summary"
-        assert window.result_stack.currentIndex() == 1
+        assert window.result_stack.currentIndex() == 2
         assert window.summary_tab_button.isChecked()
         assert not window.transcript_tab_button.isChecked()
     finally:

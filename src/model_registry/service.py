@@ -34,17 +34,28 @@ class ModelService:
         models_config.setdefault("downloaded", {})
 
     def get_catalog(self) -> list[ModelCatalogEntry]:
-        """返回当前阶段可管理的 ASR 模型清单。"""
+        """返回当前可管理的模型清单，包含 ASR 和辅助模型。"""
         entries = [
             ModelCatalogEntry.from_config(item)
             for item in DEFAULT_MODEL_CATALOG
         ]
-        asr_entries = [
+        manageable_entries = [
             item
             for item in entries
-            if item.name and item.model_type == "asr" and item.backend == "qwen3_asr_gguf"
+            if item.name and item.backend == "qwen3_asr_gguf"
         ]
-        return sorted(asr_entries, key=lambda item: (not item.recommended, item.display_name))
+        return sorted(
+            manageable_entries,
+            key=lambda item: (
+                item.model_type != "asr",
+                not item.recommended,
+                item.display_name,
+            ),
+        )
+
+    def get_asr_catalog(self) -> list[ModelCatalogEntry]:
+        """返回可作为转录模型选择的正式 ASR 模型清单。"""
+        return [item for item in self.get_catalog() if item.model_type == "asr"]
 
     def get_entry(self, name: str) -> ModelCatalogEntry | None:
         """按模型名称查找清单项。"""
@@ -91,9 +102,19 @@ class ModelService:
         )
 
     def get_downloaded_models(self) -> list[LocalModelInfo]:
-        """返回关键文件校验通过的已下载模型。"""
+        """返回关键文件校验通过的已下载模型，包含辅助模型。"""
         downloaded: list[LocalModelInfo] = []
         for entry in self.get_catalog():
+            info = self.validate_model_dir(entry)
+            if info.is_complete:
+                downloaded.append(info)
+                self._record_downloaded(entry, info.local_path)
+        return downloaded
+
+    def get_downloaded_asr_models(self) -> list[LocalModelInfo]:
+        """返回可用于通用设置 ASR 下拉框的已下载 ASR 模型。"""
+        downloaded: list[LocalModelInfo] = []
+        for entry in self.get_asr_catalog():
             info = self.validate_model_dir(entry)
             if info.is_complete:
                 downloaded.append(info)

@@ -110,6 +110,12 @@ class TranscriptionHandlers:
             self.transcript_status.setText("写入历史记录")
         self._save_transcript(text, record)
         record = self.processing_record or record
+        if record and diagnostics:
+            timeline_items = diagnostics.get("timeline")
+            if isinstance(timeline_items, list) and timeline_items:
+                self.history_service.save_timeline(record, timeline_items)
+                record = self.history_service.refresh_metadata(record)
+                self.processing_record = record
         if record:
             record = self.history_service.mark_processing_completed(
                 record,
@@ -238,4 +244,3 @@ class TranscriptionHandlers:
             "重新转录会覆盖当前音频的转录和总结。\n"
             "如需保留旧结果，请手动导出或复制。",
         )
-

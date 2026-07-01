@@ -162,6 +162,41 @@ def test_default_gguf_downloader_downloads_modelscope_files(tmp_path: Path) -> N
         assert (download_dir / file_name).read_bytes() == (source_dir / file_name).read_bytes()
 
 
+def test_default_gguf_downloader_keeps_unknown_total_for_files_without_sizes(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    for file_name in QWEN3_ASR_GGUF_REQUIRED_FILES:
+        (source_dir / file_name).write_bytes(b"model")
+
+    entry = ModelCatalogEntry(
+        name="Qwen3-ASR-0.6B-GGUF",
+        display_name="Qwen3-ASR-0.6B GGUF",
+        download_sources=[
+            {
+                "name": "modelscope",
+                "type": "files",
+                "base_url": f"{source_dir.as_uri()}/",
+                "files": [{"name": file_name} for file_name in QWEN3_ASR_GGUF_REQUIRED_FILES],
+            }
+        ],
+        local_dir_name="Qwen3-ASR-GGUF-0.6B",
+        required_files=QWEN3_ASR_GGUF_REQUIRED_FILES,
+    )
+    events = []
+
+    default_gguf_downloader(
+        entry,
+        tmp_path / ".download-qwen",
+        lambda percent, text: events.append((percent, text)),
+        lambda: False,
+    )
+
+    download_events = [(percent, text) for percent, text in events if percent is None and "B" in text]
+    assert download_events
+    assert all(percent is None for percent, _ in download_events)
+    assert all("/" not in text for _, text in download_events)
+
+
 def test_default_gguf_downloader_falls_back_to_github_archive(tmp_path: Path) -> None:
     source_zip = tmp_path / "model.zip"
     with zipfile.ZipFile(source_zip, "w") as zip_file:

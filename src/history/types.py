@@ -103,6 +103,14 @@ class HistoryRecord:
     def has_summary(self) -> bool:
         return self.summary_path.exists()
 
+    @property
+    def timeline_path(self) -> Path:
+        return self.record_dir / "timeline.json"
+
+    @property
+    def has_timeline(self) -> bool:
+        return self.timeline_path.exists()
+
     def _parse_record_id_as_timestamp(self) -> datetime | None:
         for fmt in ("%Y%m%d_%H%M%S", "%Y%m%d-%H%M%S"):
             try:
@@ -118,5 +126,4 @@ def format_size(size_bytes: int) -> str:
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
     return f"{size_bytes / (1024 * 1024):.1f} MB"
-
 

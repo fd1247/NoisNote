@@ -8,7 +8,11 @@ import wave
 from pathlib import Path
 from typing import Any
 
-from ..app.config import get_config, get_qwen3_asr_gguf_tool_dir
+from ..app.config import (
+    QWEN3_FORCE_ALIGNER_GGUF_06B_ID,
+    get_config,
+    get_qwen3_asr_gguf_tool_dir,
+)
 from ..model_registry.service import ModelService
 from .runtime import (
     Qwen3AsrGgufError,
@@ -110,10 +114,17 @@ class TranscriptionEngine:
                 str(selected_model),
                 "UnknownModel",
             )
+        if entry.model_type != "asr":
+            raise Qwen3AsrGgufError(
+                "当前选择的是辅助模型，不能作为 ASR 模型转录。",
+                str(selected_model),
+                "InvalidAsrModel",
+            )
 
         local_model_path = asr_config.get("model_path") or ""
         model_dir = Path(local_model_path).expanduser() if local_model_path else service.get_target_dir(entry)
         gguf_config = self.config.get("qwen3_asr_gguf", {})
+        timestamp_options = self._resolve_timestamp_options(service, gguf_config)
 
         return Qwen3AsrGgufRuntimeConfig(
             model_dir=model_dir.resolve(),
@@ -126,7 +137,49 @@ class TranscriptionEngine:
             n_ctx=int(gguf_config.get("n_ctx") or 2048),
             context=str(gguf_config.get("context") or ""),
             hotwords=self._resolve_active_hotwords(),
+            request_timestamps=timestamp_options["requested"],
+            enable_timestamps=timestamp_options["enabled"],
+            aligner_model_dir=timestamp_options["aligner_model_dir"],
+            aligner_model_name=timestamp_options["aligner_model_name"],
+            timestamp_degrade_reason=timestamp_options["degrade_reason"],
         )
+
+    def _resolve_timestamp_options(self, service: ModelService, gguf_config: dict[str, Any]) -> dict[str, Any]:
+        """根据用户开关和 ForceAligner 完整性决定本次是否启用时间戳。"""
+        requested = bool(gguf_config.get("enable_timestamps", False))
+        entry = service.get_entry(QWEN3_FORCE_ALIGNER_GGUF_06B_ID)
+        if not requested:
+            return {
+                "requested": False,
+                "enabled": False,
+                "aligner_model_dir": service.get_target_dir(entry) if entry else None,
+                "aligner_model_name": entry.name if entry else "",
+                "degrade_reason": "disabled_by_user",
+            }
+        if entry is None:
+            return {
+                "requested": True,
+                "enabled": False,
+                "aligner_model_dir": None,
+                "aligner_model_name": QWEN3_FORCE_ALIGNER_GGUF_06B_ID,
+                "degrade_reason": "aligner_not_in_catalog",
+            }
+        info = service.validate_model_dir(entry)
+        if not info.is_complete:
+            return {
+                "requested": True,
+                "enabled": False,
+                "aligner_model_dir": info.local_path,
+                "aligner_model_name": entry.name,
+                "degrade_reason": "aligner_model_incomplete",
+            }
+        return {
+            "requested": True,
+            "enabled": True,
+            "aligner_model_dir": info.local_path,
+            "aligner_model_name": entry.name,
+            "degrade_reason": "",
+        }
 
     def _resolve_active_hotwords(self) -> list[str]:
         """从激活的热词表解析运行时热词。"""
@@ -142,7 +195,12 @@ class TranscriptionEngine:
         import platform
         import traceback as tb
         asr_config = self.config.get("selected_asr", {})
-        entry = ModelService(self.config).get_entry(asr_config.get("model", ""))
+        service = ModelService(self.config)
+        entry = service.get_entry(asr_config.get("model", ""))
+        timestamp_options = self._resolve_timestamp_options(
+            service,
+            self.config.get("qwen3_asr_gguf", {}),
+        )
         # 换取完整 traceback 字符串
         cause = error.__cause__
         tb_lines = tb.format_exception(type(error), error, error.__traceback__)
@@ -161,6 +219,16 @@ class TranscriptionEngine:
             "performance": {},
             "hotwords": self._resolve_active_hotwords(),
             "context_enabled": bool(self.config.get("qwen3_asr_gguf", {}).get("context")),
+            "timestamps": {
+                "requested": timestamp_options["requested"],
+                "enabled": False,
+                "aligner_model_name": timestamp_options["aligner_model_name"],
+                "aligner_model_dir": str(timestamp_options["aligner_model_dir"] or ""),
+                "items_count": 0,
+                "monotonic": True,
+                "degrade_reason": timestamp_options["degrade_reason"] or error.error_type,
+            },
+            "timeline": [],
             "error": {
                 **error.to_metadata(),
                 "exc_type": type(cause).__name__ if cause else type(error).__name__,

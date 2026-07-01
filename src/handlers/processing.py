@@ -101,6 +101,8 @@ class ProcessingHandlers:
             context["timings"] = diagnostics.get("timings", {})
             context["performance"] = diagnostics.get("performance", {})
             context["resolved_device"] = diagnostics.get("resolved_device", "")
+            if isinstance(diagnostics.get("timestamps"), dict):
+                context["timestamps"] = diagnostics.get("timestamps")
             if diagnostics.get("error"):
                 context["error"] = diagnostics.get("error")
         return context
@@ -149,4 +151,3 @@ class ProcessingHandlers:
         if worker in self.active_workers:
             self.active_workers.remove(worker)
         worker.deleteLater()
-

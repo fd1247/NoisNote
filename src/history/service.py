@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..asr.timestamps import timeline_from_dicts, timeline_to_dicts, timeline_to_srt
 from .types import DeleteResult, HistoryRecord, HistoryStatus
 from .storage import HistoryStorageMixin
 
@@ -20,6 +21,7 @@ class HistoryService(HistoryStorageMixin):
     FOLDER_TRANSCRIPT = "transcript.txt"
     FOLDER_SUMMARY = "summary.txt"
     FOLDER_MARKDOWN = "export.md"
+    FOLDER_TIMELINE = "timeline.json"
     FOLDER_METADATA = "metadata.json"
     PROCESSING_STEPS = ("transcription", "summary")
 
@@ -300,6 +302,47 @@ class HistoryService(HistoryStorageMixin):
         self._write_folder_metadata(record.record_dir)
         return record.markdown_path
 
+    def read_timeline(self, record: HistoryRecord) -> list[dict[str, Any]]:
+        """读取结构化时间轴，不存在时返回空列表。"""
+        data = self._read_json(record.timeline_path)
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return []
+        return timeline_to_dicts(timeline_from_dicts(items))
+
+    def save_timeline(self, record: HistoryRecord, items: list[dict[str, Any]]) -> Path:
+        """保存结构化时间轴。"""
+        payload = {
+            "version": 1,
+            "items": timeline_to_dicts(timeline_from_dicts(items)),
+        }
+        self._write_json(record.timeline_path, payload)
+        self._write_folder_metadata(record.record_dir)
+        return record.timeline_path
+
+    def export_transcript_txt(self, record: HistoryRecord) -> Path:
+        """返回原始转录文字文件路径。"""
+        if not record.transcript_path.exists():
+            raise FileNotFoundError("当前记录没有可导出的转录文字")
+        return record.transcript_path
+
+    def export_summary_markdown(self, record: HistoryRecord) -> Path:
+        """把总结结果导出为 Markdown 文件。"""
+        summary = self.read_summary(record).strip()
+        if not summary:
+            raise ValueError("当前记录没有可导出的总结内容")
+        return self.save_markdown(record, summary)
+
+    def export_timeline_srt(self, record: HistoryRecord) -> Path:
+        """根据时间轴生成 SRT 字幕文件。"""
+        timeline = timeline_from_dicts(self.read_timeline(record))
+        if not timeline:
+            raise ValueError("当前记录没有可导出的逐句时间轴")
+        srt_path = record.record_dir / "transcript.srt"
+        srt_path.write_text(timeline_to_srt(timeline), encoding="utf-8")
+        self._write_folder_metadata(record.record_dir)
+        return srt_path
+
     def clear_generated_results(self, record: HistoryRecord) -> HistoryRecord:
         """清理本次流程会覆盖的生成结果，保留音频和元数据。"""
         if not self._is_safe_record_dir(record.record_dir):
@@ -309,6 +352,8 @@ class HistoryService(HistoryStorageMixin):
             record.record_dir / self.FOLDER_TRANSCRIPT,
             record.record_dir / self.FOLDER_SUMMARY,
             record.record_dir / self.FOLDER_MARKDOWN,
+            record.record_dir / self.FOLDER_TIMELINE,
+            record.record_dir / "transcript.srt",
         )
         for path in generated_paths:
             safe_path = path.resolve(strict=False)
@@ -328,7 +373,11 @@ class HistoryService(HistoryStorageMixin):
     def save_asr_metadata(self, record: HistoryRecord, asr_metadata: dict[str, Any]) -> HistoryRecord:
         """保存 ASR 诊断信息到记录 metadata。"""
         metadata = self._record_metadata(record)
-        metadata["asr"] = asr_metadata
+        stored_metadata = dict(asr_metadata)
+        stored_metadata.pop("timeline", None)
+        metadata["asr"] = stored_metadata
+        if isinstance(asr_metadata.get("timestamps"), dict):
+            metadata["timestamps"] = dict(asr_metadata["timestamps"])
         self._write_json(record.metadata_path, metadata)
         return self._build_folder_record(record.record_dir) or record
 
@@ -444,4 +493,3 @@ class HistoryService(HistoryStorageMixin):
             audio_format=metadata.get("audio_format") if isinstance(metadata.get("audio_format"), dict) else None,
             storage_mode=storage_mode,
         )
-
