@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import copy
 import os
+import shutil
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication
+from PySide6.QtMultimedia import QMediaPlayer
+from PySide6.QtTest import QTest
 
 from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.history.service import HistoryService, HistoryStatus
+from src.history.types import format_size
 from src.app.main_window import MainWindow
+from src.ui.content import SeekSlider
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -25,6 +32,7 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
 
 def make_config(root: Path) -> dict:
     return {
+        "demo_audio_imported": True,
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
             "tool_dir": str(root / "vendor" / "qwen3-asr-gguf"),
@@ -57,6 +65,77 @@ def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     window = MainWindow()
     app.processEvents()
     return window
+
+
+def test_resolve_demo_audio_path_uses_src_assets_in_development(monkeypatch) -> None:
+    monkeypatch.delattr("sys._MEIPASS", raising=False)
+
+    path = MainWindow._resolve_demo_audio_path(object())
+
+    assert path == Path(__file__).resolve().parents[1] / "src" / "assets" / "测试音频.mp3"
+    assert path.exists()
+
+
+def test_demo_audio_import_preserves_duration_for_mp3(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    demo_audio = tmp_path / "assets" / "测试音频.mp3"
+    demo_audio.parent.mkdir(parents=True)
+    demo_audio.write_bytes(b"fake mp3 data")
+    config = make_config(tmp_path)
+    config["data_root"] = str(tmp_path / "data_root")
+    config["demo_audio_imported"] = False
+    monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
+    monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
+    monkeypatch.setattr("src.app.main_window.MainWindow._resolve_demo_audio_path", lambda self: demo_audio)
+    monkeypatch.setattr(
+        "src.app.main_window.probe_media",
+        lambda path, config=None: SimpleNamespace(
+            duration_seconds=49.0,
+            audio_sample_rate=44100,
+            audio_channels=2,
+            source_format="mp3",
+        ),
+    )
+
+    window = MainWindow()
+    try:
+        assert window.current_record is not None
+        assert window.current_record.audio_path.name == "测试音频.mp3"
+        assert window.current_record.duration_text == "00:49"
+        assert window.detail_duration_label.text() == "00:49"
+        assert config["demo_audio_imported"] is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_demo_audio_flag_is_set_when_history_already_exists(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    data_root = tmp_path / "data_root"
+    write_wav(data_root / "data" / "existing-record" / "audio.wav")
+    config = make_config(tmp_path)
+    config["data_root"] = str(data_root)
+    config["demo_audio_imported"] = False
+    save_calls: list[dict] = []
+    monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.save_config", lambda saved: save_calls.append(dict(saved)))
+    monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
+    monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
+    monkeypatch.setattr(
+        "src.app.main_window.MainWindow._resolve_demo_audio_path",
+        lambda self: (_ for _ in ()).throw(AssertionError("已有历史记录时不应再解析测试音频")),
+    )
+
+    window = MainWindow()
+    try:
+        assert config["demo_audio_imported"] is True
+        assert save_calls and save_calls[-1]["demo_audio_imported"] is True
+        assert [record.record_id for record in window.all_history_items] == ["existing-record"]
+    finally:
+        window.close()
+        app.processEvents()
 
 
 def test_sidebar_actions_replace_extra_recording_entry(monkeypatch, tmp_path: Path) -> None:
@@ -110,6 +189,155 @@ def test_recording_task_button_returns_to_recording_page(monkeypatch, tmp_path: 
         window.new_recording()
 
         assert window.content_stack.currentWidget() == window.recording_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_history_search_filters_visible_records(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "alpha-meeting" / "audio.wav")
+        write_wav(tmp_path / "records" / "beta-note" / "audio.wav")
+        window.history_service = service
+
+        window.load_recordings()
+        window.history_search.setText("alpha")
+        app.processEvents()
+
+        assert [record.record_id for record in window.current_items] == ["alpha-meeting"]
+        assert window.history_list.count() == 1
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_hide_settings_refreshes_history_after_external_delete(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        record_dir = tmp_path / "records" / "external-delete"
+        write_wav(record_dir / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        window.select_history_index(0)
+
+        window.show_settings()
+        shutil.rmtree(record_dir)
+        window.hide_settings()
+        app.processEvents()
+
+        assert window.current_record is None
+        assert window.history_list.count() == 0
+        assert window.content_stack.currentWidget() == window.recording_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_history_status_filter_limits_visible_records(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "audio-only" / "audio.wav")
+        write_wav(tmp_path / "records" / "done" / "audio.wav")
+        records = {record.record_id: record for record in service.scan()}
+        service.save_transcript(records["done"], "转录")
+        window.history_service = service
+
+        window.load_recordings()
+        window._set_history_filter(HistoryStatus.TRANSCRIBED.value, "已转录")
+
+        assert [record.record_id for record in window.current_items] == ["done"]
+        assert window.history_filter_button.text() == ""
+        assert window.history_filter_button.toolTip() == "筛选：已转录"
+
+        window._set_history_filter("all", "全部")
+        assert len(window.current_items) == 2
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_header_populates_record_metadata(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+
+        assert window.detail_title_label.text() == "meeting"
+        assert window.detail_duration_label.text() == record.duration_text
+        assert window.detail_size_label.text() == format_size(record.total_size_bytes)
+        assert window.detail_status_label.text() == record.status_text
+        assert window.detail_time_label.text() == record.created_at.strftime("%Y-%m-%d %H:%M")
+        assert not window.export_button.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_export_txt_without_transcript_warns_before_choosing_directory(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "audio-only" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        messages: list[str] = []
+        monkeypatch.setattr(
+            "src.app.main_window.alert_without_icon",
+            lambda parent, title, text, confirm_text="确认": messages.append(text),
+        )
+        monkeypatch.setattr(
+            "src.handlers.export.QFileDialog.getExistingDirectory",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不应打开目录选择器")),
+        )
+
+        window._export_result_with_format("txt")
+
+        assert messages == ["当前记录没有可导出的转录文字"]
+        assert window.status_label.text() == "当前记录没有可导出的转录文字"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_export_markdown_without_summary_warns_before_choosing_directory(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "转录内容")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        messages: list[str] = []
+        monkeypatch.setattr(
+            "src.app.main_window.alert_without_icon",
+            lambda parent, title, text, confirm_text="确认": messages.append(text),
+        )
+        monkeypatch.setattr(
+            "src.handlers.export.QFileDialog.getExistingDirectory",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不应打开目录选择器")),
+        )
+
+        window._export_result_with_format("markdown")
+
+        assert messages == ["当前记录没有可导出的总结内容"]
+        assert window.status_label.text() == "当前记录没有可导出的总结内容"
     finally:
         window.close()
         app.processEvents()
@@ -300,7 +528,7 @@ def test_retry_transcription_confirm_text_is_user_friendly(monkeypatch, tmp_path
             "重新转录会覆盖当前音频的转录和总结。\n"
             "如需保留旧结果，请手动导出或复制。"
         )
-        assert captured["confirm_text"] == "OK"
+        assert captured["confirm_text"] == "确认"
         assert captured["cancel_text"] == "取消"
     finally:
         window.close()
@@ -473,3 +701,224 @@ def test_empty_result_copy_buttons_are_hidden(monkeypatch, tmp_path: Path) -> No
     finally:
         window.close()
         app.processEvents()
+
+
+def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        items = [
+            {
+                "start": float(index),
+                "end": float(index) + 0.9,
+                "text": f"sentence {index}",
+                "tokens": [
+                    {"start": float(index), "end": float(index) + 0.4, "text": "a"},
+                    {"start": float(index) + 0.4, "end": float(index) + 0.9, "text": "b"},
+                ],
+            }
+            for index in range(40)
+        ]
+        window.resize(800, 420)
+        window.show()
+        window.content_stack.setCurrentWidget(window.history_page)
+        window._set_result_tab("timeline")
+        window._set_timeline_items(items)
+        window.timeline_text.setFixedHeight(120)
+        app.processEvents()
+
+        window._refresh_timeline_highlight(10.1)
+        app.processEvents()
+        scroll_bar = window.timeline_text.verticalScrollBar()
+        assert scroll_bar.maximum() > 0
+
+        manual_scroll = min(scroll_bar.maximum(), max(1, scroll_bar.maximum() // 2))
+        scroll_bar.setValue(manual_scroll)
+        app.processEvents()
+
+        window._refresh_timeline_highlight(10.6)
+        app.processEvents()
+
+        assert scroll_bar.value() == manual_scroll
+    finally:
+        window.close()
+        app.processEvents()
+
+
+class FakeMediaPlayer:
+    def __init__(self) -> None:
+        self._position = 30_000
+        self._duration = 90_000
+        self._state = QMediaPlayer.PlaybackState.StoppedState
+        self.rate = 1.0
+        self.source = None
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+        self._position = 0
+        self._state = QMediaPlayer.PlaybackState.StoppedState
+
+    def setSource(self, source) -> None:
+        self.source = source
+
+    def setPlaybackRate(self, rate: float) -> None:
+        self.rate = rate
+
+    def playbackState(self):
+        return self._state
+
+    def play(self) -> None:
+        self._state = QMediaPlayer.PlaybackState.PlayingState
+
+    def pause(self) -> None:
+        self._state = QMediaPlayer.PlaybackState.PausedState
+
+    def duration(self) -> int:
+        return self._duration
+
+    def position(self) -> int:
+        return self._position
+
+    def setPosition(self, position: int) -> None:
+        self._position = position
+
+
+def test_playback_controls_seek_rate_and_toggle_with_fake_player(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        fake = FakeMediaPlayer()
+        window.media_player = fake
+        window.history_service = service
+
+        window._load_history_record(record)
+        assert fake.source is not None
+
+        window.seek_playback_forward()
+        assert fake.position() == 15_000
+
+        window.seek_playback_backward()
+        assert fake.position() == 0
+
+        window.set_playback_rate("1.5x")
+        assert fake.rate == 1.5
+
+        window.toggle_playback()
+        assert fake.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        window.toggle_playback()
+        assert fake.playbackState() == QMediaPlayer.PlaybackState.PausedState
+
+        window.stop_playback()
+        assert fake.source.isEmpty()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_new_recording_stops_playback_and_clears_playback_record(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        fake = FakeMediaPlayer()
+        window.media_player = fake
+        window.history_service = service
+        window._load_history_record(record)
+        fake.stopped = False
+
+        window.new_recording()
+
+        assert fake.stopped is True
+        assert window.playback_record_id == ""
+        assert window.current_record is None
+        assert window.content_stack.currentWidget() == window.recording_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_playback_rate_control_is_left_of_cc_button(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        transport_layout = window.playback_back_button.parentWidget().layout()
+        layout = window.playback_rate_combo.parentWidget().layout()
+
+        assert transport_layout.spacing() == 6
+        assert layout.indexOf(window.playback_rate_combo) < layout.indexOf(window.playback_cc_button)
+        assert layout.spacing() == 6
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_playback_cc_button_stays_visible_without_timeline(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+        window._set_result_tab("transcript")
+        window.playback_cc_button.click()
+
+        assert not window.playback_cc_button.isHidden()
+        assert window.active_result_tab == "transcript"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_playback_keyboard_shortcuts_control_selected_record(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        fake = FakeMediaPlayer()
+        window.media_player = fake
+        window.history_service = service
+        window._load_history_record(record)
+        window.show()
+        window.activateWindow()
+        window.setFocus(Qt.FocusReason.OtherFocusReason)
+        app.processEvents()
+
+        QTest.keyClick(window, Qt.Key.Key_Space)
+        assert fake.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+
+        QTest.keyClick(window, Qt.Key.Key_Right)
+        assert fake.position() == 15_000
+
+        QTest.keyClick(window, Qt.Key.Key_Left)
+        assert fake.position() == 0
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_seek_slider_click_jumps_to_clicked_position() -> None:
+    app = QApplication.instance() or QApplication([])
+    slider = SeekSlider(Qt.Orientation.Horizontal)
+    moved: list[int] = []
+    slider.setRange(0, 1000)
+    slider.resize(200, 20)
+    slider.sliderMoved.connect(moved.append)
+    slider.show()
+    app.processEvents()
+
+    QTest.mouseClick(slider, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(100, 10))
+    app.processEvents()
+
+    assert moved
+    assert 450 <= moved[-1] <= 550

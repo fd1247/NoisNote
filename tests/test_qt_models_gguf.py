@@ -47,6 +47,7 @@ def make_config(root: Path) -> dict:
         },
     )
     return {
+        "demo_audio_imported": True,
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
             "tool_dir": str(root / "vendor" / "qwen3-asr-gguf"),
@@ -402,6 +403,50 @@ def test_model_manager_empty_states_and_general_model_placeholder(tmp_path: Path
         app.processEvents()
 
 
+def test_model_manager_refresh_preserves_downloading_selection(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    config = make_config(tmp_path)
+    manager = ModelDownloadManager(config)
+    panel = SettingsPanel(config, manager)
+    available_entries = panel.model_manager.service.get_available_models(set())
+    first_name = available_entries[0].name
+    try:
+        for entry in available_entries:
+            manager.download_tasks[entry.name] = DownloadTaskState(
+                name=entry.name,
+                source_url=entry.download_url,
+                target_dir=panel.model_manager.service.get_download_temp_dir(entry),
+                status_text="下载中",
+                progress_percent=20.0,
+            )
+        panel.model_manager.refresh_lists()
+        first_item = panel.model_manager.downloading_group.child(0)
+        panel.model_manager.model_tree.setCurrentItem(first_item)
+        app.processEvents()
+
+        assert panel.model_manager.available_group.child(0).text(0) == "没有可下载的模型"
+        assert panel.model_manager.selected_kind == "downloading"
+        assert panel.model_manager.selected_name == first_name
+
+        manager.download_tasks[first_name] = DownloadTaskState(
+            name=first_name,
+            source_url=manager.download_tasks[first_name].source_url,
+            target_dir=manager.download_tasks[first_name].target_dir,
+            status_text="下载中 40%",
+            progress_percent=40.0,
+        )
+        panel.model_manager.refresh_lists()
+
+        current_item = panel.model_manager.model_tree.currentItem()
+        assert current_item is not None
+        assert current_item.data(0, Qt.UserRole) == ("downloading", first_name)
+        assert panel.model_manager.model_action_button.text() == "取消下载"
+    finally:
+        panel.close()
+        manager.deleteLater()
+        app.processEvents()
+
+
 def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     config = make_config(tmp_path)
@@ -414,7 +459,7 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
     confirmation: dict[str, str] = {}
     monkeypatch.setattr("src.ui.model_panel.save_config", lambda value: saved_configs.append(value))
 
-    def fake_confirm(parent, title, text, confirm_text="OK", cancel_text="取消"):
+    def fake_confirm(parent, title, text, confirm_text="确认", cancel_text="取消"):
         confirmation["title"] = title
         confirmation["text"] = text
         confirmation["confirm_text"] = confirm_text
@@ -423,8 +468,8 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
 
     monkeypatch.setattr("src.ui.model_panel.confirm_without_icon", fake_confirm)
     monkeypatch.setattr(
-        "src.ui.model_panel.QMessageBox.information",
-        lambda parent, title, message: info_messages.append(message),
+        "src.ui.model_panel.alert_without_icon",
+        lambda parent, title, message, confirm_text="确认": info_messages.append(message),
     )
 
     try:
@@ -443,7 +488,7 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
         assert confirmation == {
             "title": "删除模型",
             "text": "您确定要删除所选模型吗?",
-            "confirm_text": "OK",
+            "confirm_text": "确认",
             "cancel_text": "取消",
         }
         panel._refresh_asr_model_options()

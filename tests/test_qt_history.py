@@ -305,6 +305,32 @@ def test_import_audio_file_preserves_non_wav_extension(tmp_path: Path) -> None:
     assert source.exists()
 
 
+def test_copy_imported_audio_file_preserves_extension_and_duration(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = source_dir / "测试音频.mp3"
+    source.write_bytes(b"fake mp3 data")
+
+    service = HistoryService(tmp_path / "records")
+    record = service.copy_imported_audio_file(
+        source,
+        duration_seconds=49.2,
+        audio_format={"sample_rate": 44100, "channels": 2, "format": "mp3"},
+        source_kind="local_audio",
+    )
+
+    assert record.audio_path == record.record_dir / "测试音频.mp3"
+    assert record.audio_path.exists()
+    assert source.exists()
+    assert record.duration_text == "00:49"
+    assert record.duration_seconds == 49.2
+    assert record.storage_mode == HistoryService.STORAGE_COPIED
+    metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["audio_file"] == "测试音频.mp3"
+    assert metadata["duration_seconds"] == 49.2
+    assert metadata["storage_mode"] == "copied"
+
+
 def test_import_audio_file_uses_unique_folder_for_duplicate_names(tmp_path: Path) -> None:
     source_a = tmp_path / "a" / "meeting.wav"
     source_b = tmp_path / "b" / "meeting.wav"

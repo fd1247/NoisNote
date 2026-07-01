@@ -166,6 +166,58 @@ class HistoryService(HistoryStorageMixin):
         self._write_json(record_dir / self.FOLDER_METADATA, metadata)
         return self._build_folder_record(record_dir)  # type: ignore[return-value]
 
+    def copy_imported_audio_file(
+        self,
+        audio_path: Path,
+        *,
+        duration_seconds: float | None = None,
+        audio_format: dict[str, Any] | None = None,
+        source_kind: str | None = None,
+    ) -> HistoryRecord:
+        """复制导入音视频到记录目录，保留原始扩展名。"""
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        source = Path(audio_path)
+        if not source.exists() or not source.is_file():
+            raise FileNotFoundError(f"音频文件不存在：{source}")
+
+        record_id = self._unique_record_id(source.stem or datetime.now().strftime("%Y%m%d_%H%M%S"))
+        record_dir = self.recordings_dir / record_id
+        target = record_dir / source.name
+
+        record_dir.mkdir(parents=True, exist_ok=False)
+        shutil.copy2(source, target)
+
+        metadata = {
+            "version": self.METADATA_VERSION,
+            "record_id": record_id,
+            "created_at": datetime.fromtimestamp(source.stat().st_mtime).isoformat(timespec="seconds"),
+            "duration_seconds": duration_seconds if duration_seconds is not None else self._wav_duration(target),
+            "audio_file": target.name,
+            "transcript_file": self.FOLDER_TRANSCRIPT,
+            "summary_file": self.FOLDER_SUMMARY,
+            "markdown_file": self.FOLDER_MARKDOWN,
+            "status": HistoryStatus.AUDIO_ONLY.value,
+            "source_type": "imported",
+            "source_kind": source_kind or self._source_kind_for_path(source),
+            "source_path": str(source),
+            "original_file_path": str(source),
+            "normalized_audio_path": "",
+            "audio_format": audio_format
+            or {
+                "sample_rate": None,
+                "channels": None,
+                "format": source.suffix.lower().lstrip("."),
+            },
+            "input_error": None,
+            "original_file_name": source.name,
+            "storage_mode": self.STORAGE_COPIED,
+            "import_strategy": self.STORAGE_COPIED,
+            "source_size_bytes": self._file_size(source),
+            "processing": self._default_processing_metadata(),
+        }
+        self._write_json(record_dir / self.FOLDER_METADATA, metadata)
+        return self._build_folder_record(record_dir)  # type: ignore[return-value]
+
     def save_preprocess_result(self, record: HistoryRecord, result: Any) -> HistoryRecord:
         """保存音频标准化结果，并让转录优先使用标准化音频。"""
         metadata = self._record_metadata(record)

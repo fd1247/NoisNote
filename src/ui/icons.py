@@ -19,8 +19,14 @@ _ICON_MAP: dict[str, str] = {
     "hotwords": "热词管理.svg",
     "shortcuts": "快捷键.svg",
     "import": "导入.svg",
+    "filter": "筛选.svg",
+    "play": "播放.svg",
+    "pause": "暂停.svg",
+    "rewind15": "快退15s.svg",
+    "forward15": "快进15s.svg",
+    "more": "更多.svg",
     "record": "麦克风.svg",
-    "record_light": "麦克风.svg",
+    "record_light": "麦克风-白.svg",
 }
 
 
@@ -51,4 +57,10 @@ def make_eye_icon(showing: bool) -> QIcon:
 def make_combo_arrow_icon() -> QIcon:
     """加载下拉框箭头图标。"""
     svg_path = _SVG_DIR / "下拉.svg"
+    return QIcon(str(svg_path)) if svg_path.exists() else QIcon()
+
+
+def make_history_icon() -> QIcon:
+    """加载历史记录图标。"""
+    svg_path = _SVG_DIR / "历史记录-播放.svg"
     return QIcon(str(svg_path)) if svg_path.exists() else QIcon()

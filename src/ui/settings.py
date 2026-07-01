@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QSizePolicy,
@@ -34,9 +33,10 @@ from ..model_registry.downloader import ModelDownloadManager
 from ..model_registry.service import ModelService
 from .icons import make_eye_icon
 from .model_panel import ModelManagerWidget
+from .widgets.dialogs import alert_without_icon, confirm_without_icon
 from .widgets.update_dialog import UpdateDialog
 from ..app.version import APP_VERSION, get_version_string
-from ..app.update import check_for_update_sync
+from ..app.update import check_for_update_async
 
 # provider 下拉框的 data 值
 _PROVIDER_OPENAI = "openai"
@@ -68,6 +68,7 @@ class SettingsPanel(QWidget):
         self.hotword_service = HotwordService(self.config)
         self.download_manager = download_manager
         self.current_hotword_set_id: str | None = None
+        self._manual_update_worker = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -226,14 +227,10 @@ class SettingsPanel(QWidget):
 
         layout.addLayout(form)
 
-        # 版本信息和检查更新
+        # 检查更新
         version_layout = QHBoxLayout()
         version_layout.setContentsMargins(0, 16, 0, 0)
         version_layout.setSpacing(12)
-
-        version_label = QLabel(f"当前版本：{get_version_string()}")
-        version_label.setObjectName("SettingsVersionLabel")
-        version_layout.addWidget(version_label)
 
         check_update_button = QPushButton("检查更新")
         check_update_button.setObjectName("SmallButton")
@@ -367,22 +364,8 @@ class SettingsPanel(QWidget):
 
     def _on_check_update_clicked(self) -> None:
         """点击检查更新按钮"""
-        try:
-            update_info = check_for_update_sync(APP_VERSION)
-            if update_info.has_update:
-                UpdateDialog.show_update_dialog(self, update_info)
-            else:
-                QMessageBox.information(
-                    self,
-                    "检查更新",
-                    f"已是最新版本：{get_version_string()}",
-                )
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "检查更新失败",
-                f"无法检查更新：{e}",
-            )
+        dialog = UpdateDialog.show_pending_dialog(self, get_version_string())
+        self._manual_update_worker = check_for_update_async(APP_VERSION, dialog.set_update_info)
 
     def _build_hotword_page(self) -> QWidget:
         """创建热词管理页面。"""
@@ -751,7 +734,7 @@ class SettingsPanel(QWidget):
         except Exception as e:
             # 恢复原状态
             self._refresh_hotword_list()
-            QMessageBox.warning(self, "设置失败", f"{e}")
+            alert_without_icon(self, "设置失败", f"{e}")
 
     def _on_hotword_set_selected(self, current: QListWidgetItem, previous: QListWidgetItem) -> None:
         """处理热词表选择。"""
@@ -792,21 +775,19 @@ class SettingsPanel(QWidget):
             self.hotword_detail_title.setText(name or "未命名")
             self.hotword_detail_subtitle.setText(f"{len(words)} 个热词")
         except Exception as e:
-            QMessageBox.warning(self, "保存失败", f"{e}")
+            alert_without_icon(self, "保存失败", f"{e}")
 
     def _on_delete_hotword_set(self) -> None:
         """删除当前热词表。"""
         if not self.current_hotword_set_id:
             return
 
-        reply = QMessageBox.question(
+        confirmed = confirm_without_icon(
             self,
             "删除热词表",
             "删除后无法恢复，确定要删除吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if confirmed:
             self.hotword_service.delete_hotword_set(self.current_hotword_set_id)
             self._emit_hotwords_changed()
             self._refresh_hotword_list()
@@ -826,7 +807,7 @@ class SettingsPanel(QWidget):
                     self.hotword_set_list.setCurrentItem(item)
                     break
         except Exception as e:
-            QMessageBox.warning(self, "创建失败", f"{e}")
+            alert_without_icon(self, "创建失败", f"{e}")
 
     def _on_import_hotword_sets(self) -> None:
         """导入热词表。"""
@@ -852,19 +833,19 @@ class SettingsPanel(QWidget):
             # 显示结果
             if errors:
                 error_msg = "\n".join(errors)
-                QMessageBox.warning(self, "导入结果", f"成功导入 {len(imported_sets)} 个热词表\n\n错误：\n{error_msg}")
+                alert_without_icon(self, "导入结果", f"成功导入 {len(imported_sets)} 个热词表\n\n错误：\n{error_msg}")
             else:
-                QMessageBox.information(self, "导入结果", f"成功导入 {len(imported_sets)} 个热词表")
+                alert_without_icon(self, "导入结果", f"成功导入 {len(imported_sets)} 个热词表")
 
         except Exception as e:
-            QMessageBox.warning(self, "导入失败", f"无法读取文件：{e}")
+            alert_without_icon(self, "导入失败", f"无法读取文件：{e}")
 
     def _on_export_hotword_sets(self) -> None:
         """导出选中的热词表。"""
         active_ids = list(self.config.get("active_hotword_set_ids", []))
 
         if not active_ids:
-            QMessageBox.information(self, "导出", "请先勾选要导出的热词表")
+            alert_without_icon(self, "导出", "请先勾选要导出的热词表")
             return
 
         sets_to_export = [

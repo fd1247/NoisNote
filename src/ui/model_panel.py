@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from ..app.config import save_config
 from ..utils.logging import log_event
-from .widgets.dialogs import confirm_without_icon
+from .widgets.dialogs import alert_without_icon, confirm_without_icon
 from ..model_registry.downloader import ModelDownloadManager
 from ..model_registry.service import (
     DownloadTaskState,
@@ -32,11 +31,13 @@ from ..model_registry.service import (
 )
 
 
-class DownloadingModelWidget(QWidget):
+class DownloadingModelWidget(QFrame):
     """下载中模型列表项。"""
 
     def __init__(self, state: DownloadTaskState, parent=None):
         super().__init__(parent)
+        self.setObjectName("ModelListItem")
+        self.setProperty("selected", False)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(4)
@@ -60,6 +61,12 @@ class DownloadingModelWidget(QWidget):
 
         layout.addLayout(header)
         layout.addWidget(progress)
+
+    def set_selected(self, selected: bool) -> None:
+        """同步树项选中态到自定义下载控件背景。"""
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class ModelListItemWidget(QFrame):
@@ -96,6 +103,21 @@ class ModelListItemWidget(QFrame):
             widget.style().polish(widget)
 
 
+class EmptyModelListItemWidget(QFrame):
+    """模型列表空态提示，和模型描述文字保持同一对齐与样式。"""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ModelListItem")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(0)
+
+        label = QLabel(text)
+        label.setObjectName("ModelItemSubtitle")
+        layout.addWidget(label)
+
+
 class ModelTreeWidget(QTreeWidget):
     """让模型子项的缩进区和内容区使用同一行背景。"""
 
@@ -107,7 +129,7 @@ class ModelTreeWidget(QTreeWidget):
         if item is None:
             return None
         data = item.data(0, Qt.UserRole)
-        if not data or data[0] not in {"downloaded", "available"}:
+        if not data or data[0] not in {"downloaded", "available", "downloading"}:
             return None
         parent = item.parent()
         row = parent.indexOfChild(item) if parent else 0
@@ -213,7 +235,7 @@ class ModelManagerWidget(QWidget):
         for entry in available_models:
             self._add_available_item(entry)
         if not available_models:
-            self._add_empty_item(self.available_group, "没有可供下载的模型")
+            self._add_empty_item(self.available_group, "没有可下载的模型")
 
         if download_tasks:
             self.downloading_group = self._add_group_item("下载中")
@@ -221,6 +243,7 @@ class ModelManagerWidget(QWidget):
             self._add_downloading_item(state)
 
         self._apply_group_expanded_state(expanded_state)
+        self._restore_tree_selection(self.selected_kind, self.selected_name)
         self._updating_selection = False
         self._sync_model_item_selection()
         self._update_action_button()
@@ -239,6 +262,23 @@ class ModelManagerWidget(QWidget):
                 continue
             title = group.data(0, Qt.UserRole)[1]
             group.setExpanded(expanded_state.get(title, True))
+
+    def _restore_tree_selection(self, selected_kind: str | None, selected_name: str | None) -> None:
+        """列表刷新后恢复选中项，避免下载进度刷新抢掉高亮。"""
+        if not selected_kind or not selected_name:
+            self.model_tree.setCurrentItem(None)
+            return
+        for group in (self.downloaded_group, self.available_group, self.downloading_group):
+            if group is None:
+                continue
+            for index in range(group.childCount()):
+                item = group.child(index)
+                if item.data(0, Qt.UserRole) == (selected_kind, selected_name):
+                    self.model_tree.setCurrentItem(item)
+                    return
+        self.selected_kind = None
+        self.selected_name = None
+        self.model_tree.setCurrentItem(None)
 
     def _add_group_item(self, title: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([title])
@@ -279,6 +319,9 @@ class ModelManagerWidget(QWidget):
         item.setFlags(item.flags() & ~Qt.ItemIsSelectable & ~Qt.ItemIsEnabled)
         item.setForeground(0, QBrush(QColor("#9ca3af")))
         group.addChild(item)
+        widget = EmptyModelListItemWidget(text, self.model_tree)
+        item.setSizeHint(0, widget.sizeHint())
+        self.model_tree.setItemWidget(item, 0, widget)
 
     def _add_downloading_item(self, state: DownloadTaskState) -> None:
         item = QTreeWidgetItem()
@@ -306,7 +349,7 @@ class ModelManagerWidget(QWidget):
         self._update_action_button()
 
     def _sync_model_item_selection(self) -> None:
-        for group in (self.downloaded_group, self.available_group):
+        for group in (self.downloaded_group, self.available_group, self.downloading_group):
             if group is None:
                 continue
             for index in range(group.childCount()):
@@ -352,12 +395,12 @@ class ModelManagerWidget(QWidget):
     def _open_selected_model_dir(self, name: str) -> None:
         entry = self.service.get_entry(name)
         if not entry:
-            QMessageBox.warning(self, "模型不存在", "模型清单中找不到该模型。")
+            alert_without_icon(self, "模型不存在", "模型清单中找不到该模型。")
             return
         info = self.service.validate_model_dir(entry)
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(info.local_path)))
         if not opened:
-            QMessageBox.warning(self, "打开失败", "无法打开模型目录。")
+            alert_without_icon(self, "打开失败", "无法打开模型目录。")
 
     def _delete_selected_model(self) -> None:
         """删除当前选中的已下载模型目录。"""
@@ -365,7 +408,7 @@ class ModelManagerWidget(QWidget):
             return
         entry = self.service.get_entry(self.selected_name)
         if not entry:
-            QMessageBox.warning(self, "模型不存在", "模型清单中找不到该模型。")
+            alert_without_icon(self, "模型不存在", "模型清单中找不到该模型。")
             return
 
         confirmed = confirm_without_icon(
@@ -395,7 +438,7 @@ class ModelManagerWidget(QWidget):
                 error_code="MOD-001",
                 error_type=type(exc).__name__,
             )
-            QMessageBox.warning(self, "删除失败", str(exc))
+            alert_without_icon(self, "删除失败", str(exc))
             return
 
         self.selected_kind = None
@@ -408,6 +451,4 @@ class ModelManagerWidget(QWidget):
             message="已下载模型删除完成",
             context={"model": entry.name, "success": result.success},
         )
-        QMessageBox.information(self, "模型删除", result.message)
-
-
+        alert_without_icon(self, "模型删除", result.message)

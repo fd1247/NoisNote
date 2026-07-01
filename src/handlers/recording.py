@@ -338,6 +338,10 @@ class RecordingHandlers:
 
     def show_recording_page(self) -> None:
         """显示新录音/正在录音页面。"""
+        if hasattr(self, "stop_playback"):
+            self.stop_playback()
+        if hasattr(self, "playback_record_id"):
+            self.playback_record_id = ""
         if self.content_stack.currentWidget() == self.settings_panel:
             self.hide_settings()
         self.content_stack.setCurrentWidget(self.recording_page)
@@ -407,8 +411,12 @@ class RecordingHandlers:
         self.current_record = None
         self.processing_source = None
         self._set_transcript_text("")
+        if hasattr(self, "_set_timeline_items"):
+            self._set_timeline_items([])
         self._set_summary_text("")
         self.transcript_status.setText("等待内容")
+        if hasattr(self, "timeline_status"):
+            self.timeline_status.setText("等待内容")
         self.summary_status.setText("等待内容")
         self.transcript_progress.hide()
         self.summary_progress.hide()

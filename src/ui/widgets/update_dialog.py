@@ -8,114 +8,102 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QTextBrowser,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
 
-from ...app.update import UpdateInfo
+from ...app.update import GITHUB_REPO, GITHUB_OWNER, UpdateInfo
+from .dialogs import _ConfirmDialog, add_dialog_buttons, primary_button_spec, secondary_button_spec
 
 
-class UpdateDialog(QDialog):
+_RELEASES_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
+
+
+class UpdateDialog(_ConfirmDialog):
     """更新提示对话框"""
 
     def __init__(self, update_info: UpdateInfo, parent: QWidget | None = None):
         super().__init__(parent)
         self._update_info = update_info
+        self._current_version = update_info.current_version
+        self._release_url = update_info.download_url or _RELEASES_URL
         self._setup_ui()
+        self.set_update_info(update_info)
 
     def _setup_ui(self):
         """设置对话框布局"""
-        self.setWindowTitle("发现新版本")
-        self.setMinimumWidth(400)
-        self.setModal(False)
+        self.setObjectName("ConfirmDialog")
+        self.setWindowTitle("检查更新")
+        self.setMinimumWidth(340)
+        self.setModal(True)
 
         # 如果有父窗口，使用其图标
         if self.parent() is not None:
             self.setWindowIcon(self.parent().windowIcon())
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(34, 24, 34, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(42, 28, 42, 22)
+        layout.setSpacing(28)
 
-        # 标题
-        title_label = QLabel("发现新版本")
-        title_label.setObjectName("UpdateDialogTitle")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_font = title_label.font()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
-        layout.addWidget(title_label)
+        info_grid = QGridLayout()
+        info_grid.setHorizontalSpacing(18)
+        info_grid.setVerticalSpacing(10)
 
-        # 版本信息
-        version_layout = QHBoxLayout()
-        version_layout.setSpacing(8)
+        self.current_title = QLabel("当前版本：")
+        self.current_title.setObjectName("UpdateDialogInfoLabel")
+        self.current_value = QLabel(self._current_version)
+        self.current_value.setObjectName("UpdateDialogInfoValue")
+        latest_title = QLabel("最新版本：")
+        latest_title.setObjectName("UpdateDialogInfoLabel")
+        self.latest_value = QLabel("正在获取信息...")
+        self.latest_value.setObjectName("UpdateDialogInfoValue")
 
-        current_label = QLabel(f"当前版本：{self._update_info.current_version}")
-        current_label.setObjectName("UpdateDialogCurrentVersion")
-        version_layout.addWidget(current_label)
+        info_grid.addWidget(self.current_title, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        info_grid.addWidget(self.current_value, 0, 1)
+        info_grid.addWidget(latest_title, 1, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        info_grid.addWidget(self.latest_value, 1, 1)
+        layout.addLayout(info_grid)
 
-        arrow_label = QLabel("→")
-        arrow_label.setObjectName("UpdateDialogArrow")
-        version_layout.addWidget(arrow_label)
+        self.confirm_button, self.release_button = add_dialog_buttons(
+            self,
+            layout,
+            [
+                primary_button_spec("确认", self.close, active=True),
+                secondary_button_spec("查看发布", self._on_release_clicked),
+            ],
+        )
 
-        latest_label = QLabel(f"最新版本：{self._update_info.latest_version}")
-        latest_label.setObjectName("UpdateDialogLatestVersion")
-        latest_font = latest_label.font()
-        latest_font.setBold(True)
-        latest_label.setFont(latest_font)
-        version_layout.addWidget(latest_label)
+    def set_update_info(self, update_info: UpdateInfo) -> None:
+        """刷新检查结果。"""
+        self._update_info = update_info
+        self._current_version = update_info.current_version
+        self.current_value.setText(update_info.current_version)
+        if update_info.download_url or update_info.release_notes:
+            self.latest_value.setText(update_info.latest_version)
+            self._release_url = update_info.download_url or _RELEASES_URL
+        else:
+            self.latest_value.setText("获取最新版本信息失败")
+            self._release_url = _RELEASES_URL
 
-        version_layout.addStretch(1)
-        layout.addLayout(version_layout)
-
-        # 更新说明
-        notes_label = QLabel("更新说明：")
-        notes_label.setObjectName("UpdateDialogNotesLabel")
-        layout.addWidget(notes_label)
-
-        notes_browser = QTextBrowser()
-        notes_browser.setObjectName("UpdateDialogNotes")
-        notes_browser.setOpenExternalLinks(True)
-        notes_browser.setPlainText(self._update_info.release_notes)
-        notes_browser.setMinimumHeight(120)
-        notes_browser.setMaximumHeight(200)
-        layout.addWidget(notes_browser)
-
-        # 按钮
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setContentsMargins(0, 8, 0, 0)
-        buttons_layout.setSpacing(10)
-        buttons_layout.addStretch(1)
-
-        download_button = QPushButton("下载更新")
-        download_button.setObjectName("UpdateDialogDownloadButton")
-        download_button.setFixedSize(100, 38)
-        download_button.setDefault(True)
-        download_button.clicked.connect(self._on_download_clicked)
-        buttons_layout.addWidget(download_button)
-
-        later_button = QPushButton("稍后提醒")
-        later_button.setObjectName("UpdateDialogLaterButton")
-        later_button.setFixedSize(100, 38)
-        later_button.clicked.connect(self.close)
-        buttons_layout.addWidget(later_button)
-
-        buttons_layout.addStretch(1)
-        layout.addLayout(buttons_layout)
-
-    def _on_download_clicked(self):
-        """点击下载按钮，跳转浏览器"""
-        url = self._update_info.download_url
-        if url:
-            QDesktopServices.openUrl(QUrl(url))
+    def _on_release_clicked(self):
+        """点击查看发布按钮，跳转浏览器。"""
+        QDesktopServices.openUrl(QUrl(self._release_url))
         self.close()
+
+    @classmethod
+    def pending(cls, parent: QWidget | None, current_version: str) -> "UpdateDialog":
+        """创建正在获取版本信息的对话框。"""
+        from datetime import datetime, timezone
+
+        return cls(
+            UpdateInfo(
+                has_update=False,
+                latest_version="正在获取信息...",
+                current_version=current_version,
+                download_url="",
+                release_notes="pending",
+                check_time=datetime.now(timezone.utc),
+            ),
+            parent,
+        )
 
     @staticmethod
     def show_update_dialog(
@@ -132,5 +120,12 @@ class UpdateDialog(QDialog):
             UpdateDialog 对象
         """
         dialog = UpdateDialog(update_info, parent)
+        dialog.show()
+        return dialog
+
+    @staticmethod
+    def show_pending_dialog(parent: QWidget | None, current_version: str) -> UpdateDialog:
+        """显示检查中状态对话框。"""
+        dialog = UpdateDialog.pending(parent, current_version)
         dialog.show()
         return dialog

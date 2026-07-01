@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,8 @@ class HistorySidebarControls:
     new_recording_button: QPushButton
     import_audio_button: QPushButton
     active_recording_button: QPushButton
+    history_search: QLineEdit
+    history_filter_button: QPushButton
     history_list: QListWidget
     empty_history_label: QLabel
     settings_button: QPushButton
@@ -52,21 +55,39 @@ def build_history_sidebar(
     new_recording_button = QPushButton("创建新录音")
     new_recording_button.setObjectName("SidebarPrimaryButton")
     new_recording_button.setIcon(make_icon("record_light"))
+    new_recording_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     new_recording_button.clicked.connect(new_recording)
 
     import_audio_button = QPushButton("导入本地音视频")
     import_audio_button.setObjectName("SidebarSecondaryButton")
     import_audio_button.setIcon(make_icon("import"))
+    import_audio_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     import_audio_button.clicked.connect(import_audio_recording)
 
     active_recording_button = QPushButton("正在录音中")
     active_recording_button.setObjectName("SidebarRecordingButton")
     active_recording_button.setIcon(make_icon("record"))
+    active_recording_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     active_recording_button.clicked.connect(show_active_task)
     active_recording_button.hide()
 
     title = QLabel("历史记录")
     title.setObjectName("SectionTitle")
+
+    search_row = QHBoxLayout()
+    search_row.setContentsMargins(0, 0, 0, 0)
+    search_row.setSpacing(8)
+    history_search = QLineEdit()
+    history_search.setObjectName("HistorySearchBox")
+    history_search.setPlaceholderText("搜索历史记录")
+    history_filter_button = QPushButton()
+    history_filter_button.setObjectName("HistoryFilterButton")
+    history_filter_button.setIcon(make_icon("filter"))
+    history_filter_button.setIconSize(QSize(17, 17))
+    history_filter_button.setToolTip("筛选历史记录")
+    history_filter_button.setFixedWidth(40)
+    search_row.addWidget(history_search, stretch=1)
+    search_row.addWidget(history_filter_button)
 
     history_list = QListWidget()
     history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -79,12 +100,15 @@ def build_history_sidebar(
     settings_button = QPushButton("设置")
     settings_button.setObjectName("SidebarSettingsButton")
     settings_button.setIcon(make_icon("settings"))
+    settings_button.setIconSize(QSize(16, 16))
     settings_button.clicked.connect(show_settings)
 
     layout.addWidget(new_recording_button)
     layout.addWidget(import_audio_button)
     layout.addWidget(active_recording_button)
+    layout.addSpacing(12)
     layout.addWidget(title)
+    layout.addLayout(search_row)
     layout.addWidget(history_list, stretch=1)
     layout.addWidget(empty_history_label)
     layout.addWidget(settings_button)
@@ -93,6 +117,8 @@ def build_history_sidebar(
         new_recording_button=new_recording_button,
         import_audio_button=import_audio_button,
         active_recording_button=active_recording_button,
+        history_search=history_search,
+        history_filter_button=history_filter_button,
         history_list=history_list,
         empty_history_label=empty_history_label,
         settings_button=settings_button,

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import re
+from html import escape
 from typing import Any
 
-from .types import TimelineSegment
+from .types import TimelineSegment, TimelineToken
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r"[，。？！；：\n]|[,.?!;:]\s*")
 _DEFAULT_MAX_SEGMENT_CHARS = 40
@@ -36,6 +37,7 @@ def _word_segments_to_sentence_timeline(
 ) -> list[TimelineSegment]:
     timeline: list[TimelineSegment] = []
     current_texts: list[str] = []
+    current_tokens: list[TimelineToken] = []
     start: float | None = None
     end = 0.0
 
@@ -43,34 +45,62 @@ def _word_segments_to_sentence_timeline(
         if start is None and segment.text.strip():
             start = segment.start
         current_texts.append(segment.text)
+        current_tokens.append(TimelineToken(start=segment.start, end=segment.end, text=segment.text))
         end = max(end, segment.end)
         content = _normalize_timeline_text("".join(current_texts))
         if _SENTENCE_SPLIT_PATTERN.search(segment.text) or len(content) >= max_chars:
             if content:
-                timeline.append(TimelineSegment(start=start if start is not None else segment.start, end=end, text=content))
+                timeline.append(
+                    TimelineSegment(
+                        start=start if start is not None else segment.start,
+                        end=end,
+                        text=content,
+                        tokens=_clean_tokens(current_tokens),
+                    )
+                )
             current_texts = []
+            current_tokens = []
             start = None
             end = 0.0
 
     content = _normalize_timeline_text("".join(current_texts))
     if content:
         fallback_start = start if start is not None else (word_segments[-1].start if word_segments else 0.0)
-        timeline.append(TimelineSegment(start=fallback_start, end=end, text=content))
+        timeline.append(
+            TimelineSegment(
+                start=fallback_start,
+                end=end,
+                text=content,
+                tokens=_clean_tokens(current_tokens),
+            )
+        )
 
     return timeline
 
 
-def timeline_to_dicts(timeline: list[TimelineSegment]) -> list[dict[str, float | str]]:
+def timeline_to_dicts(timeline: list[TimelineSegment]) -> list[dict[str, Any]]:
     """把时间轴片段序列化为稳定 JSON 结构。"""
-    return [
-        {
+    items: list[dict[str, Any]] = []
+    for segment in timeline:
+        if not segment.text.strip():
+            continue
+        item = {
             "start": round(max(0.0, segment.start), 3),
             "end": round(max(0.0, segment.end), 3),
             "text": segment.text,
         }
-        for segment in timeline
-        if segment.text.strip()
-    ]
+        tokens = _clean_tokens(segment.tokens)
+        if tokens:
+            item["tokens"] = [
+                {
+                    "start": round(max(0.0, token.start), 3),
+                    "end": round(max(0.0, token.end), 3),
+                    "text": token.text,
+                }
+                for token in tokens
+            ]
+        items.append(item)
+    return items
 
 
 def timeline_from_dicts(items: list[dict[str, Any]] | None) -> list[TimelineSegment]:
@@ -84,11 +114,52 @@ def timeline_from_dicts(items: list[dict[str, Any]] | None) -> list[TimelineSegm
         end = _seconds(item.get("end", start))
         if end < start:
             end = start
-        timeline.append(TimelineSegment(start=start, end=end, text=text))
-    timeline = sorted(timeline, key=lambda segment: (segment.start, segment.end))
-    if _looks_like_word_level_timeline(timeline):
-        return _word_segments_to_sentence_timeline(timeline)
-    return timeline
+        tokens = _tokens_from_dicts(item.get("tokens"))
+        timeline.append(TimelineSegment(start=start, end=end, text=text, tokens=tokens))
+    return sorted(timeline, key=lambda segment: (segment.start, segment.end))
+
+
+def timeline_to_html(timeline: list[TimelineSegment], position_seconds: float | None = None) -> str:
+    """把时间轴渲染为详情页可高亮的 HTML。"""
+    active_sentence = _active_sentence_index(timeline, position_seconds)
+    active_token = _active_token_index(timeline[active_sentence], position_seconds) if active_sentence is not None else None
+    blocks = []
+    for index, segment in enumerate(timeline):
+        anchor = '<a name="timeline-current"></a>' if index == active_sentence else ""
+        sentence_class = "timeline-sentence active" if index == active_sentence else "timeline-sentence"
+        text_html = _segment_text_html(segment, active_token if index == active_sentence else None)
+        blocks.append(
+            (
+                f"<tr class=\"{sentence_class}\">"
+                f"<td class=\"timeline-time\">{anchor}{escape(format_display_time(segment.start))} - "
+                f"{escape(format_display_time(segment.end))}</td>"
+                f"<td class=\"timeline-content\">{text_html}</td>"
+                "</tr>"
+            )
+        )
+    return (
+        "<html><head><style>"
+        "body{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:14px;color:#111827;margin:0;}"
+        ".timeline-table{border-collapse:separate;border-spacing:0 3px;width:100%;}"
+        ".timeline-sentence td{padding:8px 10px;line-height:1.65;vertical-align:top;}"
+        ".timeline-sentence.active td{background:#eef4ff;}"
+        ".timeline-time{color:#6b7280;width:138px;padding-right:28px;white-space:nowrap;}"
+        ".timeline-content{color:#111827;}"
+        ".timeline-token{border-radius:4px;padding:1px 2px;background:#bfdbfe;color:#0f172a;}"
+        "</style></head><body><table class=\"timeline-table\">"
+        + "".join(blocks)
+        + "</table></body></html>"
+    )
+
+
+def format_display_time(seconds: float) -> str:
+    """把秒数格式化为界面展示用时间戳。"""
+    milliseconds_total = _total_milliseconds(seconds)
+    minutes = milliseconds_total // 60_000
+    milliseconds_total %= 60_000
+    secs = milliseconds_total // 1000
+    millis = milliseconds_total % 1000
+    return f"{minutes:02d}:{secs:02d}.{millis:03d}"
 
 
 def timeline_to_srt(timeline: list[TimelineSegment]) -> str:
@@ -109,7 +180,7 @@ def timeline_to_srt(timeline: list[TimelineSegment]) -> str:
 
 def format_srt_time(seconds: float) -> str:
     """把秒数格式化为 SRT 时间戳。"""
-    milliseconds_total = int(round(max(0.0, seconds) * 1000))
+    milliseconds_total = _total_milliseconds(seconds)
     hours = milliseconds_total // 3_600_000
     milliseconds_total %= 3_600_000
     minutes = milliseconds_total // 60_000
@@ -148,12 +219,76 @@ def _seconds(value: Any) -> float:
         return 0.0
 
 
+def _total_milliseconds(seconds: Any) -> int:
+    return int(round(max(0.0, _seconds(seconds)) * 1000))
+
+
 def _normalize_timeline_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _looks_like_word_level_timeline(timeline: list[TimelineSegment]) -> bool:
-    if len(timeline) < 3:
-        return False
-    short_count = sum(1 for segment in timeline if len(segment.text.strip()) <= 1)
-    return short_count / len(timeline) >= 0.6
+def _clean_tokens(tokens: list[TimelineToken]) -> list[TimelineToken]:
+    clean: list[TimelineToken] = []
+    for token in tokens:
+        text = str(token.text or "")
+        if not text.strip() and text != " ":
+            continue
+        end = max(token.start, token.end)
+        clean.append(TimelineToken(start=max(0.0, token.start), end=end, text=text))
+    return clean
+
+
+def _tokens_from_dicts(items: Any) -> list[TimelineToken]:
+    if not isinstance(items, list):
+        return []
+    tokens: list[TimelineToken] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "")
+        if text == "":
+            continue
+        start = _seconds(item.get("start", 0.0))
+        end = _seconds(item.get("end", start))
+        if end < start:
+            end = start
+        tokens.append(TimelineToken(start=start, end=end, text=text))
+    return tokens
+
+
+def _active_sentence_index(timeline: list[TimelineSegment], position_seconds: float | None) -> int | None:
+    if position_seconds is None:
+        return None
+    position = max(0.0, float(position_seconds))
+    for index, segment in enumerate(timeline):
+        if segment.start <= position <= max(segment.start, segment.end):
+            return index
+    for index, segment in enumerate(timeline):
+        if position < segment.start:
+            return max(0, index - 1)
+    return len(timeline) - 1 if timeline else None
+
+
+def _active_token_index(segment: TimelineSegment, position_seconds: float | None) -> int | None:
+    if position_seconds is None:
+        return None
+    position = max(0.0, float(position_seconds))
+    tokens = _clean_tokens(segment.tokens)
+    for index, token in enumerate(tokens):
+        if token.start <= position <= max(token.start, token.end):
+            return index
+    return None
+
+
+def _segment_text_html(segment: TimelineSegment, active_token: int | None) -> str:
+    tokens = _clean_tokens(segment.tokens)
+    if not tokens:
+        return escape(segment.text)
+    parts: list[str] = []
+    for index, token in enumerate(tokens):
+        text = escape(token.text)
+        if index == active_token:
+            parts.append(f"<span class=\"timeline-token\">{text}</span>")
+        else:
+            parts.append(text)
+    return "".join(parts)

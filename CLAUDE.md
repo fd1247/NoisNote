@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 音频转录与总结工具是一个面向 Windows 的 PySide6 / Qt Widgets 桌面应用。用于录制系统音频、录制麦克风或导入本地音视频文件，将输入保存为历史记录，再通过本地 ASR 模型转录文字，并可调用 OpenAI 兼容的 LLM API 生成总结。
 
 ```text
-创建录音或导入音视频 -> 保存历史记录 -> ASR 转录 -> 可选 LLM 总结 -> 查看结果
+创建录音或导入音视频 -> 保存历史记录 -> ASR 转录（含逐句时间轴） -> 可选 LLM 总结 -> 音频回放 / 导出 -> 查看结果
 ```
 
 ## 技术栈
@@ -16,7 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | -------- | -------------------------------------------------- |
 | GUI      | PySide6 / Qt Widgets                               |
 | 系统音频 | SoundCard (WASAPI Loopback)                        |
+| 音频回放 | QMediaPlayer / QAudioOutput                        |
 | ASR 推理 | Qwen3-ASR GGUF（ONNX + llama.cpp），本地模型推理     |
+| 时间戳   | Qwen3-ForceAligner GGUF（ONNX + llama.cpp）         |
 | LLM 总结 | OpenAI 兼容 API / Anthropic 兼容 API                |
 | 音频处理 | ffmpeg / ffprobe                                   |
 | 模型下载 | ModelScope（优先）+ GitHub（备用）                  |
@@ -32,6 +34,9 @@ python main.py
 
 # 运行常规单元测试
 python -m pytest tests/test_qt_history.py tests/test_qt_models_gguf.py tests/test_qt_model_workers.py -q
+
+# 运行扩展单元测试（含回放、时间轴、导出、对话框）
+python -m pytest tests/test_qt_main_window_p0.py tests/test_qt_main_window_ch07.py tests/test_qt_dialogs.py tests/test_qt_history_widgets.py tests/test_timestamp_alignment_app.py -q
 
 # 运行 WASAPI 录音手动测试（需要 Windows 音频设备）
 python tests/test_wasapi_record.py
@@ -61,12 +66,13 @@ src/
   asr/                                  # ASR 转录引擎
     engine.py                           # TranscriptionEngine 高层封装
     runtime.py                          # Qwen3AsrGgufRuntime vendor 封装
-    types.py                            # ASR 数据模型、进度类型
+    types.py                            # 数据模型（含 TimelineSegment/Token、进度、设备解析）
+    timestamps.py                       # 时间轴生成、HTML/SRT 导出、时间格式化
     utils.py                            # 转录文本清理
   llm/                                  # LLM 总结服务
-    summarizer.py                       # Summarizer OpenAI 兼容 API 调用
+    summarizer.py                       # Summarizer（system/user 角色分离的 prompt 格式）
   history/                              # 历史记录管理
-    service.py                          # HistoryService CRUD 公开入口
+    service.py                          # HistoryService CRUD、时间轴读写、ASR 元数据
     storage.py                          # 文件存储和元数据管理
     types.py                            # HistoryRecord、HistoryStatus
   model_registry/                       # 模型下载管理
@@ -75,33 +81,39 @@ src/
     worker.py                           # ModelDownloadWorker 下载线程
     download.py                         # 下载源选择、文件下载、解压、校验
     types.py                            # ModelStatus、ModelCatalogEntry 等
-  handlers/                             # MainWindow Mixin
+  handlers/                             # MainWindow Mixin（每个文件对应一个功能域）
     media_import.py                     # 文件导入和拖拽
     recording.py                        # 录音设备和流程
     processing.py                       # 处理状态和结果保存
     transcription.py                    # ASR 转录和重新转录
     summary.py                          # LLM 总结
     settings.py                         # 设置导航和配置保存
+    history_view.py                     # 历史列表搜索、筛选、选择、右键菜单、详情加载
+    timeline_view.py                    # 逐句时间轴展示、回放位置高亮、复制/格式化
+    playback.py                         # 音频回放、进度条、倍速、快捷键
+    export.py                           # 导出入口（转录/timeline/总结 -> txt/srt/markdown）
   workers/                              # 后台线程
     transcription.py                    # TranscriptionWorker
     summary.py                          # SummaryWorker
     preprocess.py                       # AudioPreprocessWorker
   ui/                                   # Qt 界面组件
-    styles.py                           # 全局 Qt 样式表
-    icons.py                            # 程序化 SVG 图标
-    sidebar.py                          # 侧边栏构建
+    styles.py                           # 全局 Qt 样式表（含回放栏、时间轴、设置、对话框等样式）
+    icons.py                            # SVG 图标加载（action/make_icon、eye、combo_arrow 等）
+    sidebar.py                          # 侧边栏构建（主侧栏 + 设置侧栏）
     recording.py                        # 录音页面
-    content.py                          # 转录/总结内容标签页
-    result.py                           # 结果状态辅助
-    settings.py                         # 设置面板
-    model_panel.py                      # 模型管理子页面
+    content.py                          # 历史详情页（含回放栏、标签切换、导出菜单）
+    result.py                           # 结果状态辅助（转录/总结文本设置、标签切换）
+    settings.py                         # 设置面板（通用/模型/热词/快捷键）
+    model_panel.py                      # 模型管理子页面（树形模型浏览器）
     widgets/                            # 可复用组件
-      history_item.py                   # 历史记录列表项
-      dialogs.py                        # 确认对话框
+      history_item.py                   # 历史记录列表项（ElidedLabel + 右键菜单）
+      dialogs.py                        # 对话框系统（确认/警告/输入/选择 + 键盘导航）
       update_dialog.py                  # 版本更新对话框
   utils/                                # 通用工具
     logging.py                          # JSON Lines 日志初始化、脱敏
     ffmpeg.py                           # ffmpeg/ffprobe 发现
+  hotwords/                             # 热词管理
+    service.py                          # HotwordService 热词增删改查、导入导出、激活
 vendor/qwen3-asr-gguf/                  # Qwen3-ASR-GGUF 第三方 Python 源码
   qwen_asr_gguf/inference/              # ASR 推理源码（上游 e790e3b + 3 处定制）
   qwen_asr_gguf/inference/bin/          # llama.cpp DLL（.gitignored, 由 download_deps.py 下载）
@@ -129,23 +141,47 @@ scripts/                                # 构建和发布脚本
   logs/                                  # 日志
 ```
 
-历史记录采用"一条记录一个文件夹"的结构。导入音频默认记录源文件路径，不复制源文件。导入视频在开始转录时才提取音轨。下载中的模型先写入 `.download-<name>` 临时目录，校验通过后再移动到最终目录。
+历史记录采用"一条记录一个文件夹"的结构。每条记录目录包含：
+- `audio.wav` — 录音/导入的音频文件
+- `metadata.json` — 元数据（含 ASR 诊断、时间戳配置等）
+- `transcript.txt` — 转录文本
+- `summary.md` — LLM 总结（Markdown）
+- `timeline.json` — 逐句时间轴结构化数据
+- `transcript.srt` — SRT 字幕导出（按需生成）
+
+导入音频默认记录源文件路径，不复制源文件。导入视频在开始转录时才提取音轨。下载中的模型先写入 `.download-<name>` 临时目录，校验通过后再移动到最终目录。
 
 ### 配置结构
 
 主要配置段：
 
 - `selected_asr`：ASR 模型名、模型路径、推理设备
-- `qwen3_asr_gguf`：GGUF runtime 工具目录、chunk、上下文和热词等运行参数
-- `llm`：API Key、模型名、Base URL、供应商
-- `audio`：录音模式、设备选择、自动转录/总结开关、预处理参数
+- `qwen3_asr_gguf`：GGUF runtime 工具目录、chunk、上下文、`enable_timestamps` 等运行参数
+- `llm`：API Key、模型名、Base URL、供应商（openai / anthropic）
+- `audio`：录音模式、设备选择、`auto_transcribe`/`auto_summarize` 开关（默认均为 `false`）、预处理参数
 - `models`：已下载模型记录
+- `hotword_sets` / `active_hotword_set_ids`：热词表及激活状态
 
-`config.py` 负责补齐新增默认字段，并通过 `_normalize_model_config` 迁移旧模型名。
+`config.py` 负责补齐新增默认字段，并通过 `_normalize_model_config` 迁移旧模型名和设备值。
 
 ### MainWindow Mixin 架构
 
-MainWindow 通过 Python 多重继承组装功能，每个 Mixin 对应 `handlers/` 目录下的一个文件。Mixin 之间不应直接互相调用，公共逻辑提取到 MainWindow 自身。
+MainWindow 通过 Python 多重继承组装功能，每个 Mixin 对应 `handlers/` 目录下的一个文件。当前共 11 个 Mixin：
+
+| Mixin | 文件 | 职责 |
+| ----- | ---- | ---- |
+| ImportHandlers | media_import.py | 文件导入/拖拽、导入后自动转录 |
+| RecordingHandlers | recording.py | 录音设备、录音流程、录音页状态 |
+| ProcessingHandlers | processing.py | 共享处理状态、结果保存、worker 清理 |
+| TranscriptionHandlers | transcription.py | ASR 转录生命周期、重新转录、时间轴保存 |
+| SummaryHandlers | summary.py | LLM 总结生命周期、手动总结 |
+| SettingsHandlers | settings.py | 设置导航、配置持久化、模型变更回调 |
+| HistoryViewHandlers | history_view.py | 历史列表搜索/筛选、选择、详情加载、右键菜单 |
+| TimelineViewHandlers | timeline_view.py | 逐句时间轴渲染、回放位置高亮 |
+| PlaybackHandlers | playback.py | QMediaPlayer 音频回放、进度/倍速、快捷键 |
+| ExportHandlers | export.py | 导出 txt/srt/markdown |
+
+Mixin 之间不应直接互相调用，公共逻辑提取到 MainWindow 自身。MainWindow 自身负责 `__init__` 中的状态初始化、`_build_*` UI 构建方法和少量跨域方法（如 `copy_panel_text`、`delete_current_record`）。
 
 ### 后台任务
 
@@ -158,13 +194,50 @@ MainWindow 通过 Python 多重继承组装功能，每个 Mixin 对应 `handler
 
 后台线程不得直接操作 Qt 控件，只能通过 signal/slot 通知 UI。
 
+### 音频回放
+
+录音或导入的音频支持在历史详情页内回放：
+
+- 使用 `QMediaPlayer` + `QAudioOutput` 播放
+- 回放控制：播放/暂停、快退 15s、快进 15s、拖动进度条定位
+- 倍速播放：0.5x / 0.75x / 1.0x / 1.25x / 1.5x / 2.0x
+- 快捷键：Space（播放/暂停）、←（后退 15s）、→（前进 15s）
+- 回放状态与当前选中记录绑定，切换记录时自动停止
+
+### 逐句时间轴
+
+转录时可选择启用时间戳功能，生成逐句时间轴：
+
+- ASR 引擎完成转录后，通过 Qwen3-ForceAligner 对每个词进行时间对齐
+- `asr/timestamps.py` 将对齐结果合并为句子级 `TimelineSegment`，存储在 `timeline.json`
+- 回放时根据当前播放位置高亮对应句子（HTML 渲染，黄色背景）
+- 支持导出为 SRT 字幕格式
+- 可在设置中开关（默认关闭），需要下载 ForceAligner 辅助模型
+
+### LLM 总结 Prompt 格式
+
+`Summarizer` 使用标准的 system/user 角色分离格式：
+
+- **OpenAI 兼容 API**：`system` 角色设定助手身份，`user` 角色携带转录文本
+- **Anthropic API**：顶层 `system` 参数设定助手身份，`messages[0]` 为 `user` 角色
+
+不再使用将指令和文本混在一条 user 消息中的旧格式。
+
 ### Vendor 依赖
 
 Qwen3-ASR-GGUF 推理引擎以源码形式集成在 `vendor/qwen3-asr-gguf/` 中，运行时通过 `sys.path.insert` + `ctypes.CDLL` 动态加载。llama.cpp DLL 来自官方预编译的 `llama-b7798-bin-win-vulkan-x64.zip`，由 `scripts/download_deps.py` 下载到 `vendor/qwen3-asr-gguf/qwen_asr_gguf/inference/bin/`（该目录已 .gitignore）。项目对上游源码做了 3 处定制，详见 `vendor/qwen3-asr-gguf/VENDOR_SOURCE.md`。
 
 ### 模型管理
 
-正式模型清单仅包含 `Qwen3-ASR-0.6B-GGUF` 和 `Qwen3-ASR-1.7B-GGUF`。以 `name` 作为主键，`alias` 仅用于兼容旧配置。新增模型需同步 `app/config.py`、`asr/runtime.py`、`model_registry/service.py` 和测试文件。
+正式模型清单包含：
+
+| 模型 | 类型 | 用途 |
+| ---- | ---- | ---- |
+| Qwen3-ASR-0.6B-GGUF | ASR | 轻量版，适合日常录音 |
+| Qwen3-ASR-1.7B-GGUF | ASR | 高精度版 |
+| Qwen3-ForceAligner-0.6B-GGUF | 辅助 | 时间戳对齐，按需下载 |
+
+以 `name` 作为主键，`alias` 仅用于兼容旧配置。新增模型需同步 `app/config.py`、`asr/runtime.py`、`model_registry/service.py` 和测试文件。
 
 ## 当前约束
 
@@ -172,7 +245,8 @@ Qwen3-ASR-GGUF 推理引擎以源码形式集成在 `vendor/qwen3-asr-gguf/` 中
 - 默认设备策略偏保守，`auto` 映射到 CPU。
 - GPU 推理路径仅实现 DirectML（Windows），无 CUDA/CoreML 适配。
 - 仅识别 `~/Documents/NoisNote/models/` 下的模型目录。
-- 快捷键页面是预留入口，快捷键体系尚未完成。
+- 快捷键页面是预留入口，全局快捷键体系尚未完成（仅回放快捷键已实现）。
+- 回放功能依赖 `QMediaPlayer`，支持的音频格式取决于系统解码器。
 
 ## 开发规范
 

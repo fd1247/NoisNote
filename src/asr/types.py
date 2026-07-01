@@ -73,6 +73,16 @@ class TimelineSegment:
     start: float
     end: float
     text: str
+    tokens: list["TimelineToken"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TimelineToken:
+    """转录时间轴中的最小对齐单元。"""
+
+    start: float
+    end: float
+    text: str
 
 
 @dataclass(frozen=True)

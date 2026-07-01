@@ -3,19 +3,19 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
-    QPushButton,
     QSizePolicy,
-    QVBoxLayout,
+    QToolButton,
 )
 
 from ...history.service import HistoryRecord
+from ..icons import make_action_icon, make_history_icon
 
 
 class ElidedLabel(QLabel):
@@ -59,6 +59,8 @@ class HistoryActions(Protocol):
 class HistoryListItemWidget(QFrame):
     """历史记录列表项。"""
 
+    ROW_HEIGHT = 46
+
     def __init__(self, record: HistoryRecord, index: int, window: HistoryActions):
         super().__init__()
         self.record = record
@@ -67,36 +69,42 @@ class HistoryListItemWidget(QFrame):
         self._selected = False
         self.setObjectName("HistoryItem")
         self.setMouseTracking(True)
+        self.setFixedHeight(self.ROW_HEIGHT)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 8, 8)
         layout.setSpacing(8)
 
-        icon = QLabel("▢")
+        icon = QLabel()
         icon.setObjectName("HistoryIcon")
         icon.setAlignment(Qt.AlignCenter)
         icon.setFixedSize(22, 22)
+        icon.setPixmap(make_history_icon().pixmap(22, 22))
 
-        text_layout = QVBoxLayout()
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(2)
-        title = ElidedLabel(record.display_name)
-        title.setObjectName("HistoryTitle")
-        subtitle = ElidedLabel(record.display_subtitle)
-        subtitle.setObjectName("HistorySubtitle")
-        text_layout.addWidget(title)
-        text_layout.addWidget(subtitle)
+        self.title_label = ElidedLabel(record.display_name)
+        self.title_label.setObjectName("HistoryTitle")
 
-        self.more_button = QPushButton("...")
+        self.more_button = QToolButton()
         self.more_button.setObjectName("HistoryMoreButton")
-        self.more_button.setFixedSize(30, 30)
+        self.more_button.setIcon(make_action_icon("more"))
+        self.more_button.setIconSize(QSize(16, 16))
+        self.more_button.setFixedSize(28, 28)
+        self.more_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.more_button.setToolTip("更多操作")
         self.more_button.hide()
         self.more_button.clicked.connect(self._show_menu)
 
-        layout.addWidget(icon)
-        layout.addLayout(text_layout, stretch=1)
-        layout.addWidget(self.more_button)
+        layout.addWidget(icon, alignment=Qt.AlignVCenter)
+        layout.addWidget(self.title_label, stretch=1)
+        layout.addWidget(self.more_button, alignment=Qt.AlignVCenter)
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(hint.width(), self.ROW_HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), self.ROW_HEIGHT)
 
     def enterEvent(self, event) -> None:
         self.more_button.show()
@@ -113,9 +121,12 @@ class HistoryListItemWidget(QFrame):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self.setProperty("selected", selected)
+        self.title_label.setProperty("selected", selected)
         self._sync_more_button()
         self.style().unpolish(self)
         self.style().polish(self)
+        self.title_label.style().unpolish(self.title_label)
+        self.title_label.style().polish(self.title_label)
 
     def _sync_more_button(self) -> None:
         if self._selected or self.underMouse() or self.more_button.underMouse():

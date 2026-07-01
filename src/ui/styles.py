@@ -26,6 +26,15 @@ QFrame#Sidebar {
     background: #f4f4ef;
     border-right: 1px solid #e3e3dc;
 }
+QFrame#AppHeader {
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+}
+QLabel#AppHeaderTitle {
+    color: #111827;
+    font-size: 16px;
+    font-weight: 600;
+}
 QFrame#MainArea {
     background: #ffffff;
 }
@@ -34,6 +43,14 @@ QStackedWidget {
     border: none;
 }
 QFrame#Panel {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+QFrame#DetailHeader {
+    background: #ffffff;
+}
+QFrame#PlayerBar {
     background: #ffffff;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
@@ -64,15 +81,17 @@ QFrame#HistoryItem[selected="true"] {
     background: #e8eefc;
 }
 QLabel#HistoryIcon {
-    color: #6b7280;
-    border: 1px solid #d1d5db;
-    border-radius: 11px;
-    background: #ffffff;
+    border: none;
+    background: transparent;
 }
 QLabel#HistoryTitle {
     color: #111827;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 400;
+}
+QLabel#HistoryTitle[selected="true"] {
+    color: #111827;
+    font-weight: 700;
 }
 QLabel#HistorySubtitle {
     color: #6b7280;
@@ -93,10 +112,37 @@ QLabel#Title {
 }
 QLabel#SectionTitle {
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 400;
+    color: #6b7280;
 }
 QLabel#Muted {
     color: #6b7280;
+}
+QLabel#DetailTitle {
+    color: #111827;
+    font-size: 22px;
+    font-weight: 700;
+}
+QLabel#DetailMetaLabel {
+    color: #7a8496;
+    font-size: 13px;
+}
+QLabel#DetailMetaSeparator {
+    color: #7a8496;
+    font-size: 13px;
+}
+QLabel#DetailStatusPill {
+    background: #e7f8ee;
+    border: 1px solid #c3ead4;
+    border-radius: 10px;
+    color: #15803d;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+}
+QLabel#PlayerTime {
+    color: #6b7280;
+    min-width: 42px;
 }
 QLabel#HotwordHeroTitle {
     color: #111827;
@@ -145,6 +191,10 @@ QLabel#ConfirmDialogMessage {
     color: #111827;
     font-size: 14px;
     line-height: 20px;
+}
+QLabel#ConfirmDialogFieldLabel {
+    color: #374151;
+    font-size: 13px;
 }
 QLabel#SettingsLabel {
     color: #374151;
@@ -202,6 +252,7 @@ QPushButton {
     border: 1px solid #d1d5db;
     border-radius: 6px;
     padding: 8px 14px;
+    outline: none;
 }
 QPushButton:hover {
     background: #f3f4f6;
@@ -216,11 +267,13 @@ QPushButton#ConfirmDialogPrimaryButton {
     border-radius: 6px;
     color: #111827;
     padding: 0;
+    outline: none;
 }
 QPushButton#ConfirmDialogPrimaryButton:hover {
     background: #eff6ff;
 }
-QPushButton#ConfirmDialogPrimaryButton:focus {
+QPushButton#ConfirmDialogPrimaryButton:focus,
+QPushButton#ConfirmDialogPrimaryButton[active="true"] {
     border: 2px solid #2563eb;
 }
 QPushButton#ConfirmDialogCancelButton {
@@ -229,23 +282,34 @@ QPushButton#ConfirmDialogCancelButton {
     border-radius: 6px;
     color: #111827;
     padding: 0;
+    outline: none;
 }
 QPushButton#ConfirmDialogCancelButton:hover {
     background: #f3f4f6;
 }
-QPushButton#ConfirmDialogCancelButton:focus {
+QPushButton#ConfirmDialogCancelButton:focus,
+QPushButton#ConfirmDialogCancelButton[active="true"] {
     border: 2px solid #2563eb;
 }
+QLineEdit#ConfirmDialogInput,
+QComboBox#ConfirmDialogCombo {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 26px;
+}
 QPushButton#SidebarPrimaryButton {
-    background: #111827;
-    border-color: #111827;
+    background: #2563eb;
+    border-color: #2563eb;
     color: #ffffff;
-    font-weight: 600;
-    text-align: left;
+    font-weight: 400;
+    text-align: center;
     padding: 10px 12px;
+    min-height: 30px;
 }
 QPushButton#SidebarPrimaryButton:hover {
-    background: #1f2937;
+    background: #1d4ed8;
 }
 QPushButton#SidebarPrimaryButton:disabled {
     background: #d1d5db;
@@ -256,9 +320,10 @@ QPushButton#SidebarSecondaryButton {
     background: #ffffff;
     border-color: #e5e7eb;
     color: #111827;
-    font-weight: 600;
-    text-align: left;
+    font-weight: 400;
+    text-align: center;
     padding: 10px 12px;
+    min-height: 30px;
 }
 QPushButton#SidebarSecondaryButton:hover {
     background: #f8fafc;
@@ -271,9 +336,10 @@ QPushButton#SidebarRecordingTaskButton {
     background: #fff7ed;
     border-color: #fb923c;
     color: #9a3412;
-    font-weight: 700;
-    text-align: left;
+    font-weight: 400;
+    text-align: center;
     padding: 10px 12px;
+    min-height: 30px;
 }
 QPushButton#SidebarRecordingTaskButton:hover {
     background: #ffedd5;
@@ -283,9 +349,10 @@ QPushButton#SidebarProcessingTaskButton {
     background: #ecfdf3;
     border-color: #86efac;
     color: #166534;
-    font-weight: 700;
-    text-align: left;
+    font-weight: 400;
+    text-align: center;
     padding: 10px 12px;
+    min-height: 30px;
 }
 QPushButton#SidebarProcessingTaskButton:hover {
     background: #dcfce7;
@@ -376,6 +443,33 @@ QPushButton#SmallButton {
     padding: 5px 10px;
     min-width: 52px;
 }
+QPushButton#HistoryFilterButton {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    color: #374151;
+    padding: 7px 8px;
+}
+QPushButton#HistoryFilterButton::menu-indicator {
+    image: none;
+    width: 0;
+}
+QPushButton#PlayerIconButton,
+QPushButton#PlayerPlayButton {
+    background: #ffffff;
+    border: none;
+    border-radius: 6px;
+    color: #111827;
+    padding: 0;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+}
+QPushButton#PlayerIconButton:hover,
+QPushButton#PlayerPlayButton:hover {
+    background: #f3f4f6;
+}
 QPushButton#HotwordIconButton {
     padding: 4px 8px;
     min-width: 34px;
@@ -404,15 +498,15 @@ QFrame#ResultTabDivider {
     background: #e5e7eb;
     border: none;
 }
-QPushButton#HistoryMoreButton {
+QToolButton#HistoryMoreButton {
     background: #e5e7eb;
     border: none;
     border-radius: 7px;
     color: #374151;
-    font-weight: 700;
     padding: 0;
+    qproperty-toolButtonStyle: ToolButtonIconOnly;
 }
-QPushButton#HistoryMoreButton:hover {
+QToolButton#HistoryMoreButton:hover {
     background: #d1d5db;
 }
 QMenu {
@@ -495,12 +589,25 @@ QPlainTextEdit#HotwordWordsEditor {
 QTextBrowser#MarkdownView {
     line-height: 1.45;
 }
+QTextBrowser#TimelineView {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 6px;
+}
 QLineEdit#HotwordSearchBox {
     background: #ffffff;
     border: 1px solid #d8dee8;
     border-radius: 7px;
     min-height: 28px;
     padding: 7px 10px;
+}
+QLineEdit#HistorySearchBox {
+    background: #ffffff;
+    border: 1px solid #d8dee8;
+    border-radius: 8px;
+    min-height: 28px;
+    padding: 6px 9px;
 }
 QListWidget {
     background: transparent;
@@ -612,5 +719,40 @@ QProgressBar {
 QProgressBar::chunk {
     background: #22c55e;
     border-radius: 4px;
+}
+QSlider#PlayerSlider::groove:horizontal {
+    height: 5px;
+    background: #e5e7eb;
+    border-radius: 2px;
+}
+QSlider#PlayerSlider::sub-page:horizontal {
+    background: #2563eb;
+    border-radius: 2px;
+}
+QSlider#PlayerSlider::handle:horizontal {
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+    background: #2563eb;
+}
+QComboBox#PlayerRateCombo {
+    background: #ffffff;
+    border: none;
+    padding: 2px 0;
+    min-height: 24px;
+    min-width: 38px;
+    max-width: 38px;
+    font-weight: 700;
+    text-align: center;
+}
+QComboBox#PlayerRateCombo::drop-down {
+    width: 0;
+    border: none;
+}
+QComboBox#PlayerRateCombo::down-arrow {
+    image: none;
+    width: 0;
+    height: 0;
 }
 """.replace("__COMBO_ARROW_PATH__", _COMBO_ARROW_PATH).replace("__CHECK_MARK_PATH__", _CHECK_MARK_PATH)

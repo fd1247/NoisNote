@@ -52,17 +52,21 @@ def test_history_more_button_stays_visible_for_selected_item(tmp_path: Path) -> 
     widget = HistoryListItemWidget(make_record(tmp_path), 0, DummyHistoryActions())
     app.processEvents()
 
+    assert widget.sizeHint().height() == HistoryListItemWidget.ROW_HEIGHT
     assert widget.more_button.isHidden()
 
     widget.set_selected(True)
     app.processEvents()
 
     assert not widget.more_button.isHidden()
+    assert not widget.more_button.icon().isNull()
+    assert widget.title_label.property("selected") is True
 
     widget.set_selected(False)
     app.processEvents()
 
     assert widget.more_button.isHidden()
+    assert widget.title_label.property("selected") is False
 
 
 def test_history_more_button_keeps_space_for_long_record_name(tmp_path: Path) -> None:
@@ -77,3 +81,14 @@ def test_history_more_button_keeps_space_for_long_record_name(tmp_path: Path) ->
     button_right = widget.more_button.geometry().right()
     assert widget.more_button.isVisible()
     assert button_right <= widget.contentsRect().right()
+    assert widget.sizeHint().height() >= widget.more_button.height() + 16
+
+
+def test_history_item_only_renders_record_title(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    widget = HistoryListItemWidget(make_record(tmp_path, "meeting-01"), 0, DummyHistoryActions())
+    widget.show()
+    app.processEvents()
+
+    assert widget.title_label.toolTip() == "meeting-01"
+    assert not widget.findChildren(type(widget.title_label), "HistorySubtitle")

@@ -6,53 +6,64 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
     QCloseEvent,
-    QDesktopServices,
 )
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
-    QListWidgetItem,
     QMainWindow,
-    QMessageBox,
-    QSizePolicy,
-    QSpacerItem,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from ..audio import AudioRecorder
+from ..audio.preprocess import AudioInputError, probe_media
 from .config import ensure_dirs, get_config, get_output_dir, save_config
+from ..handlers.export import ExportHandlers
+from ..handlers.history_view import HistoryViewHandlers
 from ..handlers.media_import import ImportHandlers
+from ..handlers.playback import PlaybackHandlers
 from ..handlers.processing import ProcessingHandlers
 from ..handlers.recording import RecordingHandlers
 from ..handlers.settings import SettingsHandlers
 from ..handlers.summary import SummaryHandlers
+from ..handlers.timeline_view import TimelineViewHandlers
 from ..handlers.transcription import TranscriptionHandlers
-from ..ui.widgets.dialogs import confirm_without_icon
-from ..history.service import HistoryRecord, HistoryService, HistoryStatus
+from ..ui.widgets.dialogs import alert_without_icon, confirm_without_icon, prompt_text_without_icon
+from ..history.service import HistoryRecord, HistoryService
 from ..model_registry.downloader import ModelDownloadManager
 from ..ui.settings import SettingsPanel
-from ..ui.content import build_history_page
-from ..ui.widgets.history_item import HistoryListItemWidget
+from ..ui.content import HistoryPageCallbacks, build_history_page
 from ..ui.sidebar import build_history_sidebar, build_settings_sidebar
 from ..ui.icons import make_action_icon, make_app_icon
 from ..ui.recording import build_recording_page
 from ..ui.result import set_result_tab, set_summary_text, set_transcript_text
-from ..ui.widgets.update_dialog import UpdateDialog
 from ..utils.logging import log_event, record_context
-from .version import APP_VERSION
-from .update import check_for_update_async
+
+if TYPE_CHECKING:
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 
-class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, TranscriptionHandlers, SummaryHandlers, SettingsHandlers, QMainWindow):
+class MainWindow(
+    ImportHandlers,
+    RecordingHandlers,
+    ProcessingHandlers,
+    TranscriptionHandlers,
+    SummaryHandlers,
+    SettingsHandlers,
+    HistoryViewHandlers,
+    TimelineViewHandlers,
+    PlaybackHandlers,
+    ExportHandlers,
+    QMainWindow,
+):
     """NoisNote主窗口。"""
 
     def __init__(self):
@@ -65,7 +76,10 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.recorder: AudioRecorder | None = None
         self.current_record: HistoryRecord | None = None
         self.processing_record: HistoryRecord | None = None
+        self.all_history_items: list[HistoryRecord] = []
         self.current_items: list[HistoryRecord] = []
+        self.history_search_text = ""
+        self.history_status_filter = "all"
         self.active_workers: list[object] = []
         self.is_recording = False
         self.is_processing = False
@@ -78,6 +92,14 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.active_result_tab = "transcript"
         self.summary_markdown_text = ""
         self.active_task_ids: dict[str, str] = {}
+        self.timeline_items: list[dict] = []
+        self._last_timeline_highlight_key: tuple[int | None, int | None] = (None, None)
+        self.media_player: QMediaPlayer | None = None
+        self.audio_output: QAudioOutput | None = None
+        self.playback_record_id = ""
+        self.playback_duration_ms = 0
+        self.playback_rate = 1.0
+        self._updating_playback_slider = False
 
         self.setWindowTitle("NoisNote")
         self.setWindowIcon(make_app_icon())
@@ -90,6 +112,8 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.record_timer.timeout.connect(self._refresh_recording_state)
 
         self._build_ui()
+        self._init_media_player()
+        self._init_playback_shortcuts()
         self.model_download_manager.download_failed.connect(self._on_model_download_failed)
         self.model_download_manager.download_completed.connect(self._on_model_download_completed)
         self.model_download_manager.download_cancelled.connect(self._on_model_download_cancelled)
@@ -104,9 +128,6 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
             message="主窗口初始化完成",
             context={"history_count": len(self.current_items)},
         )
-
-        # 启动时检查版本更新
-        self._update_worker = check_for_update_async(APP_VERSION, self._on_update_checked)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -138,9 +159,13 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.new_recording_sidebar_button = controls.new_recording_button
         self.import_audio_sidebar_button = controls.import_audio_button
         self.active_recording_button = controls.active_recording_button
+        self.history_search = controls.history_search
+        self.history_filter_button = controls.history_filter_button
         self.history_list = controls.history_list
         self.empty_history_label = controls.empty_history_label
         self.settings_button = controls.settings_button
+        self.history_search.textChanged.connect(self._on_history_search_changed)
+        self.history_filter_button.setMenu(self._build_history_filter_menu())
         return sidebar
 
     def _build_settings_sidebar(self) -> QWidget:
@@ -167,17 +192,15 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         container = QFrame()
         container.setObjectName("MainArea")
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(28, 22, 28, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(12, 12, 18, 18)
+        layout.setSpacing(0)
 
-        header = QHBoxLayout()
         self.page_title_label = QLabel("")
         self.page_title_label.setObjectName("Title")
+        self.page_title_label.hide()
         self.status_label = QLabel()
         self.status_label.setObjectName("Muted")
-        header.addWidget(self.page_title_label)
-        header.addItem(QSpacerItem(20, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        header.addWidget(self.status_label)
+        self.status_label.hide()
 
         self.content_stack = QStackedWidget()
         self.recording_page = self._build_recording_page()
@@ -190,7 +213,6 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.content_stack.addWidget(self.history_page)
         self.content_stack.addWidget(self.settings_panel)
 
-        layout.addLayout(header)
         layout.addWidget(self.content_stack, stretch=1)
         return container
 
@@ -218,16 +240,29 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
     def _build_history_page(self) -> QWidget:
         page, controls = build_history_page(
             self,
-            self._set_result_tab,
-            self.manual_summarize,
-            self.retry_transcription,
-            self.copy_panel_text,
-            self.export_result,
+            HistoryPageCallbacks(
+                set_result_tab=self._set_result_tab,
+                manual_summarize=self.manual_summarize,
+                retry_transcription=self.retry_transcription,
+                copy_panel_text=self.copy_panel_text,
+                export_result=self._export_result_with_format,
+                seek_backward=self.seek_playback_backward,
+                toggle_playback=self.toggle_playback,
+                seek_forward=self.seek_playback_forward,
+                seek_playback=self.seek_playback,
+                set_playback_rate=self.set_playback_rate,
+                switch_to_timeline=self._switch_to_timeline_tab,
+            ),
         )
         self.result_stack = controls.result_stack
         self.transcript_tab_button = controls.transcript_tab_button
         self.timeline_tab_button = controls.timeline_tab_button
         self.summary_tab_button = controls.summary_tab_button
+        self.detail_title_label = controls.detail_title_label
+        self.detail_duration_label = controls.detail_duration_label
+        self.detail_size_label = controls.detail_size_label
+        self.detail_status_label = controls.detail_status_label
+        self.detail_time_label = controls.detail_time_label
         self.transcript_status = controls.transcript_status
         self.transcript_progress = controls.transcript_progress
         self.transcript_text = controls.transcript_text
@@ -242,30 +277,20 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.summary_copy_button = controls.summary_copy_button
         self.manual_summary_button = controls.manual_summary_button
         self.export_button = controls.export_button
+        self.playback_back_button = controls.playback_back_button
+        self.playback_play_button = controls.playback_play_button
+        self.playback_forward_button = controls.playback_forward_button
+        self.playback_position_label = controls.playback_position_label
+        self.playback_duration_label = controls.playback_duration_label
+        self.playback_slider = controls.playback_slider
+        self.playback_rate_combo = controls.playback_rate_combo
+        self.playback_cc_button = controls.playback_cc_button
         self._set_result_tab("transcript")
         return page
 
     def _set_transcript_text(self, text: str) -> None:
         """写入转录文本，并同步当前页复制按钮。"""
         set_transcript_text(self, text)
-
-    def _set_timeline_text(self, text: str) -> None:
-        """写入逐句时间轴，并同步复制按钮。"""
-        self.timeline_text.setPlainText(text)
-        self.timeline_copy_button.setVisible(bool(text.strip()))
-
-    def _timeline_display_text(self, record: HistoryRecord) -> str:
-        """把结构化时间轴格式化为详情页可读文本。"""
-        items = self.history_service.read_timeline(record)
-        lines: list[str] = []
-        for item in items:
-            text = str(item.get("text") or "").strip()
-            if not text:
-                continue
-            start = _format_timeline_seconds(item.get("start", 0.0))
-            end = _format_timeline_seconds(item.get("end", 0.0))
-            lines.append(f"{start} - {end}  {text}")
-        return "\n".join(lines)
 
     def _set_result_tab(self, kind: str) -> None:
         """切换详情结果区标签，并保留用户的当前选择。"""
@@ -281,19 +306,41 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
 
     def _import_demo_audio_if_empty(self) -> None:
         """历史记录为空时导入内置测试音频（复制到用户数据目录）。"""
-        if self.current_items or self.config.get("demo_audio_imported"):
+        if self.config.get("demo_audio_imported"):
+            return
+        if self.all_history_items:
+            self.config["demo_audio_imported"] = True
+            save_config(self.config)
             return
         demo_audio = self._resolve_demo_audio_path()
         if not demo_audio or not demo_audio.exists():
             return
         try:
-            import shutil
-            import tempfile
-            # 复制到临时目录，再由 adopt_audio_file 移入记录目录
-            tmp_dir = Path(tempfile.mkdtemp())
-            tmp_file = tmp_dir / demo_audio.name
-            shutil.copy2(demo_audio, tmp_file)
-            record = self.history_service.adopt_audio_file(tmp_file)
+            audio_format: dict[str, object] = {"format": demo_audio.suffix.lower().lstrip(".")}
+            duration_seconds: float | None = None
+            try:
+                probe = probe_media(demo_audio, self.config)
+                duration_seconds = probe.duration_seconds
+                audio_format = {
+                    "sample_rate": probe.audio_sample_rate,
+                    "channels": probe.audio_channels,
+                    "format": demo_audio.suffix.lower().lstrip("."),
+                    "source_format": probe.source_format,
+                }
+            except AudioInputError as exc:
+                log_event(
+                    "record.import.demo_probe_failed",
+                    level="WARNING",
+                    module="history",
+                    message="内置测试音频探测失败",
+                    context={"error": str(exc)},
+                )
+            record = self.history_service.copy_imported_audio_file(
+                demo_audio,
+                duration_seconds=duration_seconds,
+                audio_format=audio_format,
+                source_kind="local_audio",
+            )
             self.current_record = record
             self.load_recordings()
             self._select_record_by_id(record.record_id)
@@ -322,73 +369,21 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
             if candidate.exists():
                 return candidate
         # 开发环境：项目源码目录
-        dev_candidate = Path(__file__).resolve().parent / "assets" / "测试音频.mp3"
+        dev_candidate = Path(__file__).resolve().parents[1] / "assets" / "测试音频.mp3"
         if dev_candidate.exists():
             return dev_candidate
         return None
-
-    def load_recordings(self) -> None:
-        self.current_items = self.history_service.scan()
-        self.history_list.clear()
-        for index, item in enumerate(self.current_items):
-            list_item = QListWidgetItem()
-            list_item.setToolTip(str(item.record_dir if item.layout == "folder" else item.audio_path))
-            list_item.setData(Qt.UserRole, index)
-            self.history_list.addItem(list_item)
-            widget = HistoryListItemWidget(item, index, self)
-            list_item.setSizeHint(widget.sizeHint())
-            self.history_list.setItemWidget(list_item, widget)
-        self.empty_history_label.setVisible(not self.current_items)
-
-    def _select_history_item(self, item: QListWidgetItem) -> None:
-        index = item.data(Qt.UserRole)
-        if index is None:
-            return
-        self.select_history_index(index)
-
-    def select_history_index(self, index: int) -> None:
-        """按索引选中并加载历史记录。"""
-        if index < 0 or index >= len(self.current_items):
-            return
-        self.history_list.setCurrentRow(index)
-        self._sync_history_selection(index)
-        recording = self.current_items[index]
-        self._load_history_record(recording)
-
-    def _load_history_record(self, recording: HistoryRecord) -> None:
-        """加载一条历史记录到右侧内容区。"""
-        self.current_record = recording
-        self.content_stack.setCurrentWidget(self.history_page)
-        self.page_title_label.setText(recording.record_dir.name)
-        self._set_transcript_text(self.history_service.read_transcript(recording))
-        self._set_timeline_text(self._timeline_display_text(recording))
-        self.timeline_tab_button.setVisible(recording.has_timeline)
-        self._set_summary_text(self.history_service.read_summary(recording))
-        if recording.input_error:
-            self.transcript_status.setText(f"音频处理失败：{recording.input_error.get('message') or recording.error_message}")
-        elif recording.status == HistoryStatus.ERROR and recording.error_message:
-            self.transcript_status.setText(f"处理失败：{recording.error_message}")
-        else:
-            self.transcript_status.setText("已加载转录" if recording.has_transcript else "暂无转录")
-        self.summary_status.setText("已加载总结" if recording.has_summary else "暂无总结")
-        self.timeline_status.setText("已加载逐句时间轴" if recording.has_timeline else "暂无逐句时间轴")
-        if not recording.has_timeline and self.active_result_tab == "timeline":
-            self._set_result_tab("transcript")
-        self.manual_summary_button.setVisible(recording.has_transcript and not recording.has_summary)
-        self._update_retry_transcription_button(recording)
-        self._sync_detail_processing_view()
-        self._set_status("")
 
     def rename_history_record(self, index: int) -> None:
         """重命名历史记录。"""
         if index < 0 or index >= len(self.current_items):
             return
         record = self.current_items[index]
-        new_name, accepted = QInputDialog.getText(
+        new_name, accepted = prompt_text_without_icon(
             self,
             "重命名",
             "记录名称：",
-            text=record.record_id,
+            value=record.record_id,
         )
         if not accepted:
             return
@@ -424,20 +419,6 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         self.current_record = self.current_items[index]
         self.delete_current_record()
 
-    def _select_record_by_id(self, record_id: str) -> bool:
-        for index, record in enumerate(self.current_items):
-            if record.record_id == record_id:
-                self.select_history_index(index)
-                return True
-        return False
-
-    def _sync_history_selection(self, selected_index: int) -> None:
-        for row in range(self.history_list.count()):
-            item = self.history_list.item(row)
-            widget = self.history_list.itemWidget(item)
-            if isinstance(widget, HistoryListItemWidget):
-                widget.set_selected(row == selected_index)
-
     def copy_panel_text(self, kind: str) -> None:
         """复制转录或总结文本到系统剪贴板。"""
         if kind == "transcript":
@@ -456,56 +437,6 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
         QApplication.clipboard().setText(text)
         self._set_status(f"已复制{label}")
 
-    def export_result(self) -> None:
-        """按用户选择导出当前记录结果。"""
-        if not self.current_record:
-            self._show_error("请先选择或生成一条录音")
-            return
-        options = ["txt（原始转录文字）"]
-        if self.current_record.has_timeline:
-            options.append("srt字幕（srt文件）")
-        options.append("markdown（总结结果）")
-        selected, ok = QInputDialog.getItem(
-            self,
-            "导出结果",
-            "导出格式",
-            options,
-            0,
-            False,
-        )
-        if not ok or not selected:
-            return
-        try:
-            if selected.startswith("txt"):
-                path = self.history_service.export_transcript_txt(self.current_record)
-            elif selected.startswith("srt"):
-                path = self.history_service.export_timeline_srt(self.current_record)
-            else:
-                path = self.history_service.export_summary_markdown(self.current_record)
-        except Exception as exc:
-            self._show_error(str(exc))
-            return
-        self.current_record = self.history_service.refresh_metadata(self.current_record)
-        self._set_status(f"已导出：{path.name}")
-        self.load_recordings()
-
-    def export_markdown(self) -> None:
-        if not self.current_record:
-            self._show_error("请先选择或生成一条录音")
-            return
-
-        transcript = self.transcript_text.toPlainText().strip() or "（无转录文字）"
-        summary = self.summary_markdown_text.strip() or "（无总结）"
-        content = (
-            f"# 录音记录 - {self.current_record.display_name}\n\n"
-            f"## 转录文字\n\n{transcript}\n\n"
-            f"## 总结\n\n{summary}\n"
-        )
-        markdown_file = self.history_service.save_markdown(self.current_record, content)
-        self.current_record = self.history_service.refresh_metadata(self.current_record)
-        self._set_status(f"已导出：{markdown_file.name}")
-        self.load_recordings()
-
     def delete_current_record(self) -> None:
         """删除当前选中的历史记录。"""
         if not self.current_record:
@@ -523,6 +454,10 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
             return
 
         record = self.current_record
+        if record.record_id == self.playback_record_id:
+            self.stop_playback()
+            self.playback_record_id = ""
+            QApplication.processEvents()
         log_event(
             "record.delete.started",
             module="history",
@@ -579,7 +514,7 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
 
     def _show_error(self, message: str) -> None:
         self._set_status(message)
-        QMessageBox.warning(self, "提示", message)
+        alert_without_icon(self, "提示", message)
 
     def _display_time(self, path: Path) -> str:
         try:
@@ -588,6 +523,7 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
             return path.stem
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.stop_playback()
         if self.is_recording and self.recorder:
             self.recorder.stop_recording()
         if self.model_download_manager.has_active_downloads():
@@ -611,41 +547,4 @@ class MainWindow(ImportHandlers, RecordingHandlers, ProcessingHandlers, Transcri
                 return
         if self.recorder:
             self.recorder.cleanup()
-        # 等待版本检查线程结束，避免 QThread 被销毁时仍在运行
-        if self._update_worker and self._update_worker.isRunning():
-            self._update_worker.quit()
-            self._update_worker.wait(2000)
         event.accept()
-
-    def _on_update_checked(self, update_info) -> None:
-        """版本检查完成回调"""
-        if update_info.has_update:
-            log_event(
-                "app.update.available",
-                module="ui",
-                message="发现新版本",
-                context={
-                    "current_version": update_info.current_version,
-                    "latest_version": update_info.latest_version,
-                },
-            )
-            UpdateDialog.show_update_dialog(self, update_info)
-        else:
-            log_event(
-                "app.update.none",
-                module="ui",
-                message="已是最新版本",
-                context={"current_version": update_info.current_version},
-            )
-
-
-def _format_timeline_seconds(value: object) -> str:
-    try:
-        seconds = max(0.0, float(value))
-    except (TypeError, ValueError):
-        seconds = 0.0
-    total = int(seconds)
-    millis = int(round((seconds - total) * 1000))
-    minutes = total // 60
-    secs = total % 60
-    return f"{minutes:02d}:{secs:02d}.{millis:03d}"

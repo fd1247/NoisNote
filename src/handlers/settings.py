@@ -12,6 +12,9 @@ class SettingsHandlers:
     def show_settings(self) -> None:
         if self.content_stack.currentWidget() != self.settings_panel:
             self.previous_content_widget = self.content_stack.currentWidget()
+        if hasattr(self, "stop_playback"):
+            self.stop_playback()
+            self.playback_record_id = ""
         self.settings_panel.reset_from_config()
         self.sidebar_stack.setCurrentWidget(self.settings_sidebar)
         self.content_stack.setCurrentWidget(self.settings_panel)
@@ -41,15 +44,20 @@ class SettingsHandlers:
 
     def hide_settings(self) -> None:
         """退出设置模式并回到之前页面。"""
+        self.load_recordings()
         self.sidebar_stack.setCurrentWidget(self.main_sidebar)
         target = self.previous_content_widget or self.recording_page
         if target == self.settings_panel:
+            target = self.recording_page
+        if target != self.recording_page and not self.current_record:
             target = self.recording_page
         self.content_stack.setCurrentWidget(target)
         if target == self.recording_page:
             self.page_title_label.setText("")
         elif self.current_record:
             self.page_title_label.setText(self.current_record.record_dir.name)
+            if hasattr(self, "_set_playback_source"):
+                self._set_playback_source(self.current_record)
         self.previous_content_widget = None
         self._set_status("")
 

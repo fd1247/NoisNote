@@ -243,4 +243,6 @@ class TranscriptionHandlers:
             "重新转录",
             "重新转录会覆盖当前音频的转录和总结。\n"
             "如需保留旧结果，请手动导出或复制。",
+            confirm_text="确认",
+            cancel_text="取消",
         )

@@ -12,7 +12,8 @@ from ..app.config import ANTHROPIC_API_VERSION, ANTHROPIC_DEFAULT_BASE_URL, ANTH
 class Summarizer:
     """LLM 总结引擎"""
 
-    DEFAULT_PROMPT = "总结如下录音转录文稿"
+    SYSTEM_PROMPT = "你是一个专业的录音内容总结助手，请根据用户提供的录音转录文稿生成简洁准确的总结。"
+    USER_PROMPT_TEMPLATE = "请总结以下录音转录文稿：\n\n{text}"
 
     def __init__(self):
         self.client = None
@@ -38,18 +39,19 @@ class Summarizer:
             raise ValueError("未配置 LLM API Key，请在设置中配置")
 
         # 根据 provider 选择默认值并构建请求
+        user_prompt = self.USER_PROMPT_TEMPLATE.format(text=text)
         if provider == "anthropic":
             model = model or ANTHROPIC_DEFAULT_MODEL
             base_url = base_url or ANTHROPIC_DEFAULT_BASE_URL
             url, headers, payload = _build_anthropic_request(
-                api_key, model, base_url, self.DEFAULT_PROMPT, text,
+                api_key, model, base_url, self.SYSTEM_PROMPT, user_prompt,
             )
             parse_response = _parse_anthropic_response
         else:
             model = model or "gpt-4o-mini"
             base_url = base_url or "https://api.openai.com/v1"
             url, headers, payload = _build_openai_request(
-                api_key, model, base_url, self.DEFAULT_PROMPT, text,
+                api_key, model, base_url, self.SYSTEM_PROMPT, user_prompt,
             )
             parse_response = _parse_openai_response
 
@@ -111,7 +113,7 @@ def _build_openai_request(
     model: str,
     base_url: str,
     system_prompt: str,
-    text: str,
+    user_prompt: str,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     """构建 OpenAI 兼容 API 的请求。返回 (url, headers, payload)。"""
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -119,10 +121,12 @@ def _build_openai_request(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    prompt = f"{system_prompt}\n\n---\n\n{text}"
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
         "temperature": 0.3,
     }
     return url, headers, payload
@@ -140,7 +144,7 @@ def _build_anthropic_request(
     model: str,
     base_url: str,
     system_prompt: str,
-    text: str,
+    user_prompt: str,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     """构建 Anthropic Messages API 的请求。返回 (url, headers, payload)。"""
     url = f"{base_url.rstrip('/')}/v1/messages"
@@ -149,11 +153,11 @@ def _build_anthropic_request(
         "anthropic-version": ANTHROPIC_API_VERSION,
         "content-type": "application/json",
     }
-    prompt = f"{system_prompt}\n\n---\n\n{text}"
     payload = {
         "model": model,
         "max_tokens": 4096,
-        "messages": [{"role": "user", "content": prompt}],
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_prompt}],
         "temperature": 0.3,
     }
     return url, headers, payload

@@ -21,7 +21,7 @@ from src.app.config import (
 )
 from src.app.main_window import MainWindow
 from src.asr.engine import TranscriptionEngine
-from src.asr.timestamps import alignment_items_to_timeline
+from src.asr.timestamps import alignment_items_to_timeline, timeline_from_dicts, timeline_to_dicts, timeline_to_html
 from src.history.service import HistoryService
 from src.model_registry.downloader import ModelDownloadManager
 from src.model_registry.service import ModelService
@@ -30,6 +30,7 @@ from src.ui.settings import SettingsPanel
 
 def make_config(root: Path) -> dict:
     config = copy.deepcopy(DEFAULT_CONFIG)
+    config["demo_audio_imported"] = True
     config["data_root"] = str(root)
     config["selected_asr"]["model"] = QWEN3_ASR_GGUF_06B_ID
     config["selected_asr"]["model_path"] = ""
@@ -87,6 +88,43 @@ def test_alignment_items_are_grouped_into_sentence_timeline() -> None:
         (0.0, 0.2, "你好。"),
         (0.3, 1.1, "NoisNote ready?"),
     ]
+    assert [token.text for token in timeline[0].tokens] == ["你", "好", "。"]
+
+
+def test_timeline_dicts_preserve_tokens_and_html_highlights_active_token() -> None:
+    timeline = timeline_from_dicts(
+        [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "text": "你好。",
+                "tokens": [
+                    {"start": 0.0, "end": 0.4, "text": "你"},
+                    {"start": 0.4, "end": 0.9, "text": "好"},
+                    {"start": 0.9, "end": 1.0, "text": "。"},
+                ],
+            }
+        ]
+    )
+
+    payload = timeline_to_dicts(timeline)
+    html = timeline_to_html(timeline, 0.5)
+
+    assert payload[0]["tokens"][1]["text"] == "好"
+    assert "timeline-sentence active" in html
+    assert "timeline-table" in html
+    assert "padding-right:28px" in html
+    assert '<a name="timeline-current"></a>' in html
+    assert '<span class="timeline-token">好</span>' in html
+
+
+def test_timeline_html_highlights_sentence_without_tokens() -> None:
+    timeline = timeline_from_dicts([{"start": 0.0, "end": 1.0, "text": "hello"}])
+
+    html = timeline_to_html(timeline, 0.5)
+
+    assert "timeline-sentence active" in html
+    assert '<span class="timeline-token">' not in html
 
 
 def test_settings_asr_dropdown_excludes_downloaded_aligner(tmp_path: Path) -> None:
@@ -179,7 +217,7 @@ def test_history_timeline_export_and_clear_generated_results(tmp_path: Path) -> 
     assert not (cleared.record_dir / "transcript.srt").exists()
 
 
-def test_history_read_timeline_groups_legacy_word_level_items(tmp_path: Path) -> None:
+def test_history_read_timeline_preserves_saved_items_without_auto_grouping(tmp_path: Path) -> None:
     service = HistoryService(tmp_path)
     record = service.create_record()
     service.save_timeline(
@@ -194,10 +232,16 @@ def test_history_read_timeline_groups_legacy_word_level_items(tmp_path: Path) ->
         ],
     )
 
-    assert service.read_timeline(record) == [
-        {"start": 0.0, "end": 0.2, "text": "你好。"},
-        {"start": 0.3, "end": 0.5, "text": "可用！"},
+    items = service.read_timeline(record)
+    assert [(item["start"], item["end"], item["text"]) for item in items] == [
+        (0.0, 0.1, "你"),
+        (0.1, 0.2, "好"),
+        (0.2, 0.2, "。"),
+        (0.3, 0.4, "可"),
+        (0.4, 0.5, "用"),
+        (0.5, 0.5, "！"),
     ]
+    assert "tokens" not in items[0]
 
 
 def test_main_window_shows_timeline_tab_only_when_record_has_timeline(monkeypatch, tmp_path: Path) -> None:
@@ -206,8 +250,6 @@ def test_main_window_shows_timeline_tab_only_when_record_has_timeline(monkeypatc
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda: None)
-    monkeypatch.setattr("src.app.main_window.check_for_update_async", lambda *args, **kwargs: None)
-
     service = HistoryService(tmp_path / "data")
     record = service.create_record()
     record.audio_path.write_bytes(b"audio")

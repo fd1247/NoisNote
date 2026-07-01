@@ -28,6 +28,7 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
 
 def make_config(root: Path) -> dict:
     return {
+        "demo_audio_imported": True,
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
             "tool_dir": str(root / "vendor" / "qwen3-asr-gguf"),
