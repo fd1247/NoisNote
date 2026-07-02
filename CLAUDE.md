@@ -1,1 +1,1 @@
-D:/Coding Project/NoisNote/AGENTS.md
+AGENTS.md
