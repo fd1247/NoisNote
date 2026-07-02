@@ -276,7 +276,7 @@ def generate_release_notes(version: str) -> str:
 def create_github_release(version: str) -> bool:
     """创建 GitHub Release"""
     tag_name = f"v{version}"
-    release_name = f"v{version}"
+    release_name = f"NoisNote-v{version}"
     release_notes = generate_release_notes(version)
 
     logger.info("创建 GitHub Release: %s", release_name)
