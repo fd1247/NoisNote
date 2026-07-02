@@ -241,42 +241,13 @@ def run_build() -> bool:
 
 def generate_release_notes(version: str) -> str:
     """生成 release notes 模板"""
-    return f"""## NoisNote v{version}
-
-### 新增功能
-- 音频回放：支持播放/暂停、快退15s、快进15s、倍速(0.5x-2x)、键盘快捷键
-- 逐句时间轴：Qwen3-ForceAligner 词级对齐，回放位置高亮，SRT 导出
-- 导出功能：转录文本导出 txt、时间轴导出 srt、总结导出 markdown
-- 热词管理：热词表 CRUD、导入导出、激活控制
-- 历史记录：搜索筛选、右键菜单（重命名/打开文件夹/删除）
-- LLM 供应商选择：支持 OpenAI 兼容 API 和 Anthropic API
-
-### 架构改进
-- ASR 转录改为子进程隔离，native crash 不影响主界面
-- MainWindow 拆分为 10 个 Mixin Handler
-- 对话框系统重构，键盘导航支持
-
-### 修复
-- LLM 总结改用 system/user 角色分离的 prompt 格式
-- 转录和对话框工作流稳定性修复
-- 媒体导入 probing metadata 修复
-
-### 已知问题
-- 首次启动可能需要较长时间解压资源
-- 部分杀毒软件可能误报，请添加信任
-
-### 下载
-- 下载 `NoisNote-{version}.zip`，解压后运行 `NoisNote.exe`
-
-### SHA256 校验
-- 校验文件：`NoisNote-{version}.zip.sha256`
-"""
+    return f"NoisNote-{version}"
 
 
 def create_github_release(version: str) -> bool:
     """创建 GitHub Release"""
     tag_name = f"v{version}"
-    release_name = f"NoisNote-v{version}"
+    release_name = f"NoisNote-{version}"
     release_notes = generate_release_notes(version)
 
     logger.info("创建 GitHub Release: %s", release_name)
