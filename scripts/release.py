@@ -27,8 +27,8 @@ ROOT = Path(__file__).parent.parent
 
 # 配置
 APP_NAME = "NoisNote"
-VERSION_FILE = ROOT / "src" / "version.py"
-BUILD_SCRIPT = ROOT / "build.py"
+VERSION_FILE = ROOT / "src" / "app" / "version.py"
+BUILD_SCRIPT = ROOT / "scripts" / "build.py"
 DIST_DIR = ROOT / "dist"
 GITHUB_OWNER = "fd1247"
 GITHUB_REPO = "NoisNote"
@@ -101,8 +101,8 @@ def update_version_file(new_version: str) -> bool:
     new_content = re.sub(pattern, replacement, content)
 
     if new_content == content:
-        logger.error("版本号更新失败，未找到 APP_VERSION 定义")
-        return False
+        logger.info("版本号已为 %s，无需更新", new_version)
+        return True
 
     VERSION_FILE.write_text(new_content, encoding="utf-8")
     logger.info("版本号已更新")
@@ -118,6 +118,12 @@ def commit_version_change(version: str) -> bool:
     if returncode != 0:
         logger.error("git add 失败: %s", stderr)
         return False
+
+    # 检查是否有待提交的变更
+    returncode, stdout, stderr = run_command(["git", "diff", "--cached", "--quiet"])
+    if returncode == 0:
+        logger.info("版本号未变更，跳过提交")
+        return True
 
     # 提交
     commit_message = f"chore: bump version to {version}"
@@ -149,7 +155,7 @@ def push_to_github() -> bool:
     logger.info("推送到 GitHub...")
 
     # 推送提交
-    returncode, stdout, stderr = run_command(["git", "push", "origin", "main"])
+    returncode, stdout, stderr = run_command(["git", "push", "origin", "master"])
     if returncode != 0:
         logger.error("git push 失败: %s", stderr)
         return False
@@ -186,14 +192,22 @@ def generate_release_notes(version: str) -> str:
     return f"""## NoisNote v{version}
 
 ### 新增功能
-- 应用打包为便携版 exe，无需安装 Python 和依赖
-- 支持 Windows 10/11 64 位系统
-- 应用启动时自动检查新版本
-- 设置页面提供"检查更新"按钮
-- 覆盖安装新版本时保留用户数据
+- 音频回放：支持播放/暂停、快退15s、快进15s、倍速(0.5x-2x)、键盘快捷键
+- 逐句时间轴：Qwen3-ForceAligner 词级对齐，回放位置高亮，SRT 导出
+- 导出功能：转录文本导出 txt、时间轴导出 srt、总结导出 markdown
+- 热词管理：热词表 CRUD、导入导出、激活控制
+- 历史记录：搜索筛选、右键菜单（重命名/打开文件夹/删除）
+- LLM 供应商选择：支持 OpenAI 兼容 API 和 Anthropic API
+
+### 架构改进
+- ASR 转录改为子进程隔离，native crash 不影响主界面
+- MainWindow 拆分为 10 个 Mixin Handler
+- 对话框系统重构，键盘导航支持
 
 ### 修复
-- 无
+- LLM 总结改用 system/user 角色分离的 prompt 格式
+- 转录和对话框工作流稳定性修复
+- 媒体导入 probing metadata 修复
 
 ### 已知问题
 - 首次启动可能需要较长时间解压资源
