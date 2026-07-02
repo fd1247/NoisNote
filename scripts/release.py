@@ -3,14 +3,12 @@
 
 自动化 GitHub Release 发布流程：
 1. 检查工作目录是否干净
-2. 更新 version.py 中的版本号
+2. 更新 version.py 和 file_version_info.txt 中的版本号
 3. 提交版本号变更
 4. 创建 Git tag
 5. 推送到 GitHub
 6. 执行 build.py 生成发布产物
-7. 生成 release notes 模板
-8. 调用 gh CLI 创建 Release
-9. 上传产物和校验文件
+7. 调用 gh CLI 创建 Release 并上传产物
 """
 
 from __future__ import annotations
@@ -102,11 +100,63 @@ def update_version_file(new_version: str) -> bool:
 
     if new_content == content:
         logger.info("版本号已为 %s，无需更新", new_version)
-        return True
+    else:
+        VERSION_FILE.write_text(new_content, encoding="utf-8")
+        logger.info("版本号已更新")
 
-    VERSION_FILE.write_text(new_content, encoding="utf-8")
-    logger.info("版本号已更新")
+    # 同步更新 file_version_info.txt（供 build.py / PyInstaller 使用）""
+    _update_version_info_file(major, minor, patch, new_version)
     return True
+
+
+VERSION_INFO_FILE = ROOT / "scripts" / "file_version_info.txt"
+
+
+def _update_version_info_file(major: str, minor: str, patch: str, version_str: str) -> None:
+    """更新 Windows exe 版本信息文件，与 version.py 保持同步。"""
+    logger.info("更新版本信息文件: %s", VERSION_INFO_FILE)
+
+    content = f"""# UTF-8
+#
+# NoisNote - Windows exe 版本信息
+# 此文件由 build.py 自动生成，请勿手动编辑
+#
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({major}, {minor}, {patch}, 0),
+    prodvers=({major}, {minor}, {patch}, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          u'080404B0',
+          [
+            StringStruct(u'CompanyName', u'NoisNote'),
+            StringStruct(u'FileDescription', u'NoisNote'),
+            StringStruct(u'FileVersion', u'{version_str}'),
+            StringStruct(u'InternalName', u'NoisNote'),
+            StringStruct(u'OriginalFilename', u'NoisNote.exe'),
+            StringStruct(u'ProductName', u'NoisNote'),
+            StringStruct(u'ProductVersion', u'{version_str}'),
+            StringStruct(u'LegalCopyright', u'Copyright (c) 2024 NoisNote'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])])
+  ]
+)
+"""
+    VERSION_INFO_FILE.write_text(content, encoding="utf-8")
+    logger.info("版本信息文件已更新")
 
 
 def commit_version_change(version: str) -> bool:
@@ -114,7 +164,9 @@ def commit_version_change(version: str) -> bool:
     logger.info("提交版本号变更...")
 
     # 添加版本文件
-    returncode, stdout, stderr = run_command(["git", "add", str(VERSION_FILE)])
+    returncode, stdout, stderr = run_command(
+        ["git", "add", str(VERSION_FILE), str(VERSION_INFO_FILE)]
+    )
     if returncode != 0:
         logger.error("git add 失败: %s", stderr)
         return False
@@ -299,13 +351,12 @@ def main() -> int:
     if args.dry_run:
         logger.info("[DRY RUN] 仅输出发布流程，不实际执行")
         logger.info("1. 检查 Git 工作目录状态")
-        logger.info("2. 更新版本号: %s", version)
+        logger.info("2. 更新 version.py 和 file_version_info.txt: %s", version)
         logger.info("3. 提交版本号变更")
         logger.info("4. 创建 Git tag: v%s", version)
         logger.info("5. 推送到 GitHub")
         logger.info("6. 执行构建脚本")
-        logger.info("7. 创建 GitHub Release")
-        logger.info("8. 上传产物和校验文件")
+        logger.info("7. 创建 GitHub Release 并上传产物")
         logger.info("=" * 60)
         logger.info("[DRY RUN] 发布流程预览完成")
         return 0
