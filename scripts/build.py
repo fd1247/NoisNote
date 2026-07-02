@@ -17,6 +17,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -321,6 +322,7 @@ def verify_build() -> bool:
 
 def main() -> int:
     """主函数"""
+    start_time = time.time()
     logger.info("=" * 60)
     logger.info("开始构建 %s v%s", APP_NAME, get_version_string())
     logger.info("=" * 60)
@@ -356,6 +358,10 @@ def main() -> int:
     logger.info("输出目录: %s", OUTPUT_DIR)
     logger.info("zip 文件: %s", ZIP_PATH)
     logger.info("SHA256 文件: %s", SHA256_PATH)
+    logger.info("=" * 60)
+
+    elapsed = time.time() - start_time
+    logger.info("构建耗时: %.2f 秒 (%.1f 分钟)", elapsed, elapsed / 60)
     logger.info("=" * 60)
 
     return 0

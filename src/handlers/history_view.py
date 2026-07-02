@@ -61,6 +61,7 @@ class HistoryViewHandlers:
         self.detail_size_label.setText("--")
         self.detail_time_label.setText("--")
         self.detail_status_label.setText("状态 --")
+        self.detail_processing_status_label.hide()
         self._set_transcript_text("")
         self._set_timeline_items([])
         self.timeline_tab_button.hide()
@@ -73,12 +74,13 @@ class HistoryViewHandlers:
 
     def _render_history_list(self) -> None:
         self.history_list.clear()
+        self._last_history_selected_index = -1
         for index, item in enumerate(self.current_items):
             list_item = QListWidgetItem()
             list_item.setToolTip(str(item.record_dir if item.layout == "folder" else item.audio_path))
             list_item.setData(Qt.UserRole, index)
             self.history_list.addItem(list_item)
-            widget = HistoryListItemWidget(item, index, self)
+            widget = HistoryListItemWidget(item, index, self, self._history_subtitle_for_record(item))
             list_item.setSizeHint(widget.sizeHint())
             self.history_list.setItemWidget(list_item, widget)
         self.empty_history_label.setVisible(not self.current_items)
@@ -155,22 +157,24 @@ class HistoryViewHandlers:
         """按索引选中并加载历史记录。"""
         if index < 0 or index >= len(self.current_items):
             return
-        self.history_list.setCurrentRow(index)
-        self._sync_history_selection(index)
         recording = self.current_items[index]
+        self._dismiss_history_notice(recording)
+        self.history_list.setCurrentRow(index)
         self._load_history_record(recording)
+        self._sync_history_selection(index)
 
     def _load_history_record(self, recording: HistoryRecord) -> None:
         """加载一条历史记录到右侧内容区。"""
+        self._release_timeline_resources()
         self.current_record = recording
+        self.transcript_loaded_record_id = ""
+        self.summary_loaded_record_id = ""
+        self.timeline_loaded_record_id = ""
         self.content_stack.setCurrentWidget(self.history_page)
         self.page_title_label.setText(recording.record_dir.name)
         self._update_detail_header(recording)
-        self._set_transcript_text(self.history_service.read_transcript(recording))
-        self._set_timeline_items(self.history_service.read_timeline(recording))
         self.timeline_tab_button.setVisible(recording.has_timeline)
         self.playback_cc_button.setVisible(True)
-        self._set_summary_text(self.history_service.read_summary(recording))
         if recording.input_error:
             self.transcript_status.setText(f"音频处理失败：{recording.input_error.get('message') or recording.error_message}")
         elif recording.status == HistoryStatus.ERROR and recording.error_message:
@@ -179,13 +183,53 @@ class HistoryViewHandlers:
             self.transcript_status.setText("已加载转录" if recording.has_transcript else "暂无转录")
         self.summary_status.setText("已加载总结" if recording.has_summary else "暂无总结")
         self.timeline_status.setText("已加载逐句时间轴" if recording.has_timeline else "暂无逐句时间轴")
-        if not recording.has_timeline and self.active_result_tab == "timeline":
+        if self.active_result_tab != "transcript":
             self._set_result_tab("transcript")
+        else:
+            self._ensure_transcript_loaded()
         self.manual_summary_button.setVisible(recording.has_transcript and not recording.has_summary)
         self._update_retry_transcription_button(recording)
         self._set_playback_source(recording)
         self._sync_detail_processing_view()
         self._set_status("")
+
+    def _ensure_active_result_loaded(self) -> None:
+        if not self.current_record:
+            return
+        if self.active_result_tab == "summary":
+            self._ensure_summary_loaded()
+        elif self.active_result_tab == "timeline":
+            self._ensure_timeline_loaded()
+        else:
+            self._ensure_transcript_loaded()
+
+    def _ensure_transcript_loaded(self) -> None:
+        if not self.current_record:
+            return
+        record_id = self.current_record.record_id
+        if self.transcript_loaded_record_id == record_id:
+            return
+        self._set_transcript_text(self.history_service.read_transcript(self.current_record))
+        self.transcript_loaded_record_id = record_id
+
+    def _ensure_summary_loaded(self) -> None:
+        if not self.current_record:
+            return
+        record_id = self.current_record.record_id
+        if self.summary_loaded_record_id == record_id:
+            return
+        self._set_summary_text(self.history_service.read_summary(self.current_record))
+        self.summary_loaded_record_id = record_id
+
+    def _ensure_timeline_loaded(self) -> None:
+        if not self.current_record:
+            return
+        record_id = self.current_record.record_id
+        if self.timeline_loaded_record_id == record_id:
+            return
+        items = self.history_service.read_timeline(self.current_record) if self.current_record.has_timeline else []
+        self._set_timeline_items(items)
+        self.timeline_loaded_record_id = record_id
 
     def _update_detail_header(self, record: HistoryRecord) -> None:
         self.detail_title_label.setText(record.display_name)
@@ -208,8 +252,16 @@ class HistoryViewHandlers:
         return False
 
     def _sync_history_selection(self, selected_index: int) -> None:
-        for row in range(self.history_list.count()):
-            item = self.history_list.item(row)
-            widget = self.history_list.itemWidget(item)
-            if isinstance(widget, HistoryListItemWidget):
-                widget.set_selected(row == selected_index)
+        rows = {selected_index, getattr(self, "_last_history_selected_index", -1)}
+        for row in rows:
+            self._sync_history_row(row, selected_index)
+        self._last_history_selected_index = selected_index
+
+    def _sync_history_row(self, row: int, selected_index: int) -> None:
+        if row < 0 or row >= self.history_list.count():
+            return
+        item = self.history_list.item(row)
+        widget = self.history_list.itemWidget(item)
+        if isinstance(widget, HistoryListItemWidget):
+            widget.set_selected(row == selected_index)
+            widget.set_subtitle(self._history_subtitle_for_record(widget.record))

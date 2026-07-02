@@ -71,13 +71,16 @@ def check_ffmpeg_available(config: dict | None = None) -> RuntimeCheckResult:
 
     for path, label in ((ffmpeg, "ffmpeg"), (ffprobe, "ffprobe")):
         try:
-            subprocess.run(  # nosec B603
-                [str(path), "-version"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
+            run_kwargs = {
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "timeout": 5,
+                "check": False,
+            }
+            creationflags = _subprocess_creationflags()
+            if creationflags:
+                run_kwargs["creationflags"] = creationflags
+            subprocess.run([str(path), "-version"], **run_kwargs)  # nosec B603
         except OSError:
             return RuntimeCheckResult(False, ffmpeg, ffprobe, f"{label} 无法执行。")
         except subprocess.TimeoutExpired:
@@ -103,3 +106,9 @@ def _exe_name(name: str) -> str:
 
 def _is_windows() -> bool:
     return __import__("os").name == "nt"
+
+
+def _subprocess_creationflags() -> int:
+    if not _is_windows():
+        return 0
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))

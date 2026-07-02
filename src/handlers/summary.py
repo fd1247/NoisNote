@@ -27,17 +27,15 @@ class SummaryHandlers:
         task_id = self._new_task_id("summary")
         self.active_task_ids["summary"] = task_id
         self.processing_started_at["summary"] = time.perf_counter()
-        self.latest_processing_messages["summary"] = "总结中"
         self.is_processing = True
         if not self.processing_source:
             self.processing_source = "manual"
         self.recording_hint_label.setText("正在总结内容")
         self._update_recording_entry()
         self._set_processing_ui(True)
-        self.transcript_progress.hide()
         self._sync_detail_processing_view()
+        self._refresh_history_status_indicators()
         if self._is_current_record_processing():
-            self.summary_status.setText("总结中")
             self._set_summary_text("")
         self.manual_summary_button.setVisible(False)
         log_event(
@@ -54,29 +52,11 @@ class SummaryHandlers:
         )
 
         worker = SummaryWorker(text, self.config, self)
-        worker.progress.connect(self._on_summary_progress)
         worker.completed.connect(self._on_summary_completed)
         worker.failed.connect(self._on_summary_failed)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
-
-    def _on_summary_progress(self, text: str) -> None:
-        text = self._normalize_summary_progress(text)
-        self.latest_processing_messages["summary"] = text
-        if self._is_current_record_processing():
-            self.summary_status.setText(text)
-            self._sync_detail_processing_view()
-
-    def _normalize_summary_progress(self, text: str) -> str:
-        """去掉总结进度文案里不必要的省略号。"""
-        value = (text or "").strip() or "总结中"
-        while value.endswith("...") or value.endswith("…"):
-            if value.endswith("..."):
-                value = value[:-3].rstrip()
-            else:
-                value = value[:-1].rstrip()
-        return value
 
     def _summary_error_code(self, error: str) -> str:
         """把常见 LLM 错误映射到稳定错误码。"""
@@ -92,7 +72,6 @@ class SummaryHandlers:
     def _on_summary_completed(self, summary: str) -> None:
         record = self.processing_record
         task_id = self.active_task_ids.pop("summary", "")
-        self.summary_progress.hide()
         if self._is_current_record_processing():
             self._set_summary_text(summary)
             self.summary_status.setText("总结完成")
@@ -121,7 +100,6 @@ class SummaryHandlers:
                 "llm": self._summary_processing_context(),
             },
         )
-        self.load_recordings()
         self._finish_processing(record, "总结完成")
 
     def _on_summary_failed(self, error: str) -> None:
@@ -144,14 +122,16 @@ class SummaryHandlers:
         )
         self.is_processing = False
         self.processing_source = None
+        was_selected = bool(record and self.current_record and self.current_record.record_id == record.record_id)
+        self._add_history_notice_if_unselected(record, "出现异常，点击查看详情")
         self.processing_record = None
-        self.latest_processing_messages = {}
-        self.summary_progress.hide()
-        self.summary_status.setText(f"总结失败：{error}")
+        if was_selected:
+            self.summary_status.setText(f"总结失败：{error}")
         self.record_button.setText("开始录音")
         self.recording_hint_label.setText("总结失败，可稍后手动总结")
         self._set_processing_ui(False)
-        self.manual_summary_button.setVisible(bool(self.transcript_text.toPlainText().strip()))
+        if was_selected:
+            self.manual_summary_button.setVisible(bool(self.transcript_text.toPlainText().strip()))
         self._update_recording_entry()
         if record:
             record = self.history_service.mark_error(
@@ -161,10 +141,9 @@ class SummaryHandlers:
                 elapsed_seconds=self._elapsed_seconds("summary"),
             )
             self.load_recordings()
-            self._select_record_by_id(record.record_id)
+            if was_selected:
+                self._select_record_by_id(record.record_id)
         self._show_error(f"总结失败：{error}")
 
     def manual_summarize(self) -> None:
         self.start_summarization(self.transcript_text.toPlainText(), self.current_record)
-
-

@@ -97,6 +97,9 @@ QLabel#HistorySubtitle {
     color: #6b7280;
     font-size: 11px;
 }
+QLabel#HistorySubtitle[selected="true"] {
+    color: #6b7280;
+}
 QLabel#ModelItemTitle {
     color: #111827;
     font-size: 13px;
@@ -139,6 +142,11 @@ QLabel#DetailStatusPill {
     font-size: 12px;
     font-weight: 600;
     padding: 2px 8px;
+}
+QLabel#DetailProcessingStatus {
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 600;
 }
 QLabel#PlayerTime {
     color: #6b7280;
@@ -344,19 +352,6 @@ QPushButton#SidebarRecordingTaskButton {
 QPushButton#SidebarRecordingTaskButton:hover {
     background: #ffedd5;
     border-color: #f97316;
-}
-QPushButton#SidebarProcessingTaskButton {
-    background: #ecfdf3;
-    border-color: #86efac;
-    color: #166534;
-    font-weight: 400;
-    text-align: center;
-    padding: 10px 12px;
-    min-height: 30px;
-}
-QPushButton#SidebarProcessingTaskButton:hover {
-    background: #dcfce7;
-    border-color: #4ade80;
 }
 QPushButton#SidebarRecordingButton {
     background: #fff7ed;

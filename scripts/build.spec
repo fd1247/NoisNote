@@ -246,6 +246,9 @@ hidden_imports = [
         "gguf",
         "gguf.constants",
         "srt",
+        # ASR 子进程（必须显式声明）
+        "src.asr.worker_process",
+        "src.workers.transcription",
 ]
 
 all_hiddenimports.extend(hidden_imports)

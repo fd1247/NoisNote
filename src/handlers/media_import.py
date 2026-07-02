@@ -28,7 +28,7 @@ class ImportHandlers:
             self._set_status("正在录音，完成后再导入")
             return
         if self.is_processing:
-            self._show_processing_record()
+            self._set_status("正在处理中，请稍后重试")
             return
 
         file_path, _ = QFileDialog.getOpenFileName(
@@ -48,7 +48,7 @@ class ImportHandlers:
             self._set_status("正在录音，完成后再导入")
             return
         if self.is_processing:
-            self._show_processing_record()
+            self._set_status("正在处理中，请稍后重试")
             return
 
         path = file_path.expanduser()
@@ -167,7 +167,6 @@ class ImportHandlers:
         self.is_processing = True
         task_id = self._new_task_id("preprocess")
         self.active_task_ids["preprocess"] = task_id
-        self.latest_processing_messages = {"preprocess": "处理音频"}
         self.recording_hint_label.setText("处理音频")
         self._set_processing_ui(True)
         self.load_recordings()
@@ -210,10 +209,9 @@ class ImportHandlers:
 
     def _on_audio_preprocess_progress(self, text: str, percent: int | None = None) -> None:
         message = (text or "处理音频").strip()
-        self.latest_processing_messages["preprocess"] = message
         self._set_status(message)
-        if self._is_current_record_processing():
-            self.transcript_status.setText(message)
+        self._refresh_history_status_indicators()
+        self._sync_detail_processing_view()
 
     def _on_audio_preprocess_completed(
         self,
@@ -242,7 +240,6 @@ class ImportHandlers:
         self.processing_source = None
         self.is_processing = False
         self.processing_record = None
-        self.latest_processing_messages = {}
         self._set_processing_ui(False)
         self.current_record = record
         if source == "manual":
@@ -251,6 +248,7 @@ class ImportHandlers:
         self._handle_audio_record_ready(record, status_after_success, source=source)
 
     def _on_audio_preprocess_failed(self, record: HistoryRecord, error: AudioInputError) -> None:
+        was_selected = bool(self.current_record and self.current_record.record_id == record.record_id)
         record = self.history_service.mark_input_error(record, error)
         task_id = self.active_task_ids.pop("preprocess", "")
         error_code = {
@@ -272,13 +270,14 @@ class ImportHandlers:
         self.is_processing = False
         self.processing_record = None
         self.processing_source = None
-        self.latest_processing_messages = {}
         self.latest_transcription_percent = None
+        self._add_history_notice_if_unselected(record, "出现异常，点击查看详情")
         self.record_button.setText("开始录音")
         self.recording_hint_label.setText("音频处理失败")
         self._set_processing_ui(False)
         self.load_recordings()
-        self._select_record_by_id(record.record_id)
+        if was_selected:
+            self._select_record_by_id(record.record_id)
         self._set_status(error.message)
 
     def _handle_audio_record_ready(self, record: HistoryRecord, status: str, source: str = "manual") -> None:

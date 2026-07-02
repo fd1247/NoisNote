@@ -263,6 +263,9 @@ def test_main_window_shows_timeline_tab_only_when_record_has_timeline(monkeypatc
         window._load_history_record(record)
 
         assert not window.timeline_tab_button.isHidden()
+        assert window.timeline_text.toPlainText() == ""
+
+        window._set_result_tab("timeline")
         assert "00:00.000 - 00:01.000" in window.timeline_text.toPlainText()
 
         service.clear_generated_results(record)

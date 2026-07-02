@@ -1,11 +1,13 @@
 """主窗口共享处理状态辅助逻辑。"""
 from __future__ import annotations
 
+from html import escape
 import time
 from typing import Any
 
 from ..app.config import DEFAULT_MODEL_CATALOG_BY_NAME
 from ..history.service import HistoryRecord
+from ..history.types import HistoryStatus
 
 
 class ProcessingHandlers:
@@ -19,29 +21,64 @@ class ProcessingHandlers:
         )
 
     def _sync_detail_processing_view(self) -> None:
-        """让详情区动态条只跟随当前选中的处理记录。"""
-        show_processing = self.is_processing and self._is_current_record_processing()
-        if not show_processing:
-            self.transcript_progress.hide()
-            self.summary_progress.hide()
-            return
+        """让详情区顶部任务状态只跟随当前选中的处理记录。"""
+        html = self._detail_processing_status_html()
+        self.detail_processing_status_label.setText(html)
+        self.detail_processing_status_label.setVisible(bool(html))
+        if self.is_processing and self._is_current_record_processing():
+            self.manual_summary_button.setVisible(False)
+
+    def _detail_processing_status_html(self) -> str:
+        if not (self.is_processing and self._is_current_record_processing()):
+            return ""
         if self.processing_started_at.get("summary") is not None:
-            self.transcript_progress.hide()
-            self.summary_progress.show()
-            self.summary_status.setText(self.latest_processing_messages.get("summary") or "总结中")
-            self.manual_summary_button.setVisible(False)
-        else:
-            self.transcript_progress.show()
-            if self.latest_transcription_percent is None:
-                self.transcript_progress.setRange(0, 0)
-            else:
-                self.transcript_progress.setRange(0, 100)
-                self.transcript_progress.setValue(self.latest_transcription_percent)
-            self.summary_progress.hide()
-            self.manual_summary_button.setVisible(False)
-            self.transcript_status.setText(
-                self.latest_processing_messages.get("transcription") or "正在转录"
+            return (
+                '<span style="color:#15803d;">转录完成</span>'
+                '<span style="color:#9ca3af;"> → </span>'
+                '<span style="color:#374151;">正在总结</span>'
             )
+        percent = self.latest_transcription_percent if self.latest_transcription_percent is not None else 0
+        text = f"正在转录: {percent}%"
+        if self.config.get("audio", {}).get("auto_summarize", True):
+            return (
+                f'<span style="color:#374151;">{escape(text)}</span>'
+                '<span style="color:#9ca3af;"> → </span>'
+                '<span style="color:#6b7280;">等待总结</span>'
+            )
+        return f'<span style="color:#374151;">{escape(text)}</span>'
+
+    def _history_subtitle_for_record(self, record: HistoryRecord) -> str:
+        if self.is_processing and self.processing_record and record.record_id == self.processing_record.record_id:
+            if self.processing_started_at.get("summary") is not None:
+                return "AI总结中"
+            percent = self.latest_transcription_percent if self.latest_transcription_percent is not None else 0
+            return f"正在转录: {percent}%"
+        if self.current_record and self.current_record.record_id == record.record_id:
+            return ""
+        if record.record_id in self.history_record_notices:
+            return self.history_record_notices[record.record_id]
+        if record.status == HistoryStatus.ERROR and record.record_id not in self.dismissed_history_notice_ids:
+            return "出现异常，点击查看详情"
+        return ""
+
+    def _refresh_history_status_indicators(self) -> None:
+        for row in range(self.history_list.count()):
+            item = self.history_list.item(row)
+            widget = self.history_list.itemWidget(item)
+            if hasattr(widget, "record") and hasattr(widget, "set_subtitle"):
+                widget.set_subtitle(self._history_subtitle_for_record(widget.record))
+
+    def _dismiss_history_notice(self, record: HistoryRecord) -> None:
+        self.history_record_notices.pop(record.record_id, None)
+        if record.status == HistoryStatus.ERROR:
+            self.dismissed_history_notice_ids.add(record.record_id)
+
+    def _add_history_notice_if_unselected(self, record: HistoryRecord | None, text: str) -> None:
+        if not record:
+            return
+        if self.current_record and self.current_record.record_id == record.record_id:
+            return
+        self.history_record_notices[record.record_id] = text
 
     def _save_transcript(self, text: str, record: HistoryRecord | None = None) -> None:
         target = record or self.current_record
@@ -131,10 +168,11 @@ class ProcessingHandlers:
         self.manual_summary_button.setVisible(visible)
 
     def _finish_processing(self, record: HistoryRecord | None, status: str) -> None:
+        was_selected = bool(record and self.current_record and self.current_record.record_id == record.record_id)
+        self._add_history_notice_if_unselected(record, "处理完成，点击查看详情")
         self.is_processing = False
         self.processing_record = None
         self.processing_source = None
-        self.latest_processing_messages = {}
         self.record_button.setText("开始录音")
         self.record_button.setObjectName("RecordButton")
         self.record_button.style().unpolish(self.record_button)
@@ -143,7 +181,7 @@ class ProcessingHandlers:
         self._set_processing_ui(False)
         self._update_recording_entry()
         self.load_recordings()
-        if record:
+        if record and was_selected:
             self._select_record_by_id(record.record_id)
         self._set_status(status)
 

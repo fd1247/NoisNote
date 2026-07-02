@@ -355,7 +355,6 @@ class RecordingHandlers:
     def _sync_sidebar_actions(self) -> None:
         """统一更新侧栏入口按钮文案和可用状态。"""
         if self.is_recording:
-            self.active_recording_button.hide()
             self.new_recording_sidebar_button.setText("正在录音中")
             self.new_recording_sidebar_button.setEnabled(True)
             self._set_button_object_name(self.new_recording_sidebar_button, "SidebarRecordingTaskButton")
@@ -369,13 +368,7 @@ class RecordingHandlers:
             self.import_audio_sidebar_button.setText("导入本地音视频")
             self.import_audio_sidebar_button.setEnabled(False)
             self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
-            task_text = "处理音频" if self.processing_source == "preprocess" else "正在转录音频"
-            self.active_recording_button.setText(task_text)
-            self.active_recording_button.setEnabled(True)
-            self._set_button_object_name(self.active_recording_button, "SidebarProcessingTaskButton")
-            self.active_recording_button.show()
         else:
-            self.active_recording_button.hide()
             self.new_recording_sidebar_button.setText("创建新录音")
             self.new_recording_sidebar_button.setEnabled(True)
             self._set_button_object_name(self.new_recording_sidebar_button, "SidebarPrimaryButton")
@@ -405,7 +398,7 @@ class RecordingHandlers:
             self.show_recording_page()
             return
         if self.is_processing:
-            self._show_processing_record()
+            self._set_status("正在处理中，请稍后重试")
             return
 
         self.current_record = None
@@ -418,8 +411,7 @@ class RecordingHandlers:
         if hasattr(self, "timeline_status"):
             self.timeline_status.setText("等待内容")
         self.summary_status.setText("等待内容")
-        self.transcript_progress.hide()
-        self.summary_progress.hide()
+        self.detail_processing_status_label.hide()
         self.manual_summary_button.hide()
         self.record_button.setText("开始录音")
         self.record_button.setObjectName("RecordButton")

@@ -33,7 +33,6 @@ class UpdateDialog(_ConfirmDialog):
         self.setObjectName("ConfirmDialog")
         self.setWindowTitle("检查更新")
         self.setMinimumWidth(340)
-        self.setModal(True)
 
         # 如果有父窗口，使用其图标
         if self.parent() is not None:
@@ -120,12 +119,12 @@ class UpdateDialog(_ConfirmDialog):
             UpdateDialog 对象
         """
         dialog = UpdateDialog(update_info, parent)
-        dialog.show()
+        dialog.show_prepared(parent)
         return dialog
 
     @staticmethod
     def show_pending_dialog(parent: QWidget | None, current_version: str) -> UpdateDialog:
         """显示检查中状态对话框。"""
         dialog = UpdateDialog.pending(parent, current_version)
-        dialog.show()
+        dialog.show_prepared(parent)
         return dialog

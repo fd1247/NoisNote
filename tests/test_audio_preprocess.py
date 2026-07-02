@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import struct
 import wave
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from src.audio.preprocess import (
     AudioInputError,
     AudioPreprocessRequest,
     build_ffmpeg_normalize_command,
+    detect_silence,
     is_supported_media,
     media_filter_string,
     normalize_audio,
@@ -26,6 +28,16 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000, channels: int 
         wav_file.setsampwidth(2)
         wav_file.setframerate(rate)
         wav_file.writeframes(b"\0\0" * frames * channels)
+
+
+def write_constant_wav(path: Path, frames: int, sample: int, rate: int = 16000, channels: int = 1) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = struct.pack("<h", sample) * channels
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(rate)
+        wav_file.writeframes(frame * frames)
 
 
 def test_media_support_and_filter_string() -> None:
@@ -89,7 +101,8 @@ def test_build_ffmpeg_command_uses_asr_standard_format(tmp_path: Path) -> None:
 
 
 def test_check_ffmpeg_available_reports_missing(monkeypatch) -> None:
-    monkeypatch.setattr("src.utils.ffmpeg_runtime.shutil.which", lambda name: None)
+    monkeypatch.setattr("src.utils.ffmpeg.shutil.which", lambda name: None)
+    monkeypatch.setattr("src.utils.ffmpeg._bundled_ffmpeg_dir", lambda: Path("__missing_ffmpeg__"))
 
     assert resolve_ffmpeg_path({}) is None
     result = check_ffmpeg_available({})
@@ -102,9 +115,9 @@ def test_check_ffmpeg_available_accepts_configured_paths(monkeypatch, tmp_path: 
     ffprobe = tmp_path / "ffprobe.exe"
     ffmpeg.write_text("", encoding="utf-8")
     ffprobe.write_text("", encoding="utf-8")
-    monkeypatch.setattr("src.utils.ffmpeg_runtime.shutil.which", lambda name: None)
+    monkeypatch.setattr("src.utils.ffmpeg.shutil.which", lambda name: None)
     monkeypatch.setattr(
-        "src.utils.ffmpeg_runtime.subprocess.run",
+        "src.utils.ffmpeg.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0),
     )
 
@@ -114,3 +127,38 @@ def test_check_ffmpeg_available_accepts_configured_paths(monkeypatch, tmp_path: 
     assert result.available
     assert result.ffmpeg_path == ffmpeg
     assert result.ffprobe_path == ffprobe
+
+
+def test_detect_silence_skips_files_longer_than_ten_minutes(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "long.wav"
+    source.write_bytes(b"placeholder")
+
+    class FakeSoundFile:
+        frames = 601 * 16000
+        samplerate = 16000
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("src.audio.preprocess.sf.SoundFile", lambda *_args, **_kwargs: FakeSoundFile())
+    monkeypatch.setattr(
+        "src.audio.preprocess.sf.read",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("long files should not be read")),
+    )
+
+    result = detect_silence(source)
+
+    assert result.is_silent is False
+
+
+def test_detect_silence_does_not_mark_short_non_silent_audio_as_silent(tmp_path: Path) -> None:
+    source = tmp_path / "short.wav"
+    write_constant_wav(source, frames=1600, sample=8000)
+
+    result = detect_silence(source)
+
+    assert result.is_silent is False
+    assert result.max_amplitude > result.threshold

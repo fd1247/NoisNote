@@ -86,17 +86,23 @@ class MainWindow(
         self.processing_source: str | None = None
         self.previous_content_widget: QWidget | None = None
         self.processing_started_at: dict[str, float] = {}
-        self.latest_processing_messages: dict[str, str] = {}
         self.latest_transcription_percent: int | None = None
+        self.history_record_notices: dict[str, str] = {}
+        self.dismissed_history_notice_ids: set[str] = set()
         self.silence_started_at: float | None = None
         self.active_result_tab = "transcript"
         self.summary_markdown_text = ""
         self.active_task_ids: dict[str, str] = {}
         self.timeline_items: list[dict] = []
+        self.transcript_loaded_record_id = ""
+        self.summary_loaded_record_id = ""
+        self.timeline_loaded_record_id = ""
         self._last_timeline_highlight_key: tuple[int | None, int | None] = (None, None)
+        self._last_history_selected_index = -1
         self.media_player: QMediaPlayer | None = None
         self.audio_output: QAudioOutput | None = None
         self.playback_record_id = ""
+        self.playback_loaded_record_id = ""
         self.playback_duration_ms = 0
         self.playback_rate = 1.0
         self._updating_playback_slider = False
@@ -152,13 +158,11 @@ class MainWindow(
             make_action_icon,
             self.new_recording,
             self.import_audio_recording,
-            self._show_active_task,
             self._select_history_item,
             self.show_settings,
         )
         self.new_recording_sidebar_button = controls.new_recording_button
         self.import_audio_sidebar_button = controls.import_audio_button
-        self.active_recording_button = controls.active_recording_button
         self.history_search = controls.history_search
         self.history_filter_button = controls.history_filter_button
         self.history_list = controls.history_list
@@ -263,8 +267,8 @@ class MainWindow(
         self.detail_size_label = controls.detail_size_label
         self.detail_status_label = controls.detail_status_label
         self.detail_time_label = controls.detail_time_label
+        self.detail_processing_status_label = controls.detail_processing_status_label
         self.transcript_status = controls.transcript_status
-        self.transcript_progress = controls.transcript_progress
         self.transcript_text = controls.transcript_text
         self.transcript_copy_button = controls.transcript_copy_button
         self.retry_transcription_button = controls.retry_transcription_button
@@ -272,7 +276,6 @@ class MainWindow(
         self.timeline_text = controls.timeline_text
         self.timeline_copy_button = controls.timeline_copy_button
         self.summary_status = controls.summary_status
-        self.summary_progress = controls.summary_progress
         self.summary_text = controls.summary_text
         self.summary_copy_button = controls.summary_copy_button
         self.manual_summary_button = controls.manual_summary_button
@@ -294,7 +297,11 @@ class MainWindow(
 
     def _set_result_tab(self, kind: str) -> None:
         """切换详情结果区标签，并保留用户的当前选择。"""
+        previous_tab = self.active_result_tab
         set_result_tab(self, kind)
+        if previous_tab == "timeline" and self.active_result_tab != "timeline":
+            self._release_timeline_resources()
+        self._ensure_active_result_loaded()
 
     def _set_summary_text(self, summary: str) -> None:
         """以 Markdown 方式展示总结，同时保留原文用于复制和导出。"""
@@ -379,6 +386,7 @@ class MainWindow(
         if index < 0 or index >= len(self.current_items):
             return
         record = self.current_items[index]
+        was_current = bool(self.current_record and self.current_record.record_id == record.record_id)
         new_name, accepted = prompt_text_without_icon(
             self,
             "重命名",
@@ -393,9 +401,11 @@ class MainWindow(
             self._show_error(f"重命名失败：{exc}")
             return
 
-        self.current_record = renamed
+        if was_current:
+            self.current_record = renamed
         self.load_recordings()
-        self._select_record_by_id(renamed.record_id)
+        if was_current:
+            self._select_record_by_id(renamed.record_id)
         self._set_status("记录已重命名")
 
     def open_history_record_folder(self, index: int) -> None:
@@ -416,8 +426,9 @@ class MainWindow(
         """从菜单删除指定历史记录。"""
         if index < 0 or index >= len(self.current_items):
             return
-        self.current_record = self.current_items[index]
-        self.delete_current_record()
+        record = self.current_items[index]
+        clear_current = bool(self.current_record and self.current_record.record_id == record.record_id)
+        self._delete_record(record, clear_current=clear_current)
 
     def copy_panel_text(self, kind: str) -> None:
         """复制转录或总结文本到系统剪贴板。"""
@@ -442,7 +453,9 @@ class MainWindow(
         if not self.current_record:
             self._show_error("请先选择一条历史记录")
             return
+        self._delete_record(self.current_record, clear_current=True)
 
+    def _delete_record(self, record: HistoryRecord, clear_current: bool) -> None:
         confirmed = confirm_without_icon(
             self,
             "删除历史记录",
@@ -453,7 +466,6 @@ class MainWindow(
             self._set_status("已取消删除")
             return
 
-        record = self.current_record
         if record.record_id == self.playback_record_id:
             self.stop_playback()
             self.playback_record_id = ""
@@ -465,7 +477,7 @@ class MainWindow(
             record_id=record.record_id,
             context={"record": record_context(record)},
         )
-        result = self.history_service.delete_record(self.current_record)
+        result = self.history_service.delete_record(record)
         if not result.success:
             log_event(
                 "record.delete.failed",
@@ -486,28 +498,10 @@ class MainWindow(
             context={"deleted_count": len(result.deleted_paths), "skipped_count": len(result.skipped_paths)},
         )
 
-        self.new_recording()
+        if clear_current:
+            self.new_recording()
         self.load_recordings()
         self._set_status(result.message)
-
-    def _show_processing_record(self) -> None:
-        """在处理进行中返回当前任务对应的详情页。"""
-        if not self.processing_record:
-            self.show_recording_page()
-            return
-        if self._select_record_by_id(self.processing_record.record_id):
-            return
-        self.load_recordings()
-        if not self._select_record_by_id(self.processing_record.record_id):
-            self.show_recording_page()
-
-    def _show_active_task(self) -> None:
-        """跳转到当前正在进行的任务。"""
-        if self.is_processing:
-            self._show_processing_record()
-            return
-        if self.is_recording:
-            self.show_recording_page()
 
     def _set_status(self, text: str) -> None:
         self.status_label.setText(text)

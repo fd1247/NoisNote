@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -60,14 +60,27 @@ class PlaybackRateCombo(QComboBox):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.currentText())
 
     def showPopup(self) -> None:
-        self.view().setMinimumWidth(self.popup_width)
-        super().showPopup()
-        popup = self.view().window()
-        popup_width = max(self.popup_width, popup.width())
-        popup.resize(popup_width, popup.height())
-        x = self.width() - popup_width
-        y = -popup.height()
-        popup.move(self.mapToGlobal(QPoint(x, y)))
+        menu = QMenu(self)
+        menu.setObjectName("PlayerRateMenu")
+        menu.setMinimumWidth(self.popup_width)
+        for index in range(self.count()):
+            action = QAction(self.itemText(index), menu)
+            action.setCheckable(True)
+            action.setChecked(index == self.currentIndex())
+            action.triggered.connect(lambda checked=False, row=index: self._set_popup_index(row))
+            menu.addAction(action)
+
+        popup_size = menu.sizeHint()
+        popup_width = max(self.popup_width, popup_size.width())
+        menu.setFixedWidth(popup_width)
+        pos = self.mapToGlobal(QPoint(self.width() - popup_width, -popup_size.height()))
+        self._rate_menu = menu
+        menu.aboutToHide.connect(lambda: setattr(self, "_rate_menu", None))
+        menu.popup(pos)
+
+    def _set_popup_index(self, index: int) -> None:
+        if 0 <= index < self.count():
+            self.setCurrentIndex(index)
 
 
 @dataclass(frozen=True)
@@ -100,8 +113,8 @@ class ContentTabsControls:
     detail_size_label: QLabel
     detail_status_label: QLabel
     detail_time_label: QLabel
+    detail_processing_status_label: QLabel
     transcript_status: QLabel
-    transcript_progress: QProgressBar
     transcript_text: QPlainTextEdit
     transcript_copy_button: QPushButton
     retry_transcription_button: QPushButton
@@ -109,7 +122,6 @@ class ContentTabsControls:
     timeline_text: QTextBrowser
     timeline_copy_button: QPushButton
     summary_status: QLabel
-    summary_progress: QProgressBar
     summary_text: QTextBrowser
     summary_copy_button: QPushButton
     manual_summary_button: QPushButton
@@ -154,6 +166,10 @@ def build_history_page(
     detail_status_label = _build_meta_label("状态 --")
     detail_status_label.setObjectName("DetailStatusPill")
     detail_time_label = _build_meta_label("--")
+    detail_processing_status_label = QLabel("")
+    detail_processing_status_label.setObjectName("DetailProcessingStatus")
+    detail_processing_status_label.setTextFormat(Qt.RichText)
+    detail_processing_status_label.hide()
     meta_row.addWidget(detail_duration_label)
     meta_row.addWidget(_build_meta_separator())
     meta_row.addWidget(detail_size_label)
@@ -161,6 +177,7 @@ def build_history_page(
     meta_row.addWidget(detail_time_label)
     meta_row.addWidget(detail_status_label)
     meta_row.addStretch(1)
+    meta_row.addWidget(detail_processing_status_label)
 
     title_meta.addWidget(detail_title_label)
     title_meta.addLayout(meta_row)
@@ -258,8 +275,8 @@ def build_history_page(
         detail_size_label=detail_size_label,
         detail_status_label=detail_status_label,
         detail_time_label=detail_time_label,
+        detail_processing_status_label=detail_processing_status_label,
         transcript_status=transcript_controls.status_label,
-        transcript_progress=transcript_controls.progress,
         transcript_text=cast(QPlainTextEdit, transcript_controls.text_edit),
         transcript_copy_button=transcript_controls.copy_button,
         retry_transcription_button=transcript_controls.action_button,
@@ -267,7 +284,6 @@ def build_history_page(
         timeline_text=cast(QTextBrowser, timeline_controls.text_edit),
         timeline_copy_button=timeline_controls.copy_button,
         summary_status=summary_controls.status_label,
-        summary_progress=summary_controls.progress,
         summary_text=cast(QTextBrowser, summary_controls.text_edit),
         summary_copy_button=summary_controls.copy_button,
         manual_summary_button=summary_controls.action_button,
@@ -289,7 +305,6 @@ class _ResultPageControls:
     """单个结果页控件引用。"""
 
     status_label: QLabel
-    progress: QProgressBar
     text_edit: QPlainTextEdit | QTextBrowser
     copy_button: QPushButton
     action_button: QPushButton
@@ -324,14 +339,8 @@ def _build_result_page(
     header = QHBoxLayout()
     status_label = QLabel("等待内容")
     status_label.setObjectName("Muted")
-    progress = QProgressBar()
-    progress.setRange(0, 0)
-    progress.setTextVisible(False)
-    progress.setMaximumWidth(180)
-    progress.hide()
     header.addWidget(status_label)
     header.addItem(QSpacerItem(20, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
-    header.addWidget(progress)
 
     if kind == "summary":
         action_button = QPushButton("手动总结")
@@ -372,7 +381,6 @@ def _build_result_page(
 
     return page, _ResultPageControls(
         status_label=status_label,
-        progress=progress,
         text_edit=text_edit,
         copy_button=copy_button,
         action_button=action_button,

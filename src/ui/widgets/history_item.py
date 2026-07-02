@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QSizePolicy,
     QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ...history.service import HistoryRecord
@@ -59,14 +61,15 @@ class HistoryActions(Protocol):
 class HistoryListItemWidget(QFrame):
     """历史记录列表项。"""
 
-    ROW_HEIGHT = 46
+    ROW_HEIGHT = 56
 
-    def __init__(self, record: HistoryRecord, index: int, window: HistoryActions):
+    def __init__(self, record: HistoryRecord, index: int, window: HistoryActions, subtitle: str = ""):
         super().__init__()
         self.record = record
         self.index = index
         self.window = window
         self._selected = False
+        self._hovered = False
         self.setObjectName("HistoryItem")
         self.setMouseTracking(True)
         self.setFixedHeight(self.ROW_HEIGHT)
@@ -84,6 +87,17 @@ class HistoryListItemWidget(QFrame):
         self.title_label = ElidedLabel(record.display_name)
         self.title_label.setObjectName("HistoryTitle")
 
+        self.subtitle_label = ElidedLabel(subtitle)
+        self.subtitle_label.setObjectName("HistorySubtitle")
+        self.subtitle_label.setVisible(bool(subtitle))
+
+        text_container = QWidget()
+        text_layout = QVBoxLayout(text_container)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(3)
+        text_layout.addWidget(self.title_label)
+        text_layout.addWidget(self.subtitle_label)
+
         self.more_button = QToolButton()
         self.more_button.setObjectName("HistoryMoreButton")
         self.more_button.setIcon(make_action_icon("more"))
@@ -95,7 +109,7 @@ class HistoryListItemWidget(QFrame):
         self.more_button.clicked.connect(self._show_menu)
 
         layout.addWidget(icon, alignment=Qt.AlignVCenter)
-        layout.addWidget(self.title_label, stretch=1)
+        layout.addWidget(text_container, stretch=1, alignment=Qt.AlignVCenter)
         layout.addWidget(self.more_button, alignment=Qt.AlignVCenter)
 
     def sizeHint(self) -> QSize:
@@ -107,10 +121,12 @@ class HistoryListItemWidget(QFrame):
         return QSize(hint.width(), self.ROW_HEIGHT)
 
     def enterEvent(self, event) -> None:
-        self.more_button.show()
+        self._hovered = True
+        self._sync_more_button()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
+        self._hovered = False
         self._sync_more_button()
         super().leaveEvent(event)
 
@@ -122,20 +138,28 @@ class HistoryListItemWidget(QFrame):
         self._selected = selected
         self.setProperty("selected", selected)
         self.title_label.setProperty("selected", selected)
+        self.subtitle_label.setProperty("selected", selected)
         self._sync_more_button()
         self.style().unpolish(self)
         self.style().polish(self)
         self.title_label.style().unpolish(self.title_label)
         self.title_label.style().polish(self.title_label)
+        self.subtitle_label.style().unpolish(self.subtitle_label)
+        self.subtitle_label.style().polish(self.subtitle_label)
+
+    def set_subtitle(self, text: str) -> None:
+        self.subtitle_label._full_text = text
+        self.subtitle_label.setToolTip(text)
+        self.subtitle_label.setVisible(bool(text))
+        self.subtitle_label._update_elided_text()
 
     def _sync_more_button(self) -> None:
-        if self._selected or self.underMouse() or self.more_button.underMouse():
+        if self._hovered or self.more_button.underMouse():
             self.more_button.show()
             return
         self.more_button.hide()
 
     def _show_menu(self) -> None:
-        self.window.select_history_index(self.index)
         self.more_button.show()
 
         menu = QMenu(self)

@@ -18,6 +18,14 @@ class TimelineViewHandlers:
         self.timeline_text.setHtml(text)
         self.timeline_copy_button.setVisible(bool(text.strip()))
 
+    def _release_timeline_resources(self) -> None:
+        """释放长时间轴数据和 QTextDocument，避免后台高亮刷新拖慢切换。"""
+        self.timeline_items = []
+        self.timeline_loaded_record_id = ""
+        self._last_timeline_highlight_key = (None, None)
+        self.timeline_text.clear()
+        self.timeline_copy_button.hide()
+
     def _timeline_display_text(self, record: HistoryRecord) -> str:
         """把结构化时间轴格式化为详情页可读文本。"""
         items = self.timeline_items or self.history_service.read_timeline(record)
@@ -35,14 +43,16 @@ class TimelineViewHandlers:
         self.timeline_items = items
         self._last_timeline_highlight_key = (None, None)
         if not items:
-            self.timeline_text.clear()
+            self._release_timeline_resources()
+            return
+        if self.active_result_tab != "timeline":
             self.timeline_copy_button.hide()
             return
         self._refresh_timeline_highlight(force=True)
         self.timeline_copy_button.show()
 
     def _refresh_timeline_highlight(self, position_seconds: float | None = None, force: bool = False) -> None:
-        if not self.timeline_items:
+        if self.active_result_tab != "timeline" or not self.timeline_items:
             return
         key = self._timeline_highlight_key(position_seconds)
         if not force and key == self._last_timeline_highlight_key:

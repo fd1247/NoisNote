@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import soundfile as sf
+import numpy as np
+
 
 def _subprocess_startupinfo() -> subprocess.STARTUPINFO | None:
     """Windows 下隐藏子进程控制台窗口。"""
@@ -20,6 +23,12 @@ def _subprocess_startupinfo() -> subprocess.STARTUPINFO | None:
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startupinfo.wShowWindow = subprocess.SW_HIDE
     return startupinfo
+
+
+def _subprocess_creationflags() -> int:
+    if sys.platform != "win32":
+        return 0
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 from ..app.config import get_config
 from ..utils.ffmpeg import resolve_ffmpeg_path, resolve_ffprobe_path
@@ -157,10 +166,16 @@ def probe_media(path: Path, config: dict | None = None, ffprobe_path: Path | Non
     try:
         # command 由本地 ffprobe 路径和参数列表组成，不启用 shell。
         # 使用 utf-8 编码避免 Windows 中文系统 GBK 解码失败。
-        completed = subprocess.run(  # nosec B603
-            command, capture_output=True, timeout=30, check=False,
-            startupinfo=_subprocess_startupinfo(),
-        )
+        run_kwargs = {
+            "capture_output": True,
+            "timeout": 30,
+            "check": False,
+            "startupinfo": _subprocess_startupinfo(),
+        }
+        creationflags = _subprocess_creationflags()
+        if creationflags:
+            run_kwargs["creationflags"] = creationflags
+        completed = subprocess.run(command, **run_kwargs)  # nosec B603
     except OSError as exc:
         raise AudioInputError("file_unreadable", "文件损坏或无法读取。", str(exc)) from exc
     except subprocess.TimeoutExpired as exc:
@@ -232,10 +247,16 @@ def normalize_audio(
     try:
         # command 由本地 ffmpeg 路径和参数列表组成，不启用 shell。
         # 使用 bytes 模式避免 Windows 中文系统 GBK 解码失败。
-        completed = subprocess.run(  # nosec B603
-            command, capture_output=True, timeout=None, check=False,
-            startupinfo=_subprocess_startupinfo(),
-        )
+        run_kwargs = {
+            "capture_output": True,
+            "timeout": None,
+            "check": False,
+            "startupinfo": _subprocess_startupinfo(),
+        }
+        creationflags = _subprocess_creationflags()
+        if creationflags:
+            run_kwargs["creationflags"] = creationflags
+        completed = subprocess.run(command, **run_kwargs)  # nosec B603
     except OSError as exc:
         raise AudioInputError("transcode_failed", "转码失败。", str(exc)) from exc
     if completed.returncode != 0 or not target.exists():
@@ -320,3 +341,55 @@ def _int_or_none(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+@dataclass(frozen=True)
+class SilenceDetectionResult:
+    """静音检测结果。"""
+    is_silent: bool
+    max_amplitude: float
+    rms_level: float
+    threshold: float
+
+
+def detect_silence(
+    audio_path: Path,
+    threshold: float = 0.001,
+    max_duration: float = 600.0,
+) -> SilenceDetectionResult:
+    """检测音频是否为静音或接近静音。
+
+    Args:
+        audio_path: 音频文件路径
+        threshold: 最大振幅阈值，低于此值视为静音（默认 0.001）
+        max_duration: 最大检测时长，超过该时长会跳过检测（默认 10 分钟）
+
+    Returns:
+        SilenceDetectionResult: 包含是否静音、最大振幅、RMS 水平等信息
+    """
+    try:
+        with sf.SoundFile(audio_path) as audio_file:
+            duration = audio_file.frames / audio_file.samplerate if audio_file.samplerate > 0 else None
+        if duration is not None and duration > max_duration:
+            return SilenceDetectionResult(is_silent=False, max_amplitude=0.0, rms_level=0.0, threshold=threshold)
+
+        y, sr = sf.read(audio_path, dtype='float32')
+        if len(y) == 0:
+            return SilenceDetectionResult(is_silent=True, max_amplitude=0.0, rms_level=0.0, threshold=threshold)
+
+        # 如果是多声道，转换为单声道（取平均）
+        if len(y.shape) > 1:
+            y = y.mean(axis=1)
+
+        max_amp = float(np.abs(y).max())
+        rms = float(np.sqrt(np.mean(y ** 2)))
+
+        return SilenceDetectionResult(
+            is_silent=max_amp < threshold,
+            max_amplitude=max_amp,
+            rms_level=rms,
+            threshold=threshold,
+        )
+    except Exception:
+        # 读取失败时保守地认为不是静音，避免误判
+        return SilenceDetectionResult(is_silent=False, max_amplitude=0.0, rms_level=0.0, threshold=threshold)

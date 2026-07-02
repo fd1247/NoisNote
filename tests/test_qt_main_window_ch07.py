@@ -174,9 +174,8 @@ def test_structured_transcription_progress_shows_percent(monkeypatch, tmp_path: 
             TranscriptionProgress("transcribing", 37, 3996, 10800, "正在转录音频")
         )
 
-        assert window.transcript_status.text() == "正在转录 37%"
-        assert window.transcript_progress.maximum() == 100
-        assert window.transcript_progress.value() == 37
+        assert "正在转录: 37%" in window.detail_processing_status_label.text()
+        assert window.latest_transcription_percent == 37
     finally:
         window.close()
         app.processEvents()

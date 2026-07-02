@@ -10,6 +10,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
@@ -18,7 +19,7 @@ from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.history.service import HistoryService, HistoryStatus
 from src.history.types import format_size
 from src.app.main_window import MainWindow
-from src.ui.content import SeekSlider
+from src.ui.content import PlaybackRateCombo, SeekSlider
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -65,6 +66,12 @@ def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     window = MainWindow()
     app.processEvents()
     return window
+
+
+def history_subtitle_at(window: MainWindow, row: int) -> str:
+    item = window.history_list.item(row)
+    widget = window.history_list.itemWidget(item)
+    return widget.subtitle_label.toolTip()
 
 
 def test_resolve_demo_audio_path_uses_src_assets_in_development(monkeypatch) -> None:
@@ -138,14 +145,14 @@ def test_demo_audio_flag_is_set_when_history_already_exists(monkeypatch, tmp_pat
         app.processEvents()
 
 
-def test_sidebar_actions_replace_extra_recording_entry(monkeypatch, tmp_path: Path) -> None:
+def test_sidebar_actions_do_not_create_processing_task_button(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
         window.is_recording = True
         window._sync_sidebar_actions()
 
-        assert window.active_recording_button.isHidden()
+        assert not hasattr(window, "active_recording_button")
         assert window.new_recording_sidebar_button.text() == "正在录音中"
         assert window.new_recording_sidebar_button.isEnabled()
         assert window.new_recording_sidebar_button.objectName() == "SidebarRecordingTaskButton"
@@ -160,10 +167,6 @@ def test_sidebar_actions_replace_extra_recording_entry(monkeypatch, tmp_path: Pa
         assert not window.new_recording_sidebar_button.isEnabled()
         assert window.import_audio_sidebar_button.text() == "导入本地音视频"
         assert not window.import_audio_sidebar_button.isEnabled()
-        assert window.active_recording_button.text() == "正在转录音频"
-        assert window.active_recording_button.isEnabled()
-        assert not window.active_recording_button.isHidden()
-        assert window.active_recording_button.objectName() == "SidebarProcessingTaskButton"
 
         window.is_processing = False
         window.processing_source = None
@@ -173,7 +176,6 @@ def test_sidebar_actions_replace_extra_recording_entry(monkeypatch, tmp_path: Pa
         assert window.import_audio_sidebar_button.text() == "导入本地音视频"
         assert window.new_recording_sidebar_button.isEnabled()
         assert window.import_audio_sidebar_button.isEnabled()
-        assert window.active_recording_button.isHidden()
     finally:
         window.close()
         app.processEvents()
@@ -232,6 +234,24 @@ def test_hide_settings_refreshes_history_after_external_delete(monkeypatch, tmp_
 
         assert window.current_record is None
         assert window.history_list.count() == 0
+        assert window.content_stack.currentWidget() == window.recording_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_escape_key_returns_from_settings_to_main_surface(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.show_settings()
+
+        event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+        window.keyPressEvent(event)
+        app.processEvents()
+
+        assert event.isAccepted()
+        assert window.sidebar_stack.currentWidget() == window.main_sidebar
         assert window.content_stack.currentWidget() == window.recording_page
     finally:
         window.close()
@@ -343,7 +363,7 @@ def test_export_markdown_without_summary_warns_before_choosing_directory(monkeyp
         app.processEvents()
 
 
-def test_processing_task_button_returns_to_processing_record_silently(monkeypatch, tmp_path: Path) -> None:
+def test_processing_notice_clicks_to_record_and_then_hides(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -351,19 +371,18 @@ def test_processing_task_button_returns_to_processing_record_silently(monkeypatc
         write_wav(tmp_path / "records" / "imported" / "audio.wav")
         record = service.scan()[0]
         window.history_service = service
-        window.current_items = [record]
-        window.processing_record = record
-        window.is_processing = True
-        window.processing_source = "import"
-        window._sync_sidebar_actions()
-        window.content_stack.setCurrentWidget(window.recording_page)
-        window._set_status("原状态")
+        window.load_recordings()
+        record = window.current_items[0]
+        window.history_record_notices[record.record_id] = "处理完成，点击查看详情"
+        window._render_history_list()
 
-        window.active_recording_button.click()
+        assert history_subtitle_at(window, 0) == "处理完成，点击查看详情"
+
+        window.select_history_index(0)
 
         assert window.current_record.record_id == record.record_id
         assert window.content_stack.currentWidget() == window.history_page
-        assert window.status_label.text() == ""
+        assert history_subtitle_at(window, 0) == ""
     finally:
         window.close()
         app.processEvents()
@@ -385,19 +404,19 @@ def test_detail_progress_follows_selected_processing_record(monkeypatch, tmp_pat
         window.processing_started_at["transcription"] = 1.0
 
         window._sync_detail_processing_view()
-        assert not window.transcript_progress.isHidden()
+        assert not window.detail_processing_status_label.isHidden()
 
         window._load_history_record(records["b"])
-        assert window.transcript_progress.isHidden()
+        assert window.detail_processing_status_label.isHidden()
 
         window._load_history_record(records["a"])
-        assert not window.transcript_progress.isHidden()
+        assert not window.detail_processing_status_label.isHidden()
     finally:
         window.close()
         app.processEvents()
 
 
-def test_summary_progress_status_restores_after_switching_records(monkeypatch, tmp_path: Path) -> None:
+def test_summary_processing_status_restores_after_switching_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -413,21 +432,20 @@ def test_summary_progress_status_restores_after_switching_records(monkeypatch, t
         window.processing_record = records["a"]
         window.is_processing = True
         window.processing_started_at["summary"] = 1.0
-        window.latest_processing_messages["summary"] = "大模型总结中"
 
         window._load_history_record(records["b"])
-        assert window.summary_progress.isHidden()
+        assert window.detail_processing_status_label.isHidden()
 
         window._load_history_record(records["a"])
-        assert not window.summary_progress.isHidden()
-        assert window.summary_status.text() == "大模型总结中"
+        assert not window.detail_processing_status_label.isHidden()
+        assert "正在总结" in window.detail_processing_status_label.text()
         assert window.manual_summary_button.isHidden()
     finally:
         window.close()
         app.processEvents()
 
 
-def test_transcription_loading_progress_hides_specific_model_name(monkeypatch, tmp_path: Path) -> None:
+def test_transcription_text_progress_keeps_generic_processing_status(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -442,14 +460,13 @@ def test_transcription_loading_progress_hides_specific_model_name(monkeypatch, t
 
         window._on_transcription_progress("正在加载 Qwen3-ASR GGUF 模型")
 
-        assert window.transcript_status.text() == "正在加载ASR模型"
-        assert window.latest_processing_messages["transcription"] == "正在加载ASR模型"
+        assert "正在转录: 0%" in window.detail_processing_status_label.text()
     finally:
         window.close()
         app.processEvents()
 
 
-def test_summary_progress_removes_ellipsis(monkeypatch, tmp_path: Path) -> None:
+def test_summary_processing_status_uses_static_detail_text(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -464,10 +481,40 @@ def test_summary_progress_removes_ellipsis(monkeypatch, tmp_path: Path) -> None:
         window.is_processing = True
         window.processing_started_at["summary"] = 1.0
 
-        window._on_summary_progress("正在调用 LLM 总结...")
+        window._sync_detail_processing_view()
 
-        assert window.summary_status.text() == "正在调用 LLM 总结"
-        assert window.latest_processing_messages["summary"] == "正在调用 LLM 总结"
+        assert "正在总结" in window.detail_processing_status_label.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_unselected_summary_failure_does_not_update_current_detail(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "a" / "audio.wav")
+        write_wav(tmp_path / "records" / "b" / "audio.wav")
+        records = {record.record_id: record for record in service.scan()}
+        service.save_transcript(records["a"], "A 转录")
+        service.save_transcript(records["b"], "B 转录")
+        records = {record.record_id: record for record in service.scan()}
+        window.history_service = service
+        window.load_recordings()
+        window._select_record_by_id("b")
+        window.processing_record = records["a"]
+        window.is_processing = True
+        window.processing_started_at["summary"] = 1.0
+        window.summary_status.setText("B 详情状态")
+        window.manual_summary_button.setVisible(True)
+        monkeypatch.setattr(window, "_show_error", lambda *_args, **_kwargs: None)
+
+        window._on_summary_failed("API timeout")
+
+        assert window.current_record.record_id == "b"
+        assert window.summary_status.text() == "B 详情状态"
+        assert not window.manual_summary_button.isHidden()
     finally:
         window.close()
         app.processEvents()
@@ -632,7 +679,64 @@ def test_delete_history_record_uses_unified_confirm_dialog(monkeypatch, tmp_path
         app.processEvents()
 
 
-def test_result_tabs_keep_current_selection_when_switching_records(monkeypatch, tmp_path: Path) -> None:
+def test_menu_rename_non_current_record_keeps_current_selection(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "selected" / "audio.wav")
+        write_wav(tmp_path / "records" / "target" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        assert window._select_record_by_id("selected")
+        selected_id = window.current_record.record_id
+        target_index = next(index for index, record in enumerate(window.current_items) if record.record_id == "target")
+        monkeypatch.setattr(
+            "src.app.main_window.prompt_text_without_icon",
+            lambda *_args, **_kwargs: ("renamed-target", True),
+        )
+
+        window.rename_history_record(target_index)
+
+        assert window.current_record.record_id == selected_id
+        assert (tmp_path / "records" / "renamed-target").exists()
+        assert not (tmp_path / "records" / "target").exists()
+        assert window.history_list.currentRow() == next(
+            index for index, record in enumerate(window.current_items) if record.record_id == selected_id
+        )
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_menu_delete_non_current_record_keeps_current_selection(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "selected" / "audio.wav")
+        write_wav(tmp_path / "records" / "target" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        assert window._select_record_by_id("selected")
+        selected_id = window.current_record.record_id
+        target_index = next(index for index, record in enumerate(window.current_items) if record.record_id == "target")
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *_args, **_kwargs: True)
+
+        window.delete_history_record(target_index)
+
+        assert window.current_record.record_id == selected_id
+        assert (tmp_path / "records" / "selected").exists()
+        assert not (tmp_path / "records" / "target").exists()
+        assert [record.record_id for record in window.current_items] == ["selected"]
+        assert window.history_list.currentRow() == 0
+        assert window.content_stack.currentWidget() == window.history_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_result_tabs_reset_to_transcript_when_switching_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -650,10 +754,10 @@ def test_result_tabs_keep_current_selection_when_switching_records(monkeypatch, 
         window.summary_tab_button.click()
         window._load_history_record(records["b"])
 
-        assert window.active_result_tab == "summary"
-        assert window.result_stack.currentIndex() == 2
-        assert window.summary_tab_button.isChecked()
-        assert not window.transcript_tab_button.isChecked()
+        assert window.active_result_tab == "transcript"
+        assert window.result_stack.currentIndex() == 0
+        assert window.transcript_tab_button.isChecked()
+        assert not window.summary_tab_button.isChecked()
     finally:
         window.close()
         app.processEvents()
@@ -745,6 +849,46 @@ def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(m
         app.processEvents()
 
 
+def test_timeline_resources_are_released_when_leaving_timeline_tab(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        items = [{"start": 0.0, "end": 1.0, "text": "hello"}]
+        window._set_result_tab("timeline")
+        window._set_timeline_items(items)
+
+        assert window.timeline_items
+        assert "hello" in window.timeline_text.toPlainText()
+
+        window._set_result_tab("transcript")
+
+        assert window.timeline_items == []
+        assert window.timeline_loaded_record_id == ""
+        assert window.timeline_text.toPlainText() == ""
+        assert window.timeline_copy_button.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_hidden_timeline_is_not_refreshed_by_playback_stop(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        def fail_timeline_render(*_args, **_kwargs) -> str:
+            raise AssertionError("hidden timeline should not render")
+
+        monkeypatch.setattr("src.handlers.timeline_view.timeline_to_html", fail_timeline_render)
+        window.active_result_tab = "transcript"
+        window.timeline_items = [{"start": 0.0, "end": 1.0, "text": "hidden"}]
+        window.media_player = FakeMediaPlayer()
+
+        window.stop_playback()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 class FakeMediaPlayer:
     def __init__(self) -> None:
         self._position = 30_000
@@ -796,7 +940,7 @@ def test_playback_controls_seek_rate_and_toggle_with_fake_player(monkeypatch, tm
         window.history_service = service
 
         window._load_history_record(record)
-        assert fake.source is not None
+        assert fake.source is None or fake.source.isEmpty()
 
         window.seek_playback_forward()
         assert fake.position() == 15_000
@@ -808,12 +952,44 @@ def test_playback_controls_seek_rate_and_toggle_with_fake_player(monkeypatch, tm
         assert fake.rate == 1.5
 
         window.toggle_playback()
+        assert fake.source is not None
         assert fake.playbackState() == QMediaPlayer.PlaybackState.PlayingState
         window.toggle_playback()
         assert fake.playbackState() == QMediaPlayer.PlaybackState.PausedState
 
         window.stop_playback()
         assert fake.source.isEmpty()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_processing_record_switch_keeps_playback_available_without_preloading_source(
+    monkeypatch, tmp_path: Path
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting-a" / "audio.wav")
+        write_wav(tmp_path / "records" / "meeting-b" / "audio.wav")
+        records = service.scan()
+        fake = FakeMediaPlayer()
+        window.media_player = fake
+        window.history_service = service
+        window.is_processing = True
+        window.processing_record = records[0]
+
+        window._load_history_record(records[0])
+        window._load_history_record(records[1])
+        window._load_history_record(records[0])
+
+        assert fake.source is None or fake.source.isEmpty()
+        assert window.playback_play_button.isEnabled()
+        window.toggle_playback()
+        assert fake.source is not None
+        assert not fake.source.isEmpty()
+        assert fake.playbackState() == QMediaPlayer.PlaybackState.PlayingState
     finally:
         window.close()
         app.processEvents()
@@ -855,6 +1031,35 @@ def test_playback_rate_control_is_left_of_cc_button(monkeypatch, tmp_path: Path)
         assert layout.spacing() == 6
     finally:
         window.close()
+        app.processEvents()
+
+
+def test_playback_rate_combo_uses_positioned_menu() -> None:
+    app = QApplication.instance() or QApplication([])
+    combo = PlaybackRateCombo()
+    try:
+        for value in ("0.5x", "1x", "1.5x", "2x"):
+            combo.addItem(value)
+        combo.setCurrentText("1x")
+        combo.resize(38, 28)
+        combo.show()
+        app.processEvents()
+
+        combo.showPopup()
+        app.processEvents()
+
+        menu = combo._rate_menu
+        assert menu is not None
+        assert menu.objectName() == "PlayerRateMenu"
+        assert menu.width() >= combo.popup_width
+
+        menu.actions()[2].trigger()
+        assert combo.currentText() == "1.5x"
+    finally:
+        menu = getattr(combo, "_rate_menu", None)
+        if menu is not None:
+            menu.close()
+        combo.close()
         app.processEvents()
 
 

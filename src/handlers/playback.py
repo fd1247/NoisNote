@@ -44,9 +44,6 @@ class PlaybackHandlers:
         self.playback_slider.setRange(0, max(0, self.playback_duration_ms))
         self.playback_duration_label.setText(_format_playback_ms(self.playback_duration_ms))
         self._sync_playback_buttons(bool(source))
-        if self.media_player and source:
-            self.media_player.setSource(QUrl.fromLocalFile(str(source)))
-            self.media_player.setPlaybackRate(self.playback_rate)
 
     def _sync_playback_buttons(self, enabled: bool) -> None:
         self.playback_back_button.setEnabled(enabled)
@@ -68,6 +65,7 @@ class PlaybackHandlers:
         if self.media_player:
             self.media_player.stop()
             self.media_player.setSource(QUrl())
+        self.playback_loaded_record_id = ""
         if hasattr(self, "playback_slider"):
             self.playback_slider.setValue(0)
             self.playback_position_label.setText("00:00")
@@ -80,9 +78,14 @@ class PlaybackHandlers:
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
             return
-        if not self._playback_source_for_record(self.current_record):
+        source = self._playback_source_for_record(self.current_record)
+        if not source:
             self._set_status("当前记录没有可播放的音频")
             return
+        if self.playback_loaded_record_id != self.current_record.record_id:
+            self.media_player.setSource(QUrl.fromLocalFile(str(source)))
+            self.media_player.setPlaybackRate(self.playback_rate)
+            self.playback_loaded_record_id = self.current_record.record_id
         self.media_player.play()
 
     def seek_playback_backward(self) -> None:
@@ -167,6 +170,10 @@ class PlaybackHandlers:
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """播放快捷键：空格播放/暂停，左右方向键快退/快进。"""
+        if event.key() == Qt.Key.Key_Escape and self.content_stack.currentWidget() == self.settings_panel:
+            self.hide_settings()
+            event.accept()
+            return
         if self._should_ignore_playback_shortcut():
             super().keyPressEvent(event)
             return

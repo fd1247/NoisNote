@@ -25,15 +25,22 @@ def _patch_subprocess_hide_window() -> None:
     """确保所有子进程不弹出控制台窗口（影响 pydub 等第三方库内部调用）。"""
     if sys.platform != "win32":
         return
+    if getattr(subprocess.Popen, "_noisnote_hidden_window", False):
+        return
     _original_popen = subprocess.Popen
 
     class _HiddenPopen(_original_popen):
+        _noisnote_hidden_window = True
+
         def __init__(self, *args, **kwargs):
             if sys.platform == "win32" and "startupinfo" not in kwargs:
                 si = subprocess.STARTUPINFO()
                 si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 si.wShowWindow = subprocess.SW_HIDE
                 kwargs["startupinfo"] = si
+            kwargs["creationflags"] = int(kwargs.get("creationflags") or 0) | int(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
             super().__init__(*args, **kwargs)
 
     subprocess.Popen = _HiddenPopen  # type: ignore[misc]

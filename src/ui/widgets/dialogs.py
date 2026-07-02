@@ -5,9 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QEventLoop, QPoint, QRect, QTimer, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 @dataclass(frozen=True)
@@ -43,7 +53,50 @@ class _ConfirmDialog(QDialog):
     def eventFilter(self, watched, event) -> bool:
         if event.type() == QEvent.Type.FocusIn and watched in self._focus_buttons:
             self._set_active_button(watched)
+        if event.type() == QEvent.Type.KeyPress and watched in self._focus_buttons:
+            key_event = event
+            if key_event.key() == Qt.Key.Key_Left:
+                self._move_button_focus(-1)
+                key_event.accept()
+                return True
+            if key_event.key() == Qt.Key.Key_Right:
+                self._move_button_focus(1)
+                key_event.accept()
+                return True
         return super().eventFilter(watched, event)
+
+    def prepare_for_display(self, parent: QWidget | None = None) -> None:
+        """在显示前完成尺寸计算和定位，避免顶层窗口先在屏幕原点绘制。"""
+        self.adjustSize()
+        _position_dialog_before_show(self, parent or self.parentWidget())
+
+    def show_prepared(self, parent: QWidget | None = None) -> None:
+        """下一轮事件循环再异步打开，减少顶层窗口创建和绘制竞争。"""
+        self.prepare_for_display(parent)
+        self.setWindowModality(_dialog_modality(parent or self.parentWidget()))
+        QTimer.singleShot(0, self._open_prepared)
+
+    def run_modal(self, parent: QWidget | None = None) -> QDialog.DialogCode:
+        """使用 open() 显示模态弹框，同时保留同步返回值。"""
+        loop = QEventLoop(self)
+        result = {"code": QDialog.DialogCode.Rejected}
+
+        def finish(code: int) -> None:
+            result["code"] = QDialog.DialogCode(code)
+            if loop.isRunning():
+                loop.quit()
+
+        self.finished.connect(finish)
+        self.show_prepared(parent)
+        loop.exec()
+        self.finished.disconnect(finish)
+        return result["code"]
+
+    def _open_prepared(self) -> None:
+        if not self.isVisible():
+            self.open()
+        self.raise_()
+        self.activateWindow()
 
     def _register_focus_buttons(self, buttons: list[QPushButton]) -> None:
         self._focus_buttons = buttons
@@ -78,7 +131,6 @@ class _ConfirmDialog(QDialog):
 def _prepare_dialog(dialog: QDialog, parent: QWidget | None, title: str) -> QVBoxLayout:
     dialog.setObjectName("ConfirmDialog")
     dialog.setWindowTitle(title)
-    dialog.setModal(True)
     if parent is not None:
         dialog.setWindowIcon(parent.windowIcon())
 
@@ -176,6 +228,52 @@ def _add_confirm_buttons(
     return confirm_button, cancel_button
 
 
+def _parent_window(parent: QWidget | None) -> QWidget | None:
+    if parent is not None and parent.window() is not None:
+        return parent.window()
+    return QApplication.activeWindow()
+
+
+def _dialog_modality(parent: QWidget | None) -> Qt.WindowModality:
+    return Qt.WindowModality.WindowModal if _parent_window(parent) is not None else Qt.WindowModality.ApplicationModal
+
+
+def _screen_available_geometry(dialog: QDialog, parent_window: QWidget | None) -> QRect:
+    screen = None
+    if parent_window is not None and parent_window.windowHandle() is not None:
+        screen = parent_window.windowHandle().screen()
+    if screen is None and dialog.screen() is not None:
+        screen = dialog.screen()
+    if screen is None:
+        screen = QApplication.primaryScreen()
+    return screen.availableGeometry() if screen is not None else QRect()
+
+
+def _clamp_to_rect(point: QPoint, size, bounds: QRect) -> QPoint:
+    if bounds.isNull():
+        return point
+    max_x = bounds.right() - size.width() + 1
+    max_y = bounds.bottom() - size.height() + 1
+    return QPoint(
+        min(max(point.x(), bounds.left()), max(bounds.left(), max_x)),
+        min(max(point.y(), bounds.top()), max(bounds.top(), max_y)),
+    )
+
+
+def _position_dialog_before_show(dialog: QDialog, parent: QWidget | None) -> None:
+    parent_window = _parent_window(parent)
+    if parent_window is not None and parent_window.isVisible():
+        anchor = parent_window.frameGeometry()
+    else:
+        anchor = _screen_available_geometry(dialog, parent_window)
+    if anchor.isNull():
+        return
+
+    size = dialog.size()
+    top_left = anchor.center() - QPoint(size.width() // 2, size.height() // 2)
+    dialog.move(_clamp_to_rect(top_left, size, _screen_available_geometry(dialog, parent_window)))
+
+
 def confirm_without_icon(
     parent: QWidget | None,
     title: str,
@@ -189,8 +287,7 @@ def confirm_without_icon(
     content.addWidget(_make_message_label(text))
     _add_confirm_buttons(dialog, content, confirm_text, cancel_text)
     dialog.setMinimumWidth(292)
-    dialog.adjustSize()
-    return dialog.exec() == QDialog.DialogCode.Accepted
+    return dialog.run_modal(parent) == QDialog.DialogCode.Accepted
 
 
 def alert_without_icon(
@@ -203,15 +300,13 @@ def alert_without_icon(
     dialog = _ConfirmDialog(parent)
     content = _prepare_dialog(dialog, parent, title)
     content.addWidget(_make_message_label(text))
-
-    confirm_button = add_dialog_buttons(
+    add_dialog_buttons(
         dialog,
         content,
         [primary_button_spec(confirm_text, dialog.accept, active=True)],
-    )[0]
+    )
     dialog.setMinimumWidth(292)
-    dialog.adjustSize()
-    dialog.exec()
+    dialog.run_modal(parent)
 
 
 def prompt_text_without_icon(
@@ -234,9 +329,8 @@ def prompt_text_without_icon(
 
     _add_confirm_buttons(dialog, content, confirm_text, cancel_text)
     dialog.setMinimumWidth(330)
-    dialog.adjustSize()
     line_edit.setFocus(Qt.FocusReason.OtherFocusReason)
-    accepted = dialog.exec() == QDialog.DialogCode.Accepted
+    accepted = dialog.run_modal(parent) == QDialog.DialogCode.Accepted
     return line_edit.text(), accepted
 
 
@@ -263,7 +357,6 @@ def prompt_choice_without_icon(
 
     _add_confirm_buttons(dialog, content, confirm_text, cancel_text)
     dialog.setMinimumWidth(330)
-    dialog.adjustSize()
     combo.setFocus(Qt.FocusReason.OtherFocusReason)
-    accepted = dialog.exec() == QDialog.DialogCode.Accepted
+    accepted = dialog.run_modal(parent) == QDialog.DialogCode.Accepted
     return combo.currentText(), accepted
