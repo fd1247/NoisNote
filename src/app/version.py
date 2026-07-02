@@ -112,7 +112,7 @@ class VersionInfo:
 
 
 # 当前应用版本号，遵循语义化版本规范
-APP_VERSION = VersionInfo(0, 1, 0, "")
+APP_VERSION = VersionInfo(0, 2, 0, "")
 
 
 def get_version_string() -> str:

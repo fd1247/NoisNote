@@ -45,6 +45,10 @@ class SettingsHandlers:
     def hide_settings(self) -> None:
         """退出设置模式并回到之前页面。"""
         self.load_recordings()
+        self._leave_settings()
+
+    def _leave_settings(self) -> None:
+        """切回主界面，不重复刷新历史记录。"""
         self.sidebar_stack.setCurrentWidget(self.main_sidebar)
         target = self.previous_content_widget or self.recording_page
         if target == self.settings_panel:
@@ -64,7 +68,7 @@ class SettingsHandlers:
     def _apply_settings_config(self, updated_config: dict) -> None:
         self._persist_settings_config(updated_config)
         self.load_recordings()
-        self.hide_settings()
+        self._leave_settings()
         self._set_status("配置已保存")
 
     def _persist_settings_config(self, updated_config: dict) -> None:

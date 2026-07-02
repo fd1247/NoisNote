@@ -19,7 +19,7 @@ major.minor.patch[-pre_release]
 
 ### 版本号定义位置
 
-版本号集中定义在 `src/version.py`：
+版本号集中定义在 `src/app/version.py`：
 
 ```python
 APP_VERSION = VersionInfo(0, 1, 0, "")

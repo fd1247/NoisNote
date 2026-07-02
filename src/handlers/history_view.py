@@ -73,17 +73,22 @@ class HistoryViewHandlers:
         self.retry_transcription_button.hide()
 
     def _render_history_list(self) -> None:
-        self.history_list.clear()
-        self._last_history_selected_index = -1
-        for index, item in enumerate(self.current_items):
-            list_item = QListWidgetItem()
-            list_item.setToolTip(str(item.record_dir if item.layout == "folder" else item.audio_path))
-            list_item.setData(Qt.UserRole, index)
-            self.history_list.addItem(list_item)
-            widget = HistoryListItemWidget(item, index, self, self._history_subtitle_for_record(item))
-            list_item.setSizeHint(widget.sizeHint())
-            self.history_list.setItemWidget(list_item, widget)
-        self.empty_history_label.setVisible(not self.current_items)
+        updates_enabled = self.history_list.updatesEnabled()
+        self.history_list.setUpdatesEnabled(False)
+        try:
+            self.history_list.clear()
+            self._last_history_selected_index = -1
+            for index, item in enumerate(self.current_items):
+                list_item = QListWidgetItem()
+                list_item.setToolTip(str(item.record_dir if item.layout == "folder" else item.audio_path))
+                list_item.setData(Qt.UserRole, index)
+                self.history_list.addItem(list_item)
+                widget = HistoryListItemWidget(item, index, self, self._history_subtitle_for_record(item))
+                list_item.setSizeHint(widget.sizeHint())
+                self.history_list.setItemWidget(list_item, widget)
+            self.empty_history_label.setVisible(not self.current_items)
+        finally:
+            self.history_list.setUpdatesEnabled(updates_enabled)
 
     def _filtered_history_items(self) -> list[HistoryRecord]:
         query = self.history_search_text.strip().lower()

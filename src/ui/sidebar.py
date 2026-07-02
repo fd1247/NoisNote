@@ -82,6 +82,7 @@ def build_history_sidebar(
 
     history_list = QListWidget()
     history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    history_list.setUniformItemSizes(True)
     history_list.itemClicked.connect(select_history_item)
 
     empty_history_label = QLabel("暂无录音")
