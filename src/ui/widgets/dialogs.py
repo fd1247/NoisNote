@@ -20,6 +20,9 @@ from PySide6.QtWidgets import (
 )
 
 
+_DIALOG_SHOW_DELAY_MS = 100
+
+
 @dataclass(frozen=True)
 class DialogButtonSpec:
     """通用弹框按钮配置。"""
@@ -35,6 +38,7 @@ class _ConfirmDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_Mapped)
         self.confirm_button: QPushButton | None = None
         self.cancel_button: QPushButton | None = None
         self._focus_buttons: list[QPushButton] = []
@@ -74,7 +78,7 @@ class _ConfirmDialog(QDialog):
         """下一轮事件循环再异步打开，减少顶层窗口创建和绘制竞争。"""
         self.prepare_for_display(parent)
         self.setWindowModality(_dialog_modality(parent or self.parentWidget()))
-        QTimer.singleShot(0, self._open_prepared)
+        QTimer.singleShot(_DIALOG_SHOW_DELAY_MS, self._open_prepared)
 
     def run_modal(self, parent: QWidget | None = None) -> QDialog.DialogCode:
         """使用 open() 显示模态弹框，同时保留同步返回值。"""

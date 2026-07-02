@@ -29,7 +29,7 @@ class TranscriptionHandlers:
             self._start_audio_preprocess(
                 target_record,
                 source=source,
-                status_after_success="已提取视频音轨",
+                status_after_success=self._preprocess_success_status(target_record),
             )
             return
         self.processing_record = record or self.current_record

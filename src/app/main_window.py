@@ -323,28 +323,26 @@ class MainWindow(
         if not demo_audio or not demo_audio.exists():
             return
         try:
-            audio_format: dict[str, object] = {"format": demo_audio.suffix.lower().lstrip(".")}
-            duration_seconds: float | None = None
             try:
                 probe = probe_media(demo_audio, self.config)
-                duration_seconds = probe.duration_seconds
-                audio_format = {
-                    "sample_rate": probe.audio_sample_rate,
-                    "channels": probe.audio_channels,
-                    "format": demo_audio.suffix.lower().lstrip("."),
-                    "source_format": probe.source_format,
-                }
             except AudioInputError as exc:
                 log_event(
-                    "record.import.demo_probe_failed",
-                    level="WARNING",
+                    "record.import.demo_failed",
+                    level="ERROR",
                     module="history",
                     message="内置测试音频探测失败",
-                    context={"error": str(exc)},
+                    context={"error": exc.to_metadata()},
                 )
+                return
+            audio_format: dict[str, object] = {
+                "sample_rate": probe.audio_sample_rate,
+                "channels": probe.audio_channels,
+                "format": demo_audio.suffix.lower().lstrip("."),
+                "source_format": probe.source_format,
+            }
             record = self.history_service.copy_imported_audio_file(
                 demo_audio,
-                duration_seconds=duration_seconds,
+                duration_seconds=probe.duration_seconds,
                 audio_format=audio_format,
                 source_kind="local_audio",
             )

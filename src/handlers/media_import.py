@@ -11,6 +11,7 @@ from ..audio.preprocess import (
     AudioPreprocessResult,
     is_supported_media,
     media_filter_string,
+    probe_media,
     source_kind_for_path,
 )
 from ..utils.logging import file_context, log_event, record_context
@@ -84,8 +85,37 @@ class ImportHandlers:
             task_id=task_id,
             context={"source_file": file_context(path), "source_kind": source_kind_for_path(path, self.config)},
         )
+        source_kind = source_kind_for_path(path, self.config)
         try:
-            record = self.history_service.import_audio_file(path)
+            probe = probe_media(path, self.config)
+        except AudioInputError as exc:
+            log_event(
+                "record.import.failed",
+                level="ERROR",
+                module="history",
+                message="导入文件媒体信息探测失败",
+                task_id=task_id,
+                context={"source_file": file_context(path), "error": exc.to_metadata()},
+                error_code="IMP-001",
+                error_type=exc.kind,
+            )
+            self._show_error(exc.message)
+            return
+
+        audio_format: dict[str, object] = {
+            "sample_rate": probe.audio_sample_rate,
+            "channels": probe.audio_channels,
+            "format": path.suffix.lower().lstrip("."),
+            "source_format": probe.source_format,
+        }
+
+        try:
+            record = self.history_service.import_audio_file(
+                path,
+                duration_seconds=probe.duration_seconds,
+                audio_format=audio_format,
+                source_kind=source_kind,
+            )
         except Exception as exc:
             log_event(
                 "record.import.failed",
@@ -107,7 +137,11 @@ class ImportHandlers:
             message="本地音视频已导入历史记录",
             task_id=task_id,
             record_id=record.record_id,
-            context={"record": record_context(record), "source_file": file_context(path)},
+            context={
+                "record": record_context(record),
+                "source_file": file_context(path),
+                "duration_seconds": probe.duration_seconds,
+            },
         )
         status = "已导入视频" if record.source_kind == "local_video" else "已导入音频"
         self._handle_audio_record_ready(record, status, source="import")
@@ -148,11 +182,36 @@ class ImportHandlers:
         return paths
 
     def _needs_audio_preprocess(self, record: HistoryRecord | None) -> bool:
-        """视频记录需要提取音轨并标准化后再转录。"""
-        if not record or record.source_kind != "local_video":
+        """非目标 WAV 的本地媒体需要先标准化后再转录。"""
+        if not record:
             return False
         normalized = record.normalized_audio_path
-        return not normalized or not normalized.exists()
+        if normalized and normalized.exists():
+            return False
+        if record.source_kind == "local_video":
+            return True
+        if record.source_kind != "local_audio":
+            return False
+
+        preprocessing = self.config.get("audio", {}).get("preprocessing", {})
+        target_sample_rate = int(preprocessing.get("target_sample_rate") or 16000)
+        target_channels = int(preprocessing.get("target_channels") or 1)
+        audio_format = record.audio_format or {}
+        source_format = str(
+            audio_format.get("format")
+            or record.audio_path.suffix.lower().lstrip(".")
+        ).lower()
+        if source_format != "wav":
+            return True
+        sample_rate = audio_format.get("sample_rate")
+        channels = audio_format.get("channels")
+        return sample_rate != target_sample_rate or channels != target_channels
+
+    def _preprocess_success_status(self, record: HistoryRecord | None) -> str:
+        """生成预处理完成后的状态文案。"""
+        if record and record.source_kind == "local_video":
+            return "已提取视频音轨"
+        return "已标准化音频"
 
     def _start_audio_preprocess(
         self,

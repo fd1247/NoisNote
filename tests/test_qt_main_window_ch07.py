@@ -4,13 +4,14 @@ import copy
 import os
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QMimeData, Qt, QUrl
 
-from src.audio.preprocess import AudioPreprocessResult
+from src.audio.preprocess import AudioInputError, AudioPreprocessResult
 from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.history.service import HistoryService, HistoryStatus
 from src.app.main_window import MainWindow
@@ -228,6 +229,61 @@ def test_audio_import_bypasses_preprocess_and_uses_original_file(monkeypatch, tm
         app.processEvents()
 
 
+def test_mp3_import_displays_probed_duration(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    config = make_config(tmp_path)
+    config["audio"]["auto_transcribe"] = False
+    window = make_window(monkeypatch, tmp_path, config)
+    try:
+        source = tmp_path / "meeting.mp3"
+        source.write_bytes(b"fake mp3")
+        monkeypatch.setattr(
+            "src.handlers.media_import.probe_media",
+            lambda path, config=None: SimpleNamespace(
+                duration_seconds=49.2,
+                audio_sample_rate=44100,
+                audio_channels=2,
+                source_format="mp3",
+            ),
+        )
+
+        window._import_media_path(source)
+
+        assert window.current_record is not None
+        assert window.current_record.duration_seconds == 49.2
+        assert window.detail_duration_label.text() == "00:49"
+        metadata = window.current_record.metadata_path.read_text(encoding="utf-8")
+        assert '"duration_seconds": 49.2' in metadata
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_import_media_path_rejects_probe_failure(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "broken.mp3"
+        source.write_bytes(b"broken mp3")
+        monkeypatch.setattr(
+            "src.handlers.media_import.probe_media",
+            lambda path, config=None: (_ for _ in ()).throw(
+                AudioInputError("file_unreadable", "文件损坏或无法读取。", "bad file")
+            ),
+        )
+        errors: list[str] = []
+        monkeypatch.setattr(window, "_show_error", lambda message: errors.append(message))
+
+        window._import_media_path(source)
+
+        assert errors == ["文件损坏或无法读取。"]
+        assert window.current_record is None
+        assert not (Path(window.config["audio"]["output_dir"]) / "broken").exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_video_import_preprocesses_to_normalized_audio(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -310,6 +366,15 @@ def test_import_media_path_from_drop_uses_history_flow(monkeypatch, tmp_path: Pa
     try:
         source = tmp_path / "meeting.mp3"
         source.write_bytes(b"mp3")
+        monkeypatch.setattr(
+            "src.handlers.media_import.probe_media",
+            lambda path, config=None: SimpleNamespace(
+                duration_seconds=49.2,
+                audio_sample_rate=44100,
+                audio_channels=2,
+                source_format="mp3",
+            ),
+        )
         handled: list[str] = []
         monkeypatch.setattr(
             window,
@@ -327,7 +392,7 @@ def test_import_media_path_from_drop_uses_history_flow(monkeypatch, tmp_path: Pa
         app.processEvents()
 
 
-def test_start_transcription_preprocesses_video_only_when_needed(monkeypatch, tmp_path: Path) -> None:
+def test_start_transcription_preprocesses_video_when_needed(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -346,6 +411,37 @@ def test_start_transcription_preprocesses_video_only_when_needed(monkeypatch, tm
         window.start_transcription(record.audio_path, record, source="manual")
 
         assert calls == [(record.record_id, "manual")]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_start_transcription_preprocesses_imported_mp3(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "meeting.mp3"
+        source.write_bytes(b"fake mp3")
+        service = HistoryService(tmp_path / "records")
+        record = service.import_audio_file(
+            source,
+            duration_seconds=49.2,
+            audio_format={"sample_rate": 44100, "channels": 2, "format": "mp3", "source_format": "mp3"},
+            source_kind="local_audio",
+        )
+        window.history_service = service
+        calls: list[tuple[str, str, str]] = []
+        monkeypatch.setattr(
+            window,
+            "_start_audio_preprocess",
+            lambda record, source, status_after_success: calls.append(
+                (record.record_id, source, status_after_success)
+            ),
+        )
+
+        window.start_transcription(record.audio_path, record, source="manual")
+
+        assert calls == [(record.record_id, "manual", "已标准化音频")]
     finally:
         window.close()
         app.processEvents()

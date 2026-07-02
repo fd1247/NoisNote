@@ -305,6 +305,28 @@ def test_import_audio_file_preserves_non_wav_extension(tmp_path: Path) -> None:
     assert source.exists()
 
 
+def test_import_audio_file_can_store_probed_mp3_duration(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = source_dir / "voice.mp3"
+    source.write_bytes(b"fake mp3 data")
+
+    service = HistoryService(tmp_path / "records")
+    record = service.import_audio_file(
+        source,
+        duration_seconds=49.2,
+        audio_format={"sample_rate": 44100, "channels": 2, "format": "mp3", "source_format": "mp3"},
+        source_kind="local_audio",
+    )
+
+    metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+    assert record.duration_seconds == 49.2
+    assert record.duration_text == "00:49"
+    assert metadata["duration_seconds"] == 49.2
+    assert metadata["audio_format"]["sample_rate"] == 44100
+    assert metadata["storage_mode"] == "reference"
+
+
 def test_copy_imported_audio_file_preserves_extension_and_duration(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()

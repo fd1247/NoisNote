@@ -271,6 +271,8 @@ class HistoryStorageMixin:
     def _wav_duration(self, path: Path) -> float | None:
         if not path.exists():
             return None
+        if path.suffix.lower() != ".wav":
+            return None
         try:
             with wave.open(str(path), "rb") as wav_file:
                 frame_rate = wav_file.getframerate()

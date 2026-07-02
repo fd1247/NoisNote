@@ -123,7 +123,14 @@ class HistoryService(HistoryStorageMixin):
         self._write_json(record_dir / self.FOLDER_METADATA, metadata)
         return self._build_folder_record(record_dir)  # type: ignore[return-value]
 
-    def import_audio_file(self, audio_path: Path) -> HistoryRecord:
+    def import_audio_file(
+        self,
+        audio_path: Path,
+        *,
+        duration_seconds: float | None = None,
+        audio_format: dict[str, Any] | None = None,
+        source_kind: str | None = None,
+    ) -> HistoryRecord:
         """记录外部音视频文件路径，创建一条独立历史记录。"""
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         source = Path(audio_path)
@@ -140,18 +147,18 @@ class HistoryService(HistoryStorageMixin):
             "version": self.METADATA_VERSION,
             "record_id": record_id,
             "created_at": created_at.isoformat(timespec="seconds"),
-            "duration_seconds": self._wav_duration(source),
+            "duration_seconds": duration_seconds,
             "audio_file": source.name,
             "transcript_file": self.FOLDER_TRANSCRIPT,
             "summary_file": self.FOLDER_SUMMARY,
             "markdown_file": self.FOLDER_MARKDOWN,
             "status": HistoryStatus.AUDIO_ONLY.value,
             "source_type": "imported",
-            "source_kind": self._source_kind_for_path(source),
+            "source_kind": source_kind or self._source_kind_for_path(source),
             "source_path": str(source),
             "original_file_path": str(source),
             "normalized_audio_path": "",
-            "audio_format": {
+            "audio_format": audio_format or {
                 "sample_rate": None,
                 "channels": None,
                 "format": source.suffix.lower().lstrip("."),
@@ -191,7 +198,7 @@ class HistoryService(HistoryStorageMixin):
             "version": self.METADATA_VERSION,
             "record_id": record_id,
             "created_at": datetime.fromtimestamp(source.stat().st_mtime).isoformat(timespec="seconds"),
-            "duration_seconds": duration_seconds if duration_seconds is not None else self._wav_duration(target),
+            "duration_seconds": duration_seconds,
             "audio_file": target.name,
             "transcript_file": self.FOLDER_TRANSCRIPT,
             "summary_file": self.FOLDER_SUMMARY,
