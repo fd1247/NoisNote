@@ -29,7 +29,7 @@ ROOT = Path(__file__).parent.parent
 APP_NAME = "NoisNote"
 VERSION_FILE = ROOT / "src" / "app" / "version.py"
 BUILD_SCRIPT = ROOT / "scripts" / "build.py"
-DIST_DIR = ROOT / "dist"
+DIST_DIR = ROOT / "build" / "dist"
 GITHUB_OWNER = "fd1247"
 GITHUB_REPO = "NoisNote"
 
