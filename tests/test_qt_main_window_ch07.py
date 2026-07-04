@@ -201,7 +201,7 @@ def test_input_error_is_visible_in_history_detail(monkeypatch, tmp_path: Path) -
         window._load_history_record(record)
 
         assert record.status == HistoryStatus.ERROR
-        assert "音频处理失败：转码失败。" == window.transcript_status.text()
+        assert "音频处理失败：stderr" == window.transcript_status.text()
     finally:
         window.close()
         app.processEvents()

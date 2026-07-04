@@ -361,6 +361,8 @@ class RecordingHandlers:
             self.import_audio_sidebar_button.setText("导入本地音视频")
             self.import_audio_sidebar_button.setEnabled(False)
             self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
+            self.remote_import_sidebar_button.setEnabled(False)
+            self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
         elif self.is_processing:
             self.new_recording_sidebar_button.setText("创建新录音")
             self.new_recording_sidebar_button.setEnabled(False)
@@ -368,6 +370,8 @@ class RecordingHandlers:
             self.import_audio_sidebar_button.setText("导入本地音视频")
             self.import_audio_sidebar_button.setEnabled(False)
             self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
+            self.remote_import_sidebar_button.setEnabled(False)
+            self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
         else:
             self.new_recording_sidebar_button.setText("创建新录音")
             self.new_recording_sidebar_button.setEnabled(True)
@@ -375,6 +379,8 @@ class RecordingHandlers:
             self.import_audio_sidebar_button.setText("导入本地音视频")
             self.import_audio_sidebar_button.setEnabled(True)
             self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
+            self.remote_import_sidebar_button.setEnabled(True)
+            self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
         self.settings_button.setEnabled(not self.is_processing)
 
     def _set_button_object_name(self, button, object_name: str) -> None:

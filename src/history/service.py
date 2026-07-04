@@ -23,6 +23,7 @@ class HistoryService(HistoryStorageMixin):
     FOLDER_MARKDOWN = "export.md"
     FOLDER_TIMELINE = "timeline.json"
     FOLDER_METADATA = "metadata.json"
+    FOLDER_EXTERNAL_SUBTITLE = "external_subtitle.srt"
     PROCESSING_STEPS = ("transcription", "summary")
 
     def __init__(self, recordings_dir: str | Path):
@@ -225,6 +226,44 @@ class HistoryService(HistoryStorageMixin):
         self._write_json(record_dir / self.FOLDER_METADATA, metadata)
         return self._build_folder_record(record_dir)  # type: ignore[return-value]
 
+    def create_remote_record(self, info: Any) -> HistoryRecord:
+        """为远程链接创建历史记录。"""
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        title = str(getattr(info, "title", "") or "remote-video")
+        record_id = self._unique_record_id(title or datetime.now().strftime("%Y%m%d_%H%M%S"))
+        record_dir = self.recordings_dir / record_id
+        record_dir.mkdir(parents=True, exist_ok=False)
+        metadata = {
+            "version": self.METADATA_VERSION,
+            "record_id": record_id,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "duration_seconds": getattr(info, "duration_seconds", None),
+            "audio_file": self.FOLDER_AUDIO,
+            "transcript_file": self.FOLDER_TRANSCRIPT,
+            "summary_file": self.FOLDER_SUMMARY,
+            "markdown_file": self.FOLDER_MARKDOWN,
+            "external_subtitle_file": self.FOLDER_EXTERNAL_SUBTITLE,
+            "status": HistoryStatus.MISSING_AUDIO.value,
+            "source_type": "remote_url",
+            "source_kind": "remote_url",
+            "source_path": str(getattr(info, "webpage_url", "") or getattr(info, "url", "")),
+            "original_file_path": str(getattr(info, "webpage_url", "") or getattr(info, "url", "")),
+            "normalized_audio_path": "",
+            "audio_format": {},
+            "input_error": None,
+            "remote": {
+                "url": getattr(info, "url", ""),
+                "webpage_url": getattr(info, "webpage_url", ""),
+                "extractor": getattr(info, "extractor", ""),
+                "title": title,
+                "video_id": getattr(info, "video_id", ""),
+                "duration_seconds": getattr(info, "duration_seconds", None),
+            },
+            "processing": self._default_processing_metadata(),
+        }
+        self._write_json(record_dir / self.FOLDER_METADATA, metadata)
+        return self._build_folder_record(record_dir)  # type: ignore[return-value]
+
     def save_preprocess_result(self, record: HistoryRecord, result: Any) -> HistoryRecord:
         """保存音频标准化结果，并让转录优先使用标准化音频。"""
         metadata = self._record_metadata(record)
@@ -244,6 +283,38 @@ class HistoryService(HistoryStorageMixin):
         metadata["input_error"] = None
         metadata["status"] = HistoryStatus.AUDIO_ONLY.value
         self._write_json(record.metadata_path, metadata)
+        self._write_folder_metadata(record.record_dir)
+        return self._build_folder_record(record.record_dir) or record
+
+    def save_remote_metadata(self, record: HistoryRecord, metadata: dict[str, Any]) -> HistoryRecord:
+        """保存远程导入扩展元数据。"""
+        stored = self._record_metadata(record)
+        stored.update(metadata)
+        if record.transcript_path.exists() or (record.record_dir / self.FOLDER_TRANSCRIPT).exists():
+            stored["status"] = HistoryStatus.TRANSCRIBED.value
+        self._write_json(record.metadata_path, stored)
+        self._write_folder_metadata(record.record_dir)
+        return self._build_folder_record(record.record_dir) or record
+
+    def save_remote_audio_result(
+        self,
+        record: HistoryRecord,
+        *,
+        audio_path: Path,
+        duration_seconds: float | None,
+        audio_format: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> HistoryRecord:
+        """保存远程音频下载和标准化结果。"""
+        stored = self._record_metadata(record)
+        stored.update(metadata)
+        stored["audio_file"] = audio_path.name
+        stored["duration_seconds"] = duration_seconds
+        stored["audio_format"] = audio_format
+        stored["normalized_audio_path"] = ""
+        stored["status"] = HistoryStatus.AUDIO_ONLY.value
+        stored["input_error"] = None
+        self._write_json(record.metadata_path, stored)
         self._write_folder_metadata(record.record_dir)
         return self._build_folder_record(record.record_dir) or record
 
@@ -551,4 +622,5 @@ class HistoryService(HistoryStorageMixin):
             input_error=metadata.get("input_error") if isinstance(metadata.get("input_error"), dict) else None,
             audio_format=metadata.get("audio_format") if isinstance(metadata.get("audio_format"), dict) else None,
             storage_mode=storage_mode,
+            external_subtitle_file=str(metadata.get("external_subtitle_file") or self.FOLDER_EXTERNAL_SUBTITLE),
         )

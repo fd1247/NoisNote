@@ -53,6 +53,7 @@ class HistoryRecord:
     input_error: dict[str, Any] | None = None
     audio_format: dict[str, Any] | None = None
     storage_mode: str = ""
+    external_subtitle_file: str = "external_subtitle.srt"
 
     @property
     def display_name(self) -> str:
@@ -104,6 +105,10 @@ class HistoryRecord:
         return self.summary_path.exists()
 
     @property
+    def external_subtitle_path(self) -> Path:
+        return self.record_dir / self.external_subtitle_file
+
+    @property
     def timeline_path(self) -> Path:
         return self.record_dir / "timeline.json"
 
@@ -126,4 +131,3 @@ def format_size(size_bytes: int) -> str:
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
     return f"{size_bytes / (1024 * 1024):.1f} MB"
-

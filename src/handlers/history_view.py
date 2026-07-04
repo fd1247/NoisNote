@@ -181,7 +181,8 @@ class HistoryViewHandlers:
         self.timeline_tab_button.setVisible(recording.has_timeline)
         self.playback_cc_button.setVisible(True)
         if recording.input_error:
-            self.transcript_status.setText(f"音频处理失败：{recording.input_error.get('message') or recording.error_message}")
+            detail = recording.input_error.get("details") or recording.input_error.get("message") or recording.error_message
+            self.transcript_status.setText(f"音频处理失败：{detail}")
         elif recording.status == HistoryStatus.ERROR and recording.error_message:
             self.transcript_status.setText(f"处理失败：{recording.error_message}")
         else:

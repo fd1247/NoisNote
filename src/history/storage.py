@@ -52,6 +52,9 @@ class HistoryStorageMixin:
             "source_type",
             "source_kind",
             "source_path",
+            "remote",
+            "transcript_source",
+            "external_subtitle_file",
             "original_file_path",
             "normalized_audio_path",
             "audio_format",
@@ -133,14 +136,14 @@ class HistoryStorageMixin:
     ) -> HistoryStatus:
         if metadata_status == HistoryStatus.ERROR.value and not transcript_path.exists():
             return HistoryStatus.ERROR
-        if not audio_path.exists():
-            return HistoryStatus.MISSING_AUDIO
         if markdown_path.exists():
             return HistoryStatus.EXPORTED
         if summary_path.exists():
             return HistoryStatus.SUMMARIZED
         if transcript_path.exists():
             return HistoryStatus.TRANSCRIBED
+        if not audio_path.exists():
+            return HistoryStatus.MISSING_AUDIO
         return HistoryStatus.AUDIO_ONLY
 
     def _unique_record_id(self, base_id: str) -> str:
@@ -157,7 +160,33 @@ class HistoryStorageMixin:
     def _sanitize_record_name(self, value: str) -> str:
         forbidden = '<>:"/\\|?*'
         safe_name = "".join("_" if ch in forbidden or ord(ch) < 32 else ch for ch in value)
-        return safe_name.strip().strip(".")
+        safe_name = safe_name.strip().strip(".")
+        if safe_name.upper() in {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        }:
+            safe_name = f"{safe_name}_"
+        return safe_name[:80].rstrip().rstrip(".")
 
     def _imported_audio_name(self, source: Path) -> str:
         suffix = source.suffix.lower()

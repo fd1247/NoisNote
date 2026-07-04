@@ -32,6 +32,7 @@ from ..handlers.media_import import ImportHandlers
 from ..handlers.playback import PlaybackHandlers
 from ..handlers.processing import ProcessingHandlers
 from ..handlers.recording import RecordingHandlers
+from ..handlers.remote_import import RemoteImportHandlers
 from ..handlers.settings import SettingsHandlers
 from ..handlers.summary import SummaryHandlers
 from ..handlers.timeline_view import TimelineViewHandlers
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
 
 class MainWindow(
     ImportHandlers,
+    RemoteImportHandlers,
     RecordingHandlers,
     ProcessingHandlers,
     TranscriptionHandlers,
@@ -158,11 +160,13 @@ class MainWindow(
             make_action_icon,
             self.new_recording,
             self.import_audio_recording,
+            self.import_remote_url,
             self._select_history_item,
             self.show_settings,
         )
         self.new_recording_sidebar_button = controls.new_recording_button
         self.import_audio_sidebar_button = controls.import_audio_button
+        self.remote_import_sidebar_button = controls.remote_import_button
         self.history_search = controls.history_search
         self.history_filter_button = controls.history_filter_button
         self.history_list = controls.history_list

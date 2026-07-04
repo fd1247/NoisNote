@@ -6,3 +6,4 @@ numpy
 pydub
 soundfile
 onnxruntime-directml
+yt-dlp

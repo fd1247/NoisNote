@@ -371,6 +371,28 @@ def test_import_audio_file_uses_unique_folder_for_duplicate_names(tmp_path: Path
     assert source_b.exists()
 
 
+def test_create_remote_record_sanitizes_long_windows_title(tmp_path: Path) -> None:
+    service = HistoryService(tmp_path / "records")
+    info = type(
+        "RemoteInfo",
+        (),
+        {
+            "title": 'CON: a very long youtube shorts title with ? invalid | filename * chars / and more text ' * 3,
+            "duration_seconds": 12.0,
+            "webpage_url": "https://www.youtube.com/shorts/qWFo8GKXHq8",
+            "url": "https://www.youtube.com/shorts/qWFo8GKXHq8",
+            "extractor": "youtube",
+            "video_id": "qWFo8GKXHq8",
+        },
+    )()
+
+    record = service.create_remote_record(info)
+
+    assert record.record_dir.exists()
+    assert len(record.record_id) <= 80
+    assert not any(ch in record.record_id for ch in '<>:"/\\|?*')
+
+
 def test_scans_existing_copied_import_records(tmp_path: Path) -> None:
     record_dir = tmp_path / "records" / "meeting"
     write_wav(record_dir / "audio.wav")

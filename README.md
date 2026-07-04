@@ -6,6 +6,7 @@
 
 - 录制 Windows 系统声音（WASAPI Loopback）或麦克风声音
 - 导入本地音视频文件（支持拖拽导入），视频自动提取音轨
+- 从 YouTube / Bilibili 等公开视频链接导入，优先使用外部字幕，字幕不可用时下载音频
 - 本地 ASR 模型转录音频，支持真实进度回传
 - 调用 LLM API 生成总结，支持 Markdown 渲染
 - 历史记录管理：查看、重命名、文件夹中打开、删除、复制文本、导出 Markdown
@@ -22,6 +23,7 @@
 | 内存 | 0.6B 模型约需 2 GB，1.7B 模型约需 5 GB |
 | 磁盘 | 0.6B 模型约 570 MB，1.7B 模型约 1.4 GB；建议预留 5 GB 以上 |
 | ffmpeg | 导入视频或非 WAV 音频时需要。运行 `python scripts/download_deps.py` 自动下载，或手动安装到 PATH。 |
+| yt-dlp | 从链接导入公开视频时需要。源码运行会随 `requirements.txt` 安装。 |
 | ASR 推理 | 默认 CPU 推理。有独显时可选择 GPU（DirectML）加速。 |
 
 ## 运行方式
@@ -69,6 +71,25 @@ python main.py
 - 点击侧边栏 **导入本地音视频** 按钮选择文件
 - 或将文件直接 **拖拽** 到应用窗口
 - 支持格式：WAV、MP3、M4A、AAC、FLAC、OGG、WMA、MP4、MOV、MKV、AVI、WebM
+
+### 从链接导入
+
+点击侧边栏 **从链接导入**，输入公开视频链接后应用会在后台解析链接。
+
+- 优先下载外部字幕，生成转录文本和逐句时间轴
+- 如果没有可用字幕，或字幕下载/解析失败，会自动降级为下载音频并标准化为 `audio.wav`
+- 链接解析、字幕下载、音频下载和转码都在后台线程中执行，不会阻塞主界面
+- 视频超过 2 小时，或无法确认时长时，会先弹窗确认
+
+部分 YouTube / Bilibili 视频需要登录态或 cookies。请将 Netscape 格式 cookies 文件保存到用户数据目录：
+
+```
+文档/NoisNote/
+├── bilibili_cookies.txt
+└── youtube_cookies.txt
+```
+
+cookies 文件不要放在仓库目录，也不要提交到 Git。可使用浏览器扩展或 `yt-dlp --cookies-from-browser` 导出为 Netscape cookies 格式。
 
 ### 查看转录结果
 
@@ -120,11 +141,14 @@ NoisNote/
 ├── data/          # 历史记录（每条一个文件夹）
 │   ├── 20250627_143022/
 │   │   ├── audio.wav           # 音频文件
+│   │   ├── external_subtitle.srt # 链接导入的外部字幕（按需生成）
 │   │   ├── transcript.txt      # 转录文本
 │   │   ├── summary.txt         # 总结内容
 │   │   └── metadata.json       # 元数据
 │   └── ...
 ├── models/        # ASR 模型文件
+├── bilibili_cookies.txt # Bilibili 登录态（可选）
+├── youtube_cookies.txt  # YouTube 登录态（可选）
 └── logs/          # 诊断日志
 ```
 
@@ -166,3 +190,13 @@ CPU 推理可能较慢，尤其是 1.7B 模型。可在设置中选择更快的 
 ### 导入视频转录音频失败
 
 请运行 `python scripts/download_deps.py` 下载内置 ffmpeg，或手动安装到系统 PATH。
+
+### 从链接导入失败
+
+请先确认网络可访问目标网站，并已安装 `yt-dlp`。如果提示需要登录或 cookies 无效，请把 Netscape 格式 cookies 分别保存为 `文档/NoisNote/bilibili_cookies.txt` 或 `文档/NoisNote/youtube_cookies.txt` 后重试。
+
+YouTube 若提示 n challenge、格式不可用或只有图片格式，源码运行时请确保 Node.js 可用，并可访问 yt-dlp 所需的远程组件；也可尝试更新 yt-dlp：
+
+```bash
+python -m pip install -U "yt-dlp[default]"
+```
