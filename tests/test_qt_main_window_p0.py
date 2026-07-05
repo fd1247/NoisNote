@@ -196,6 +196,51 @@ def test_recording_task_button_returns_to_recording_page(monkeypatch, tmp_path: 
         app.processEvents()
 
 
+def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert [action.text() for action in window.menuBar().actions()] == ["文件", "导出", "视图", "帮助"]
+        assert not window.quick_toolbar.isHidden()
+        assert window.record_toolbar_button.toolTip() == "录音"
+        assert window.record_toolbar_button.text() == ""
+        assert window.import_audio_toolbar_button.toolTip() == "导入音视频"
+        assert window.remote_import_toolbar_button.toolTip() == "从链接导入"
+        assert not window.task_panel.isHidden()
+        assert window.workbench_splitter.widget(0) == window.sidebar_stack
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_view_menu_toggles_workbench_regions(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.toggle_quick_toolbar_action.trigger()
+        window.toggle_history_panel_action.trigger()
+        window.toggle_playback_panel_action.trigger()
+        window.toggle_task_panel_action.trigger()
+
+        assert window.quick_toolbar.isHidden()
+        assert window.sidebar_stack.isHidden()
+        assert window.playback_widget.isHidden()
+        assert window.task_panel.isHidden()
+
+        window.toggle_quick_toolbar_action.trigger()
+        window.toggle_history_panel_action.trigger()
+        window.toggle_playback_panel_action.trigger()
+        window.toggle_task_panel_action.trigger()
+
+        assert not window.quick_toolbar.isHidden()
+        assert not window.sidebar_stack.isHidden()
+        assert not window.playback_widget.isHidden()
+        assert not window.task_panel.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_history_search_filters_visible_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

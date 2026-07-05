@@ -19,6 +19,8 @@ _ICON_MAP: dict[str, str] = {
     "hotwords": "热词管理.svg",
     "shortcuts": "快捷键.svg",
     "import": "导入.svg",
+    "link": "导入.svg",
+    "export": "导出.svg",
     "filter": "筛选.svg",
     "play": "播放.svg",
     "pause": "暂停.svg",

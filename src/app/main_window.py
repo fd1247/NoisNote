@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -47,6 +48,7 @@ from ..ui.icons import make_action_icon, make_app_icon
 from ..ui.recording import build_recording_page
 from ..ui.result import set_result_tab, set_summary_text, set_transcript_text
 from ..ui.settings_dialog import SettingsDialog
+from ..ui.workbench import build_quick_toolbar, build_task_panel, install_workbench_menus
 from ..utils.logging import log_event, record_context
 
 if TYPE_CHECKING:
@@ -142,6 +144,8 @@ class MainWindow(
         )
 
     def _build_ui(self) -> None:
+        self._build_workbench_chrome()
+
         root = QWidget()
         root_layout = QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -149,14 +153,80 @@ class MainWindow(
         self.setCentralWidget(root)
 
         self.sidebar_stack = QStackedWidget()
-        self.sidebar_stack.setFixedWidth(240)
+        self.sidebar_stack.setMinimumWidth(220)
         self.main_sidebar = self._build_sidebar()
         self.settings_sidebar = self._build_settings_sidebar()
+        self.main_sidebar.setMinimumWidth(220)
+        self.main_sidebar.setMaximumWidth(420)
         self.sidebar_stack.addWidget(self.main_sidebar)
         self.sidebar_stack.addWidget(self.settings_sidebar)
 
-        root_layout.addWidget(self.sidebar_stack)
-        root_layout.addWidget(self._build_main_area(), stretch=1)
+        self.workbench_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.workbench_splitter.setObjectName("WorkbenchSplitter")
+        self.workbench_splitter.setChildrenCollapsible(False)
+        self.task_panel = build_task_panel(self)
+        self.workbench_splitter.addWidget(self.sidebar_stack)
+        self.workbench_splitter.addWidget(self._build_main_area())
+        self.workbench_splitter.addWidget(self.task_panel)
+        self.workbench_splitter.setStretchFactor(0, 0)
+        self.workbench_splitter.setStretchFactor(1, 1)
+        self.workbench_splitter.setStretchFactor(2, 0)
+        self.workbench_splitter.setSizes([240, 760, 240])
+
+        root_layout.addWidget(self.workbench_splitter)
+
+    def _build_workbench_chrome(self) -> None:
+        toolbar_controls = build_quick_toolbar(
+            self,
+            make_action_icon,
+            record=self.new_recording,
+            import_audio=self.import_audio_recording,
+            remote_import=self.import_remote_url,
+            export_result=self._export_result_with_format,
+            settings=self.show_settings,
+        )
+        self.quick_toolbar = toolbar_controls.toolbar
+        self.record_toolbar_button = toolbar_controls.record_button
+        self.import_audio_toolbar_button = toolbar_controls.import_audio_button
+        self.remote_import_toolbar_button = toolbar_controls.remote_import_button
+        self.export_toolbar_button = toolbar_controls.export_button
+        self.settings_toolbar_button = toolbar_controls.settings_button
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.quick_toolbar)
+
+        view_actions = install_workbench_menus(
+            self,
+            record=self.new_recording,
+            import_audio=self.import_audio_recording,
+            remote_import=self.import_remote_url,
+            export_result=self._export_result_with_format,
+            settings=self.show_settings,
+            check_update=self._show_update_check,
+            toggle_quick_toolbar=self._set_quick_toolbar_visible,
+            toggle_history=self._set_history_panel_visible,
+            toggle_playback=self._set_playback_panel_visible,
+            toggle_tasks=self._set_task_panel_visible,
+        )
+        self.toggle_quick_toolbar_action = view_actions["quick_toolbar"]
+        self.toggle_history_panel_action = view_actions["history"]
+        self.toggle_playback_panel_action = view_actions["playback"]
+        self.toggle_task_panel_action = view_actions["tasks"]
+
+    def _set_quick_toolbar_visible(self, visible: bool) -> None:
+        self.quick_toolbar.setVisible(visible)
+
+    def _set_history_panel_visible(self, visible: bool) -> None:
+        self.sidebar_stack.setVisible(visible)
+
+    def _set_playback_panel_visible(self, visible: bool) -> None:
+        if hasattr(self, "playback_widget"):
+            self.playback_widget.setVisible(visible)
+
+    def _set_task_panel_visible(self, visible: bool) -> None:
+        self.task_panel.setVisible(visible)
+
+    def _show_update_check(self) -> None:
+        self.show_settings()
+        self.settings_panel._on_check_update_clicked()
 
     def _build_sidebar(self) -> QWidget:
         sidebar, controls = build_history_sidebar(
@@ -287,6 +357,7 @@ class MainWindow(
         self.summary_copy_button = controls.summary_copy_button
         self.manual_summary_button = controls.manual_summary_button
         self.export_button = controls.export_button
+        self.playback_widget = controls.playback_widget
         self.playback_back_button = controls.playback_back_button
         self.playback_play_button = controls.playback_play_button
         self.playback_forward_button = controls.playback_forward_button
