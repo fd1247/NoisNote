@@ -94,7 +94,7 @@ class RemoteImportHandlers:
             self.recording_hint_label.setText("正在导入链接")
             self._set_processing_ui(True)
             self.load_recordings()
-            self._select_record_by_id(record.record_id)
+            self._select_record_by_key(record.record_key)
             log_event(
                 "remote.import.started",
                 module="remote_import",
@@ -184,7 +184,7 @@ class RemoteImportHandlers:
         self.recording_hint_label.setText("链接导入完成")
         self.load_recordings()
         if record:
-            self._select_record_by_id(record.record_id)
+            self._select_record_by_key(record.record_key)
         if mode == "audio" and record:
             self._handle_audio_record_ready(record, "已导入链接音频", source="remote_import")
             return
@@ -219,8 +219,8 @@ class RemoteImportHandlers:
             record = self.history_service.mark_input_error(record, error)
             self._add_history_notice_if_unselected(record, "出现异常，点击查看详情")
             self.load_recordings()
-            if self.current_record and self.current_record.record_id == record.record_id:
-                self._select_record_by_id(record.record_id)
+            if self.current_record and self.current_record.record_key == record.record_key:
+                self._select_record_by_key(record.record_key)
         self._show_error(_remote_error_text(error))
         self._set_status(error.message)
 

@@ -130,7 +130,7 @@ class TranscriptionHandlers:
             if diagnostics:
                 record = self.history_service.save_asr_metadata(record, diagnostics)
             self.processing_record = record
-            if self.current_record and self.current_record.record_id == record.record_id:
+            if self.current_record and self.current_record.record_key == record.record_key:
                 self.current_record = record
         log_event(
             "asr.transcribe.completed",
@@ -152,7 +152,7 @@ class TranscriptionHandlers:
 
     def _on_transcription_failed(self, error: str, diagnostics: dict | None = None) -> None:
         record = self.processing_record
-        was_selected = bool(record and self.current_record and self.current_record.record_id == record.record_id)
+        was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
         error = self._normalize_transcription_error(error)
         task_id = self.active_task_ids.pop("transcription", "")
         if error == "未识别到有效语音内容":
@@ -198,7 +198,7 @@ class TranscriptionHandlers:
                 record = self.history_service.save_asr_metadata(record, diagnostics)
             self.load_recordings()
             if was_selected:
-                self._select_record_by_id(record.record_id)
+                self._select_record_by_key(record.record_key)
         self._set_status("转录失败")
 
     def _normalize_transcription_error(self, error: str) -> str:
@@ -236,7 +236,7 @@ class TranscriptionHandlers:
                 self._show_error(f"清理旧结果失败：{exc}")
                 return
             self.load_recordings()
-            self._select_record_by_id(self.current_record.record_id)
+            self._select_record_by_key(self.current_record.record_key)
         self.retry_transcription_button.hide()
         self.start_transcription(self.current_record.audio_path, self.current_record, source="manual")
 

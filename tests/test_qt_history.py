@@ -121,6 +121,97 @@ def test_single_directory_history_service_still_scans_old_data(tmp_path: Path) -
     assert records[0].notebook_id == "default"
 
 
+def test_active_non_default_create_record_preserves_notebook(tmp_path: Path) -> None:
+    default_dir = tmp_path / "data"
+    work_dir = tmp_path / "work"
+    notebooks = [
+        {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+    ]
+    service = HistoryService.from_notebooks(notebooks, active_notebook_id="work")
+
+    created = service.create_record()
+    scanned = service.scan()
+
+    assert created.notebook_id == "work"
+    assert created.notebook_name == "工作"
+    assert created.notebook_path == work_dir
+    assert created.record_dir.parent == work_dir
+    assert len(scanned) == 1
+    assert scanned[0].record_id == created.record_id
+    assert scanned[0].notebook_id == "work"
+
+
+def test_delete_non_active_notebook_record_uses_record_notebook_root(tmp_path: Path) -> None:
+    default_dir = tmp_path / "data"
+    work_dir = tmp_path / "work"
+    write_wav(work_dir / "work-record" / "audio.wav")
+    notebooks = [
+        {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+    ]
+    service = HistoryService.from_notebooks(notebooks)
+    record = service.scan()[0]
+
+    result = service.delete_record(record)
+
+    assert result.success
+    assert not record.record_dir.exists()
+    assert result.deleted_paths == (work_dir / "work-record",)
+
+
+def test_rename_non_active_notebook_record_uses_record_notebook_root(tmp_path: Path) -> None:
+    default_dir = tmp_path / "data"
+    work_dir = tmp_path / "work"
+    write_wav(work_dir / "work-record" / "audio.wav")
+    notebooks = [
+        {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+    ]
+    service = HistoryService.from_notebooks(notebooks)
+    record = service.scan()[0]
+
+    renamed = service.rename_record(record, "renamed")
+
+    assert renamed.notebook_id == "work"
+    assert renamed.record_dir == work_dir / "renamed"
+    assert renamed.audio_path.exists()
+    assert not (work_dir / "work-record").exists()
+
+
+def test_scan_ignores_non_directory_notebook_root(tmp_path: Path) -> None:
+    bad_root = tmp_path / "bad-root"
+    good_root = tmp_path / "good"
+    bad_root.write_text("not a directory", encoding="utf-8")
+    write_wav(good_root / "good-record" / "audio.wav")
+    notebooks = [
+        {"id": "bad", "name": "坏路径", "path": str(bad_root), "is_default": True},
+        {"id": "good", "name": "可用", "path": str(good_root), "is_default": False},
+    ]
+
+    records = HistoryService.from_notebooks(notebooks).scan()
+
+    assert len(records) == 1
+    assert records[0].record_id == "good-record"
+    assert records[0].notebook_id == "good"
+
+
+def test_duplicate_record_ids_across_notebooks_have_distinct_record_keys(tmp_path: Path) -> None:
+    default_dir = tmp_path / "data"
+    work_dir = tmp_path / "work"
+    write_wav(default_dir / "meeting" / "audio.wav")
+    write_wav(work_dir / "meeting" / "audio.wav")
+    notebooks = [
+        {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+    ]
+
+    records = HistoryService.from_notebooks(notebooks).scan()
+
+    assert {record.record_id for record in records} == {"meeting"}
+    assert {record.record_key for record in records} == {"default:meeting", "work:meeting"}
+
+
 def test_scan_folder_record(tmp_path: Path) -> None:
     record_dir = tmp_path / "20260618_120000"
     write_wav(record_dir / "audio.wav")

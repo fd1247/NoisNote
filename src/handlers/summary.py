@@ -86,7 +86,7 @@ class SummaryHandlers:
             )
             self.processing_record = record
             current_record = self.current_record
-            if current_record and current_record.record_id == record.record_id:
+            if current_record and current_record.record_key == record.record_key:
                 self.current_record = record
         log_event(
             "summary.completed",
@@ -122,7 +122,7 @@ class SummaryHandlers:
         )
         self.is_processing = False
         self.processing_source = None
-        was_selected = bool(record and self.current_record and self.current_record.record_id == record.record_id)
+        was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
         self._add_history_notice_if_unselected(record, "出现异常，点击查看详情")
         self.processing_record = None
         if was_selected:
@@ -142,7 +142,7 @@ class SummaryHandlers:
             )
             self.load_recordings()
             if was_selected:
-                self._select_record_by_id(record.record_id)
+                self._select_record_by_key(record.record_key)
         self._show_error(f"总结失败：{error}")
 
     def manual_summarize(self) -> None:

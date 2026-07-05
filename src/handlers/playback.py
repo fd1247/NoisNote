@@ -35,11 +35,11 @@ class PlaybackHandlers:
 
     def _set_playback_source(self, record: HistoryRecord) -> None:
         source = self._playback_source_for_record(record)
-        if self.playback_record_id == record.record_id:
+        if self.playback_record_id == record.record_key:
             self._sync_playback_buttons(bool(source))
             return
         self.stop_playback()
-        self.playback_record_id = record.record_id
+        self.playback_record_id = record.record_key
         self.playback_duration_ms = int(max(0.0, record.duration_seconds or 0.0) * 1000)
         self.playback_slider.setRange(0, max(0, self.playback_duration_ms))
         self.playback_duration_label.setText(_format_playback_ms(self.playback_duration_ms))
@@ -82,10 +82,10 @@ class PlaybackHandlers:
         if not source:
             self._set_status("当前记录没有可播放的音频")
             return
-        if self.playback_loaded_record_id != self.current_record.record_id:
+        if self.playback_loaded_record_id != self.current_record.record_key:
             self.media_player.setSource(QUrl.fromLocalFile(str(source)))
             self.media_player.setPlaybackRate(self.playback_rate)
-            self.playback_loaded_record_id = self.current_record.record_id
+            self.playback_loaded_record_id = self.current_record.record_key
         self.media_player.play()
 
     def seek_playback_backward(self) -> None:

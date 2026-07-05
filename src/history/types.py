@@ -79,6 +79,10 @@ class HistoryRecord:
     external_subtitle_file: str = "external_subtitle.srt"
 
     @property
+    def record_key(self) -> str:
+        return f"{self.notebook_id}:{self.record_id}"
+
+    @property
     def display_name(self) -> str:
         if self._parse_record_id_as_timestamp() is None:
             return self.record_id

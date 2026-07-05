@@ -17,7 +17,7 @@ class ProcessingHandlers:
         return bool(
             self.current_record
             and self.processing_record
-            and self.current_record.record_id == self.processing_record.record_id
+            and self.current_record.record_key == self.processing_record.record_key
         )
 
     def _sync_detail_processing_view(self) -> None:
@@ -48,16 +48,16 @@ class ProcessingHandlers:
         return f'<span style="color:#374151;">{escape(text)}</span>'
 
     def _history_subtitle_for_record(self, record: HistoryRecord) -> str:
-        if self.is_processing and self.processing_record and record.record_id == self.processing_record.record_id:
+        if self.is_processing and self.processing_record and record.record_key == self.processing_record.record_key:
             if self.processing_started_at.get("summary") is not None:
                 return "AI总结中"
             percent = self.latest_transcription_percent if self.latest_transcription_percent is not None else 0
             return f"正在转录: {percent}%"
-        if self.current_record and self.current_record.record_id == record.record_id:
+        if self.current_record and self.current_record.record_key == record.record_key:
             return ""
-        if record.record_id in self.history_record_notices:
-            return self.history_record_notices[record.record_id]
-        if record.status == HistoryStatus.ERROR and record.record_id not in self.dismissed_history_notice_ids:
+        if record.record_key in self.history_record_notices:
+            return self.history_record_notices[record.record_key]
+        if record.status == HistoryStatus.ERROR and record.record_key not in self.dismissed_history_notice_ids:
             return "出现异常，点击查看详情"
         return ""
 
@@ -69,16 +69,16 @@ class ProcessingHandlers:
                 widget.set_subtitle(self._history_subtitle_for_record(widget.record))
 
     def _dismiss_history_notice(self, record: HistoryRecord) -> None:
-        self.history_record_notices.pop(record.record_id, None)
+        self.history_record_notices.pop(record.record_key, None)
         if record.status == HistoryStatus.ERROR:
-            self.dismissed_history_notice_ids.add(record.record_id)
+            self.dismissed_history_notice_ids.add(record.record_key)
 
     def _add_history_notice_if_unselected(self, record: HistoryRecord | None, text: str) -> None:
         if not record:
             return
-        if self.current_record and self.current_record.record_id == record.record_id:
+        if self.current_record and self.current_record.record_key == record.record_key:
             return
-        self.history_record_notices[record.record_id] = text
+        self.history_record_notices[record.record_key] = text
 
     def _save_transcript(self, text: str, record: HistoryRecord | None = None) -> None:
         target = record or self.current_record
@@ -86,9 +86,9 @@ class ProcessingHandlers:
             return
         self.history_service.save_transcript(target, text)
         refreshed = self.history_service.refresh_metadata(target)
-        if self.current_record and self.current_record.record_id == refreshed.record_id:
+        if self.current_record and self.current_record.record_key == refreshed.record_key:
             self.current_record = refreshed
-        if self.processing_record and self.processing_record.record_id == refreshed.record_id:
+        if self.processing_record and self.processing_record.record_key == refreshed.record_key:
             self.processing_record = refreshed
 
     def _save_summary(self, summary: str, record: HistoryRecord | None = None) -> None:
@@ -97,9 +97,9 @@ class ProcessingHandlers:
             return
         self.history_service.save_summary(target, summary)
         refreshed = self.history_service.refresh_metadata(target)
-        if self.current_record and self.current_record.record_id == refreshed.record_id:
+        if self.current_record and self.current_record.record_key == refreshed.record_key:
             self.current_record = refreshed
-        if self.processing_record and self.processing_record.record_id == refreshed.record_id:
+        if self.processing_record and self.processing_record.record_key == refreshed.record_key:
             self.processing_record = refreshed
 
     def _asr_processing_context(self, diagnostics: dict | None = None) -> dict:
@@ -168,7 +168,7 @@ class ProcessingHandlers:
         self.manual_summary_button.setVisible(visible)
 
     def _finish_processing(self, record: HistoryRecord | None, status: str) -> None:
-        was_selected = bool(record and self.current_record and self.current_record.record_id == record.record_id)
+        was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
         self._add_history_notice_if_unselected(record, "处理完成，点击查看详情")
         self.is_processing = False
         self.processing_record = None
@@ -182,7 +182,7 @@ class ProcessingHandlers:
         self._update_recording_entry()
         self.load_recordings()
         if record and was_selected:
-            self._select_record_by_id(record.record_id)
+            self._select_record_by_key(record.record_key)
         self._set_status(status)
 
     def _cleanup_worker(self, worker: Any) -> None:

@@ -77,14 +77,21 @@ class HistoryService(HistoryStorageMixin):
         return sorted(records, key=lambda item: item.created_at, reverse=True)
 
     def _scan_notebook(self, notebook: NotebookConfig) -> list[HistoryRecord]:
-        if not notebook.path.exists():
+        if not notebook.path.exists() or not notebook.path.is_dir():
             return []
         if notebook.notebook_id == self.active_notebook_id:
             self.recordings_dir = notebook.path
         if notebook.is_default or notebook.notebook_id == self.active_notebook_id:
-            self.organize_flat_files(notebook.path)
+            try:
+                self.organize_flat_files(notebook.path)
+            except OSError:
+                return []
         records: list[HistoryRecord] = []
-        for child in notebook.path.iterdir():
+        try:
+            children = list(notebook.path.iterdir())
+        except OSError:
+            return []
+        for child in children:
             if child.is_dir():
                 record = self._build_folder_record(child, notebook)
                 if record:
@@ -110,6 +117,34 @@ class HistoryService(HistoryStorageMixin):
         finally:
             self.recordings_dir = previous_dir
         return migrated
+
+    def _active_notebook(self) -> NotebookConfig:
+        return next(
+            (item for item in self.notebooks if item.notebook_id == self.active_notebook_id),
+            self.notebooks[0],
+        )
+
+    def _notebook_for_record_dir(self, record_dir: Path) -> NotebookConfig:
+        target = record_dir.resolve(strict=False)
+        matches: list[NotebookConfig] = []
+        for notebook in self.notebooks:
+            root = notebook.path.resolve(strict=False)
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            matches.append(notebook)
+        if matches:
+            return max(matches, key=lambda item: len(item.path.resolve(strict=False).parts))
+        active = self._active_notebook()
+        if record_dir.parent == active.path:
+            return active
+        return NotebookConfig("default", "默认笔记本", record_dir.parent, True)
+
+    def _record_root(self, record: HistoryRecord) -> Path:
+        if record.notebook_path:
+            return record.notebook_path
+        return self._notebook_for_record_dir(record.record_dir).path
 
     def create_record(self) -> HistoryRecord:
         """创建一条空记录目录。"""
@@ -528,7 +563,8 @@ class HistoryService(HistoryStorageMixin):
 
     def clear_generated_results(self, record: HistoryRecord) -> HistoryRecord:
         """清理本次流程会覆盖的生成结果，保留音频和元数据。"""
-        if not self._is_safe_record_dir(record.record_dir):
+        root = self._record_root(record)
+        if not self._is_safe_record_dir(record.record_dir, root):
             raise ValueError("记录目录不安全，无法清理生成结果")
 
         generated_paths = (
@@ -569,12 +605,18 @@ class HistoryService(HistoryStorageMixin):
         clean_name = self._sanitize_record_name(new_name)
         if not clean_name:
             raise ValueError("记录名称不能为空")
-        if not self._is_safe_record_dir(record.record_dir):
+        root = self._record_root(record)
+        if not self._is_safe_record_dir(record.record_dir, root):
             raise ValueError("记录目录不安全，无法重命名")
         if clean_name == record.record_dir.name:
             return record
 
-        target_dir = self.recordings_dir / self._unique_record_id(clean_name)
+        previous_dir = self.recordings_dir
+        self.recordings_dir = root
+        try:
+            target_dir = root / self._unique_record_id(clean_name)
+        finally:
+            self.recordings_dir = previous_dir
         if target_dir == record.record_dir:
             return record
         if target_dir.exists():
@@ -593,14 +635,15 @@ class HistoryService(HistoryStorageMixin):
         metadata.setdefault("processing", self._default_processing_metadata())
         self._write_json(metadata_path, metadata)
         self._write_folder_metadata(target_dir)
-        return self._build_folder_record(target_dir)  # type: ignore[return-value]
+        return self._build_folder_record(target_dir, self._notebook_for_record_dir(target_dir))  # type: ignore[return-value]
 
     def delete_record(self, record: HistoryRecord) -> DeleteResult:
         """删除记录及其关联文件，删除前进行路径边界校验。"""
         deleted: list[Path] = []
         skipped: list[Path] = []
 
-        if not self._is_safe_record_dir(record.record_dir):
+        root = self._record_root(record)
+        if not self._is_safe_record_dir(record.record_dir, root):
             return DeleteResult(False, tuple(deleted), (record.record_dir,), "删除被拒绝：记录目录不安全")
         if record.record_dir.exists():
             try:
@@ -628,7 +671,7 @@ class HistoryService(HistoryStorageMixin):
         metadata = self._read_json(metadata_path)
         if not metadata and not (record_dir / self.FOLDER_AUDIO).exists():
             return None
-        notebook = notebook or NotebookConfig("default", "默认笔记本", self.recordings_dir, True)
+        notebook = notebook or self._notebook_for_record_dir(record_dir)
 
         storage_mode = str(metadata.get("storage_mode") or "")
         base_audio_path = record_dir / str(metadata.get("audio_file") or self.FOLDER_AUDIO)

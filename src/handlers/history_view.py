@@ -37,20 +37,20 @@ class HistoryViewHandlers:
         return menu
 
     def load_recordings(self) -> None:
-        selected_id = self.current_record.record_id if self.current_record else ""
+        selected_key = self.current_record.record_key if self.current_record else ""
         self.all_history_items = self.history_service.scan()
         self.current_items = self._filtered_history_items()
         self._render_history_list()
-        if selected_id:
-            still_exists = any(record.record_id == selected_id for record in self.all_history_items)
+        if selected_key:
+            still_exists = any(record.record_key == selected_key for record in self.all_history_items)
             if still_exists:
-                self._sync_selected_record_in_visible_list(selected_id)
+                self._sync_selected_record_in_visible_list(selected_key)
             else:
                 self._clear_missing_current_record()
 
     def _clear_missing_current_record(self) -> None:
         """当前历史记录被外部删除时，清空右侧详情引用。"""
-        if self.current_record and self.current_record.record_id == self.playback_record_id:
+        if self.current_record and self.current_record.record_key == self.playback_record_id:
             self.stop_playback()
             self.playback_record_id = ""
         self.current_record = None
@@ -117,7 +117,7 @@ class HistoryViewHandlers:
         self.current_items = self._filtered_history_items()
         self._render_history_list()
         if self.current_record:
-            self._sync_selected_record_in_visible_list(self.current_record.record_id)
+            self._sync_selected_record_in_visible_list(self.current_record.record_key)
 
     def _set_history_filter(self, value: str, label: str) -> None:
         self.history_status_filter = value
@@ -125,7 +125,7 @@ class HistoryViewHandlers:
         self.current_items = self._filtered_history_items()
         self._render_history_list()
         if self.current_record:
-            self._sync_selected_record_in_visible_list(self.current_record.record_id)
+            self._sync_selected_record_in_visible_list(self.current_record.record_key)
 
     def _clear_history_filters(self) -> None:
         self.history_search_text = ""
@@ -142,9 +142,9 @@ class HistoryViewHandlers:
         self.current_items = list(self.all_history_items)
         self._render_history_list()
 
-    def _sync_selected_record_in_visible_list(self, record_id: str) -> bool:
+    def _sync_selected_record_in_visible_list(self, record_key: str) -> bool:
         for index, record in enumerate(self.current_items):
-            if record.record_id == record_id:
+            if record.record_key == record_key:
                 self.history_list.setCurrentRow(index)
                 self._sync_history_selection(index)
                 return True
@@ -212,30 +212,30 @@ class HistoryViewHandlers:
     def _ensure_transcript_loaded(self) -> None:
         if not self.current_record:
             return
-        record_id = self.current_record.record_id
-        if self.transcript_loaded_record_id == record_id:
+        record_key = self.current_record.record_key
+        if self.transcript_loaded_record_id == record_key:
             return
         self._set_transcript_text(self.history_service.read_transcript(self.current_record))
-        self.transcript_loaded_record_id = record_id
+        self.transcript_loaded_record_id = record_key
 
     def _ensure_summary_loaded(self) -> None:
         if not self.current_record:
             return
-        record_id = self.current_record.record_id
-        if self.summary_loaded_record_id == record_id:
+        record_key = self.current_record.record_key
+        if self.summary_loaded_record_id == record_key:
             return
         self._set_summary_text(self.history_service.read_summary(self.current_record))
-        self.summary_loaded_record_id = record_id
+        self.summary_loaded_record_id = record_key
 
     def _ensure_timeline_loaded(self) -> None:
         if not self.current_record:
             return
-        record_id = self.current_record.record_id
-        if self.timeline_loaded_record_id == record_id:
+        record_key = self.current_record.record_key
+        if self.timeline_loaded_record_id == record_key:
             return
         items = self.history_service.read_timeline(self.current_record) if self.current_record.has_timeline else []
         self._set_timeline_items(items)
-        self.timeline_loaded_record_id = record_id
+        self.timeline_loaded_record_id = record_key
 
     def _update_detail_header(self, record: HistoryRecord) -> None:
         self.detail_title_label.setText(record.display_name)
@@ -253,6 +253,19 @@ class HistoryViewHandlers:
             self._clear_history_filters()
             for index, record in enumerate(self.current_items):
                 if record.record_id == record_id:
+                    self.select_history_index(index)
+                    return True
+        return False
+
+    def _select_record_by_key(self, record_key: str) -> bool:
+        for index, record in enumerate(self.current_items):
+            if record.record_key == record_key:
+                self.select_history_index(index)
+                return True
+        if any(record.record_key == record_key for record in self.all_history_items):
+            self._clear_history_filters()
+            for index, record in enumerate(self.current_items):
+                if record.record_key == record_key:
                     self.select_history_index(index)
                     return True
         return False

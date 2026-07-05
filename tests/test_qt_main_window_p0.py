@@ -373,7 +373,7 @@ def test_processing_notice_clicks_to_record_and_then_hides(monkeypatch, tmp_path
         window.history_service = service
         window.load_recordings()
         record = window.current_items[0]
-        window.history_record_notices[record.record_id] = "处理完成，点击查看详情"
+        window.history_record_notices[record.record_key] = "处理完成，点击查看详情"
         window._render_history_list()
 
         assert history_subtitle_at(window, 0) == "处理完成，点击查看详情"

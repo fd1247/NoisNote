@@ -230,8 +230,8 @@ class HistoryStorageMixin:
         except OSError:
             return False
 
-    def _is_safe_record_dir(self, path: Path) -> bool:
-        root = self.recordings_dir.resolve(strict=False)
+    def _is_safe_record_dir(self, path: Path, root_dir: Path | None = None) -> bool:
+        root = (root_dir or self.recordings_dir).resolve(strict=False)
         target = path.resolve(strict=False)
         return target != root and self._is_relative_to(target, root)
 

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..audio import AudioRecorder
 from ..audio.preprocess import AudioInputError, probe_media
-from .config import ensure_dirs, get_config, get_output_dir, save_config
+from .config import ensure_dirs, get_config, get_notebooks, save_config
 from ..handlers.export import ExportHandlers
 from ..handlers.history_view import HistoryViewHandlers
 from ..handlers.media_import import ImportHandlers
@@ -72,8 +72,10 @@ class MainWindow(
         super().__init__()
         self.config = get_config()
         ensure_dirs(self.config)
-        output_dir = get_output_dir(self.config)
-        self.history_service = HistoryService(str(output_dir))
+        self.history_service = HistoryService.from_notebooks(
+            get_notebooks(self.config),
+            active_notebook_id=str(self.config.get("active_notebook_id") or "default"),
+        )
         self.model_download_manager = ModelDownloadManager(self.config, self)
         self.recorder: AudioRecorder | None = None
         self.current_record: HistoryRecord | None = None
@@ -352,7 +354,7 @@ class MainWindow(
             )
             self.current_record = record
             self.load_recordings()
-            self._select_record_by_id(record.record_id)
+            self._select_record_by_key(record.record_key)
             self.config["demo_audio_imported"] = True
             save_config(self.config)
             log_event(
@@ -388,7 +390,7 @@ class MainWindow(
         if index < 0 or index >= len(self.current_items):
             return
         record = self.current_items[index]
-        was_current = bool(self.current_record and self.current_record.record_id == record.record_id)
+        was_current = bool(self.current_record and self.current_record.record_key == record.record_key)
         new_name, accepted = prompt_text_without_icon(
             self,
             "重命名",
@@ -407,7 +409,7 @@ class MainWindow(
             self.current_record = renamed
         self.load_recordings()
         if was_current:
-            self._select_record_by_id(renamed.record_id)
+            self._select_record_by_key(renamed.record_key)
         self._set_status("记录已重命名")
 
     def open_history_record_folder(self, index: int) -> None:
@@ -429,7 +431,7 @@ class MainWindow(
         if index < 0 or index >= len(self.current_items):
             return
         record = self.current_items[index]
-        clear_current = bool(self.current_record and self.current_record.record_id == record.record_id)
+        clear_current = bool(self.current_record and self.current_record.record_key == record.record_key)
         self._delete_record(record, clear_current=clear_current)
 
     def copy_panel_text(self, kind: str) -> None:
@@ -468,7 +470,7 @@ class MainWindow(
             self._set_status("已取消删除")
             return
 
-        if record.record_id == self.playback_record_id:
+        if record.record_key == self.playback_record_id:
             self.stop_playback()
             self.playback_record_id = ""
             QApplication.processEvents()

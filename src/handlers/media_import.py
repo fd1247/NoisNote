@@ -229,7 +229,7 @@ class ImportHandlers:
         self.recording_hint_label.setText("处理音频")
         self._set_processing_ui(True)
         self.load_recordings()
-        self._select_record_by_id(record.record_id)
+        self._select_record_by_key(record.record_key)
 
         preprocessing = self.config.get("audio", {}).get("preprocessing", {})
         source_path = record.audio_path
@@ -307,7 +307,7 @@ class ImportHandlers:
         self._handle_audio_record_ready(record, status_after_success, source=source)
 
     def _on_audio_preprocess_failed(self, record: HistoryRecord, error: AudioInputError) -> None:
-        was_selected = bool(self.current_record and self.current_record.record_id == record.record_id)
+        was_selected = bool(self.current_record and self.current_record.record_key == record.record_key)
         record = self.history_service.mark_input_error(record, error)
         task_id = self.active_task_ids.pop("preprocess", "")
         error_code = {
@@ -336,14 +336,14 @@ class ImportHandlers:
         self._set_processing_ui(False)
         self.load_recordings()
         if was_selected:
-            self._select_record_by_id(record.record_id)
+            self._select_record_by_key(record.record_key)
         self._set_status(error.message)
 
     def _handle_audio_record_ready(self, record: HistoryRecord, status: str, source: str = "manual") -> None:
         """音频进入历史记录后，按配置决定是否自动转录。"""
         self.current_record = record
         self.load_recordings()
-        self._select_record_by_id(record.record_id)
+        self._select_record_by_key(record.record_key)
 
         if self.config["audio"].get("auto_transcribe", True):
             self.start_transcription(record.audio_path, record, source=source)
