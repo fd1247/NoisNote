@@ -9,6 +9,7 @@ from ..audio import AudioRecorder, CaptureMode, CaptureSettings, list_capture_de
 from ..app.config import get_output_dir
 from ..utils.logging import file_context, hash_text, log_event, record_context
 from ..ui.result import set_button_object_name
+from ..ui.recording_dialog import RecordingDialog, RecordingStatusPopup
 
 
 class RecordingHandlers:
@@ -203,6 +204,26 @@ class RecordingHandlers:
         else:
             self.start_recording()
 
+    def show_recording_dialog(self) -> None:
+        """显示录音源和录音状态弹窗。"""
+        if self.recording_dialog is None:
+            self.recording_dialog = RecordingDialog(
+                {
+                    "capture_mode": self.capture_mode_combo,
+                    "system_device": self.system_device_widget,
+                    "microphone_device": self.microphone_device_widget,
+                    "device_label": self.record_device_label,
+                    "duration": self.duration_label,
+                    "level": self.level_bar,
+                },
+                self,
+            )
+            self.recording_dialog.start_stop_button.clicked.connect(self.toggle_recording)
+        self.recording_dialog.sync_recording_state(self.is_recording)
+        self.recording_dialog.show()
+        self.recording_dialog.raise_()
+        self.recording_dialog.activateWindow()
+
     def start_recording(self) -> None:
         if not self.recorder:
             self._show_error("录音设备不可用")
@@ -217,7 +238,6 @@ class RecordingHandlers:
             return
         task_id = self._new_task_id("record")
         try:
-            self.new_recording()
             self.recorder.configure(self._capture_settings_from_config())
             self.recorder.start_recording()
             self.active_task_ids["recording"] = task_id
@@ -229,6 +249,7 @@ class RecordingHandlers:
             self.silence_started_at = None
             self.recording_hint_label.setText(f"正在捕获{self.recorder.capture_source_label()}")
             self._sync_sidebar_actions()
+            self._sync_recording_dialog_state()
             self._set_status("录音中")
             self.record_timer.start()
             log_event(
@@ -240,6 +261,7 @@ class RecordingHandlers:
             )
         except Exception as exc:
             self._sync_sidebar_actions()
+            self._sync_recording_dialog_state()
             log_event(
                 "audio.record.failed",
                 level="ERROR",
@@ -264,6 +286,7 @@ class RecordingHandlers:
         self.record_button.style().polish(self.record_button)
         self.level_bar.setValue(0)
         self.recording_hint_label.setText("正在保存录音")
+        self._sync_recording_dialog_state()
 
         try:
             output_file = self.recorder.stop_recording()
@@ -272,6 +295,7 @@ class RecordingHandlers:
             self.recording_hint_label.setText("准备捕获系统声音")
             self._set_processing_ui(False)
             self._sync_sidebar_actions()
+            self._sync_recording_dialog_state()
             self.active_task_ids.pop("recording", None)
             log_event(
                 "audio.record.failed",
@@ -292,6 +316,7 @@ class RecordingHandlers:
             self.recording_hint_label.setText("准备捕获系统声音")
             self._set_processing_ui(False)
             self._sync_sidebar_actions()
+            self._sync_recording_dialog_state()
             self._set_status("未录到音频")
             self.active_task_ids.pop("recording", None)
             log_event(
@@ -335,6 +360,7 @@ class RecordingHandlers:
         level = int(self.recorder.get_rms_level())
         self.level_bar.setValue(level)
         self.level_text_label.setText(self._recording_level_text(level, int(duration * 4)))
+        self._sync_recording_dialog_state()
 
     def show_recording_page(self) -> None:
         """显示新录音/正在录音页面。"""
@@ -352,6 +378,7 @@ class RecordingHandlers:
 
     def _update_recording_entry(self) -> None:
         self._sync_sidebar_actions()
+        self._sync_recording_dialog_state()
 
     def _sync_sidebar_actions(self) -> None:
         """统一更新侧栏入口按钮文案和可用状态。"""
@@ -383,6 +410,47 @@ class RecordingHandlers:
             self.remote_import_sidebar_button.setEnabled(True)
             self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
         self.settings_button.setEnabled(not self.is_processing)
+        self._sync_record_toolbar_state()
+
+    def _sync_record_toolbar_state(self) -> None:
+        if not hasattr(self, "record_toolbar_button"):
+            return
+        object_name = "ToolbarRecordingButton" if self.is_recording else "ToolbarIconButton"
+        self.record_toolbar_button.setObjectName(object_name)
+        self.record_toolbar_button.setToolTip("正在录音" if self.is_recording else "录音")
+        self.record_toolbar_button.style().unpolish(self.record_toolbar_button)
+        self.record_toolbar_button.style().polish(self.record_toolbar_button)
+
+    def _sync_recording_dialog_state(self) -> None:
+        self._sync_record_toolbar_state()
+        if self.recording_dialog is not None:
+            self.recording_dialog.sync_recording_state(self.is_recording)
+        if self.recording_status_popup is not None and self.is_recording:
+            self.recording_status_popup.update_status(
+                self._recording_popup_device_text(),
+                f"时长：{self.duration_label.text()}",
+            )
+
+    def _show_recording_status_popup(self, event) -> None:
+        if not self.is_recording:
+            return
+        if self.recording_status_popup is None:
+            self.recording_status_popup = RecordingStatusPopup(self)
+        self.recording_status_popup.update_status(
+            self._recording_popup_device_text(),
+            f"时长：{self.duration_label.text()}",
+        )
+        pos = self.record_toolbar_button.mapToGlobal(self.record_toolbar_button.rect().bottomLeft())
+        self.recording_status_popup.move(pos)
+        self.recording_status_popup.show()
+
+    def _hide_recording_status_popup(self, event) -> None:
+        if self.recording_status_popup is not None:
+            self.recording_status_popup.hide()
+
+    def _recording_popup_device_text(self) -> str:
+        device = self.recorder.get_device_name() if self.recorder else ""
+        return f"设备：{device or '不可用'}"
 
     def _set_button_object_name(self, button, object_name: str) -> None:
         """切换按钮样式对象名，并立即刷新 Qt 样式。"""

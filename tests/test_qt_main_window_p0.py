@@ -230,6 +230,20 @@ def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: 
         app.processEvents()
 
 
+def test_record_toolbar_button_opens_recording_dialog(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.record_toolbar_button.click()
+        app.processEvents()
+
+        assert window.recording_dialog.isVisible()
+        assert window.recording_dialog.start_stop_button.text() == "开始录音"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_view_menu_toggles_workbench_regions(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

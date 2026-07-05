@@ -114,6 +114,8 @@ class MainWindow(
         self.playback_rate = 1.0
         self._updating_playback_slider = False
         self.settings_dialog: SettingsDialog | None = None
+        self.recording_dialog = None
+        self.recording_status_popup = None
 
         self.setWindowTitle("NoisNote")
         self.setWindowIcon(make_app_icon())
@@ -179,7 +181,7 @@ class MainWindow(
         toolbar_controls = build_quick_toolbar(
             self,
             make_action_icon,
-            record=self.new_recording,
+            record=self.show_recording_dialog,
             import_audio=self.import_audio_recording,
             remote_import=self.import_remote_url,
             export_result=self._export_result_with_format,
@@ -191,11 +193,13 @@ class MainWindow(
         self.remote_import_toolbar_button = toolbar_controls.remote_import_button
         self.export_toolbar_button = toolbar_controls.export_button
         self.settings_toolbar_button = toolbar_controls.settings_button
+        self.record_toolbar_button.enterEvent = self._show_recording_status_popup
+        self.record_toolbar_button.leaveEvent = self._hide_recording_status_popup
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.quick_toolbar)
 
         view_actions = install_workbench_menus(
             self,
-            record=self.new_recording,
+            record=self.show_recording_dialog,
             import_audio=self.import_audio_recording,
             remote_import=self.import_remote_url,
             export_result=self._export_result_with_format,
