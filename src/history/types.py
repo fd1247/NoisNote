@@ -8,6 +8,26 @@ from pathlib import Path
 from typing import Any
 
 
+@dataclass(frozen=True)
+class NotebookConfig:
+    """历史笔记本配置。"""
+
+    notebook_id: str
+    name: str
+    path: Path
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
+class MoveRecordResult:
+    """跨笔记本移动记录的结果。"""
+
+    success: bool
+    source_dir: Path
+    target_dir: Path
+    message: str
+
+
 class HistoryStatus(str, Enum):
     """历史记录处理状态。"""
 
@@ -46,6 +66,9 @@ class HistoryRecord:
     audio_size_bytes: int
     total_size_bytes: int
     status: HistoryStatus
+    notebook_id: str = "default"
+    notebook_name: str = "默认笔记本"
+    notebook_path: Path | None = None
     error_message: str = ""
     source_kind: str = ""
     original_file_path: Path | None = None

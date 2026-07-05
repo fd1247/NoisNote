@@ -88,6 +88,39 @@ def test_notebook_normalization_dedupes_equivalent_paths(tmp_path: Path) -> None
     assert config["notebooks"] == notebooks
 
 
+def test_scan_multiple_notebooks_preserves_default_layout(tmp_path: Path) -> None:
+    default_dir = tmp_path / "data"
+    work_dir = tmp_path / "work"
+    write_wav(default_dir / "default-record" / "audio.wav")
+    write_wav(work_dir / "work-record" / "audio.wav")
+
+    notebooks = [
+        {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+    ]
+
+    records = HistoryService.from_notebooks(notebooks).scan()
+
+    assert {record.record_id for record in records} == {"default-record", "work-record"}
+    by_id = {record.record_id: record for record in records}
+    assert by_id["default-record"].notebook_id == "default"
+    assert by_id["default-record"].notebook_name == "默认笔记本"
+    assert by_id["default-record"].notebook_path == default_dir
+    assert by_id["work-record"].notebook_id == "work"
+    assert by_id["work-record"].notebook_name == "工作"
+    assert by_id["work-record"].notebook_path == work_dir
+
+
+def test_single_directory_history_service_still_scans_old_data(tmp_path: Path) -> None:
+    write_wav(tmp_path / "old-record" / "audio.wav")
+
+    records = HistoryService(tmp_path).scan()
+
+    assert len(records) == 1
+    assert records[0].record_id == "old-record"
+    assert records[0].notebook_id == "default"
+
+
 def test_scan_folder_record(tmp_path: Path) -> None:
     record_dir = tmp_path / "20260618_120000"
     write_wav(record_dir / "audio.wav")

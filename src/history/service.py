@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..asr.timestamps import timeline_from_dicts, timeline_to_dicts, timeline_to_srt
-from .types import DeleteResult, HistoryRecord, HistoryStatus
+from .types import DeleteResult, HistoryRecord, HistoryStatus, NotebookConfig
 from .storage import HistoryStorageMixin
 
 
@@ -26,36 +26,89 @@ class HistoryService(HistoryStorageMixin):
     FOLDER_EXTERNAL_SUBTITLE = "external_subtitle.srt"
     PROCESSING_STEPS = ("transcription", "summary")
 
-    def __init__(self, recordings_dir: str | Path):
+    def __init__(
+        self,
+        recordings_dir: str | Path,
+        notebooks: list[NotebookConfig] | None = None,
+        active_notebook_id: str = "default",
+    ):
         self.recordings_dir = Path(recordings_dir)
+        self.notebooks = notebooks or [
+            NotebookConfig("default", "默认笔记本", self.recordings_dir, True)
+        ]
+        self.active_notebook_id = active_notebook_id
+
+    @classmethod
+    def from_notebooks(
+        cls,
+        notebooks_config: list[dict],
+        active_notebook_id: str = "default",
+    ) -> "HistoryService":
+        notebooks: list[NotebookConfig] = []
+        for item in notebooks_config:
+            if not isinstance(item, dict):
+                continue
+            notebook_id = str(item.get("id") or "").strip()
+            path_text = str(item.get("path") or "").strip()
+            if not notebook_id or not path_text:
+                continue
+            path = Path(path_text).expanduser()
+            notebooks.append(
+                NotebookConfig(
+                    notebook_id=notebook_id,
+                    name=str(item.get("name") or path.name or "笔记本"),
+                    path=path,
+                    is_default=bool(item.get("is_default", False)),
+                )
+            )
+        if not notebooks:
+            notebooks = [NotebookConfig("default", "默认笔记本", Path("."), True)]
+        active = next(
+            (item for item in notebooks if item.notebook_id == active_notebook_id),
+            notebooks[0],
+        )
+        return cls(active.path, notebooks, active.notebook_id)
 
     def scan(self) -> list[HistoryRecord]:
-        """整理散落录音文件后，只扫描记录文件夹。"""
-        if not self.recordings_dir.exists():
-            return []
-
-        self.organize_flat_files()
+        """扫描所有笔记本下的记录目录。"""
         records: list[HistoryRecord] = []
-        for child in self.recordings_dir.iterdir():
+        for notebook in self.notebooks:
+            records.extend(self._scan_notebook(notebook))
+        return sorted(records, key=lambda item: item.created_at, reverse=True)
+
+    def _scan_notebook(self, notebook: NotebookConfig) -> list[HistoryRecord]:
+        if not notebook.path.exists():
+            return []
+        if notebook.notebook_id == self.active_notebook_id:
+            self.recordings_dir = notebook.path
+        if notebook.is_default or notebook.notebook_id == self.active_notebook_id:
+            self.organize_flat_files(notebook.path)
+        records: list[HistoryRecord] = []
+        for child in notebook.path.iterdir():
             if child.is_dir():
-                record = self._build_folder_record(child)
+                record = self._build_folder_record(child, notebook)
                 if record:
                     self._ensure_metadata_file(record)
                     records.append(record)
+        return records
 
-        return sorted(records, key=lambda item: item.created_at, reverse=True)
-
-    def organize_flat_files(self) -> int:
+    def organize_flat_files(self, recordings_dir: Path | None = None) -> int:
         """把录音根目录下散落的旧文件整理成记录文件夹。"""
-        if not self.recordings_dir.exists():
+        root = recordings_dir or self.recordings_dir
+        if not root.exists():
             return 0
 
         migrated = 0
-        for audio_path in list(self.recordings_dir.glob("*.wav")):
-            if not audio_path.is_file():
-                continue
-            if self._organize_flat_audio(audio_path):
-                migrated += 1
+        previous_dir = self.recordings_dir
+        self.recordings_dir = root
+        try:
+            for audio_path in list(root.glob("*.wav")):
+                if not audio_path.is_file():
+                    continue
+                if self._organize_flat_audio(audio_path):
+                    migrated += 1
+        finally:
+            self.recordings_dir = previous_dir
         return migrated
 
     def create_record(self) -> HistoryRecord:
@@ -566,11 +619,16 @@ class HistoryService(HistoryStorageMixin):
             return DeleteResult(False, tuple(deleted), tuple(skipped), "记录不存在或已被删除")
         return DeleteResult(True, tuple(deleted), tuple(skipped), "记录已删除")
 
-    def _build_folder_record(self, record_dir: Path) -> HistoryRecord | None:
+    def _build_folder_record(
+        self,
+        record_dir: Path,
+        notebook: NotebookConfig | None = None,
+    ) -> HistoryRecord | None:
         metadata_path = record_dir / self.FOLDER_METADATA
         metadata = self._read_json(metadata_path)
         if not metadata and not (record_dir / self.FOLDER_AUDIO).exists():
             return None
+        notebook = notebook or NotebookConfig("default", "默认笔记本", self.recordings_dir, True)
 
         storage_mode = str(metadata.get("storage_mode") or "")
         base_audio_path = record_dir / str(metadata.get("audio_file") or self.FOLDER_AUDIO)
@@ -615,6 +673,9 @@ class HistoryService(HistoryStorageMixin):
                 markdown_path,
                 str(metadata.get("status") or ""),
             ),
+            notebook_id=notebook.notebook_id,
+            notebook_name=notebook.name,
+            notebook_path=notebook.path,
             error_message=str(metadata.get("error_message") or ""),
             source_kind=str(metadata.get("source_kind") or metadata.get("source_type") or ""),
             original_file_path=source_audio_path,
