@@ -715,6 +715,64 @@ QProgressBar::chunk {
     background: #22c55e;
     border-radius: 4px;
 }
+QToolBar#QuickToolbar {
+    spacing: 6px;
+    padding: 6px 10px;
+    border: 0;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f8fafc;
+}
+QToolButton#ToolbarIconButton, QToolButton#ToolbarRecordingButton {
+    min-width: 34px;
+    min-height: 34px;
+    max-width: 34px;
+    max-height: 34px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+}
+QToolButton#ToolbarIconButton:hover {
+    background: #eef2f7;
+    border-color: #d6dde8;
+}
+QToolButton#ToolbarRecordingButton {
+    background: #fee2e2;
+    border-color: #fecaca;
+}
+QSplitter#WorkbenchSplitter::handle {
+    background: #e5e7eb;
+}
+QFrame#TaskPanel {
+    background: #f8fafc;
+    border-left: 1px solid #e5e7eb;
+}
+QTreeWidget#HistoryTree {
+    border: 0;
+    background: transparent;
+    outline: 0;
+}
+QTreeWidget#HistoryTree::item {
+    min-height: 34px;
+    padding: 4px 6px;
+}
+QTreeWidget#HistoryTree::item:hover {
+    background: #eef2f7;
+    border-radius: 6px;
+}
+QTreeWidget#HistoryTree::item:selected {
+    background: #dbeafe;
+    color: #111827;
+    border-radius: 6px;
+}
+QFrame#RecordingStatusPopup {
+    background: #111827;
+    color: #ffffff;
+    border-radius: 6px;
+}
+QLabel#RecordingWave {
+    color: #2563eb;
+    font-size: 24px;
+}
 QSlider#PlayerSlider::groove:horizontal {
     height: 5px;
     background: #e5e7eb;
