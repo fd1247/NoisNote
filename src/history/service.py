@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..asr.timestamps import timeline_from_dicts, timeline_to_dicts, timeline_to_srt
-from .types import DeleteResult, HistoryRecord, HistoryStatus, NotebookConfig
+from .types import DeleteResult, HistoryRecord, HistoryStatus, MoveRecordResult, NotebookConfig
 from .storage import HistoryStorageMixin
 
 
@@ -636,6 +636,41 @@ class HistoryService(HistoryStorageMixin):
         self._write_json(metadata_path, metadata)
         self._write_folder_metadata(target_dir)
         return self._build_folder_record(target_dir, self._notebook_for_record_dir(target_dir))  # type: ignore[return-value]
+
+    def move_record_to_notebook(self, record: HistoryRecord, target_notebook_id: str) -> MoveRecordResult:
+        """把整条记录目录移动到目标笔记本，目标重名时直接失败。"""
+        source_dir = record.record_dir
+        source_root = self._record_root(record)
+        target_notebook = next(
+            (item for item in self.notebooks if item.notebook_id == target_notebook_id),
+            None,
+        )
+        if target_notebook is None:
+            return MoveRecordResult(False, source_dir, source_dir, "目标笔记本不存在")
+        target_root = target_notebook.path
+        target_dir = target_root / source_dir.name
+
+        if target_notebook.notebook_id == record.notebook_id or (
+            target_root.resolve(strict=False) == source_root.resolve(strict=False)
+        ):
+            return MoveRecordResult(True, source_dir, source_dir, "记录已在目标笔记本")
+        if not source_dir.exists():
+            return MoveRecordResult(False, source_dir, target_dir, "记录不存在或已被删除")
+        if not self._is_safe_record_dir(source_dir, source_root):
+            return MoveRecordResult(False, source_dir, target_dir, "移动被拒绝：记录目录不安全")
+        source_resolved = source_dir.resolve(strict=False)
+        target_root_resolved = target_root.resolve(strict=False)
+        if target_root_resolved == source_resolved or self._is_relative_to(target_root_resolved, source_resolved):
+            return MoveRecordResult(False, source_dir, target_dir, "目标笔记本不能位于记录目录内部")
+        if target_dir.exists():
+            return MoveRecordResult(False, source_dir, target_dir, f"目标笔记本中已存在同名记录：{source_dir.name}")
+
+        try:
+            target_root.mkdir(parents=True, exist_ok=True)
+            source_dir.rename(target_dir)
+        except OSError as exc:
+            return MoveRecordResult(False, source_dir, target_dir, f"移动失败：{exc}")
+        return MoveRecordResult(True, source_dir, target_dir, "记录已移动")
 
     def delete_record(self, record: HistoryRecord) -> DeleteResult:
         """删除记录及其关联文件，删除前进行路径边界校验。"""

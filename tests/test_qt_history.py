@@ -212,6 +212,75 @@ def test_duplicate_record_ids_across_notebooks_have_distinct_record_keys(tmp_pat
     assert {record.record_key for record in records} == {"default:meeting", "work:meeting"}
 
 
+def test_move_record_to_notebook_rejects_name_conflict(tmp_path: Path) -> None:
+    source_root = tmp_path / "default"
+    target_root = tmp_path / "work"
+    write_wav(source_root / "meeting" / "audio.wav")
+    write_wav(target_root / "meeting" / "audio.wav")
+    service = HistoryService.from_notebooks(
+        [
+            {"id": "default", "name": "默认笔记本", "path": str(source_root), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(target_root), "is_default": False},
+        ]
+    )
+    record = next(item for item in service.scan() if item.notebook_id == "default")
+
+    result = service.move_record_to_notebook(record, "work")
+
+    assert result.success is False
+    assert "已存在" in result.message
+    assert (source_root / "meeting").exists()
+    assert (target_root / "meeting").exists()
+
+
+def test_move_record_to_notebook_moves_whole_folder(tmp_path: Path) -> None:
+    source_root = tmp_path / "default"
+    target_root = tmp_path / "work"
+    write_wav(source_root / "meeting" / "audio.wav")
+    (source_root / "meeting" / "transcript.txt").write_text("text", encoding="utf-8")
+    service = HistoryService.from_notebooks(
+        [
+            {"id": "default", "name": "默认笔记本", "path": str(source_root), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(target_root), "is_default": False},
+        ]
+    )
+    record = service.scan()[0]
+
+    result = service.move_record_to_notebook(record, "work")
+
+    assert result.success is True
+    assert not (source_root / "meeting").exists()
+    assert (target_root / "meeting" / "audio.wav").exists()
+    assert (target_root / "meeting" / "transcript.txt").read_text(encoding="utf-8") == "text"
+    moved = HistoryService.from_notebooks(
+        [
+            {"id": "default", "name": "默认笔记本", "path": str(source_root), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(target_root), "is_default": False},
+        ]
+    ).scan()[0]
+    assert moved.notebook_id == "work"
+
+
+def test_move_record_to_nested_notebook_rejects_without_side_effects(tmp_path: Path) -> None:
+    source_root = tmp_path / "default"
+    record_dir = source_root / "meeting"
+    target_root = record_dir / "nested-notebook"
+    write_wav(record_dir / "audio.wav")
+    service = HistoryService.from_notebooks(
+        [
+            {"id": "default", "name": "默认笔记本", "path": str(source_root), "is_default": True},
+            {"id": "nested", "name": "嵌套", "path": str(target_root), "is_default": False},
+        ]
+    )
+    record = service.scan()[0]
+
+    result = service.move_record_to_notebook(record, "nested")
+
+    assert result.success is False
+    assert record_dir.exists()
+    assert not target_root.exists()
+
+
 def test_scan_folder_record(tmp_path: Path) -> None:
     record_dir = tmp_path / "20260618_120000"
     write_wav(record_dir / "audio.wav")
