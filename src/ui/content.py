@@ -125,7 +125,6 @@ class ContentTabsControls:
     summary_text: QTextBrowser
     summary_copy_button: QPushButton
     manual_summary_button: QPushButton
-    export_button: QPushButton
     playback_widget: QFrame
     playback_back_button: QPushButton
     playback_play_button: QPushButton
@@ -183,11 +182,6 @@ def build_history_page(
     title_meta.addWidget(detail_title_label)
     title_meta.addLayout(meta_row)
     detail_header_layout.addLayout(title_meta, stretch=1)
-
-    export_button = QPushButton("导出")
-    export_button.setObjectName("SmallButton")
-    export_button.setMenu(_build_export_menu(page, callbacks.export_result))
-    detail_header_layout.addWidget(export_button, alignment=Qt.AlignmentFlag.AlignTop)
 
     panel = QFrame()
     panel.setObjectName("Panel")
@@ -288,7 +282,6 @@ def build_history_page(
         summary_text=cast(QTextBrowser, summary_controls.text_edit),
         summary_copy_button=summary_controls.copy_button,
         manual_summary_button=summary_controls.action_button,
-        export_button=export_button,
         playback_widget=playback_widget,
         playback_back_button=playback_back_button,
         playback_play_button=playback_play_button,
@@ -502,29 +495,3 @@ def _build_playback_bar(
 def _asset_icon(name: str) -> QIcon:
     path = _SVG_DIR / name
     return QIcon(str(path)) if path.exists() else QIcon()
-
-
-def _build_export_menu(parent: QWidget, export_callback: Callable[[str], None]) -> QMenu:
-    """创建导出格式菜单。"""
-    from PySide6.QtWidgets import QMenu
-
-    menu = QMenu(parent)
-    menu.setObjectName("ExportMenu")
-
-    txt_action = QAction("导出为 TXT（原始转录文字）", parent)
-    txt_action.setData("txt")
-    txt_action.triggered.connect(lambda: export_callback("txt"))
-
-    srt_action = QAction("导出为 SRT（字幕文件）", parent)
-    srt_action.setData("srt")
-    srt_action.triggered.connect(lambda: export_callback("srt"))
-
-    md_action = QAction("导出为 Markdown（总结内容）", parent)
-    md_action.setData("markdown")
-    md_action.triggered.connect(lambda: export_callback("markdown"))
-
-    menu.addAction(txt_action)
-    menu.addAction(srt_action)
-    menu.addAction(md_action)
-
-    return menu

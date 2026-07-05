@@ -53,6 +53,7 @@ class HistoryViewHandlers:
             self.stop_playback()
             self.playback_record_id = ""
         self.current_record = None
+        self._set_app_window_title()
         self.history_tree.clearSelection()
         self._sync_history_selection(-1)
         self.detail_title_label.setText("请选择历史记录")
@@ -173,6 +174,7 @@ class HistoryViewHandlers:
         self.timeline_loaded_record_id = ""
         self.content_stack.setCurrentWidget(self.history_page)
         self.page_title_label.setText(recording.record_dir.name)
+        self._set_app_window_title(recording)
         self._update_detail_header(recording)
         self.timeline_tab_button.setVisible(recording.has_timeline)
         self.playback_cc_button.setVisible(True)

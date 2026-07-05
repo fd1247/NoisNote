@@ -229,27 +229,18 @@ class MainWindow(
         self.task_panel.setVisible(visible)
 
     def _show_update_check(self) -> None:
-        self.show_settings()
         self.settings_panel._on_check_update_clicked()
 
     def _build_sidebar(self) -> QWidget:
         sidebar, controls = build_history_sidebar(
             self,
             make_action_icon,
-            self.new_recording,
-            self.import_audio_recording,
-            self.import_remote_url,
             self._select_history_item,
-            self.show_settings,
         )
-        self.new_recording_sidebar_button = controls.new_recording_button
-        self.import_audio_sidebar_button = controls.import_audio_button
-        self.remote_import_sidebar_button = controls.remote_import_button
         self.history_search = controls.history_search
         self.history_filter_button = controls.history_filter_button
         self.history_tree = controls.history_tree
         self.empty_history_label = controls.empty_history_label
-        self.settings_button = controls.settings_button
         self.history_search.textChanged.connect(self._on_history_search_changed)
         self.history_filter_button.setMenu(self._build_history_filter_menu())
         self.history_tree.rename_requested.connect(self._rename_record_by_key)
@@ -364,7 +355,6 @@ class MainWindow(
         self.summary_text = controls.summary_text
         self.summary_copy_button = controls.summary_copy_button
         self.manual_summary_button = controls.manual_summary_button
-        self.export_button = controls.export_button
         self.playback_widget = controls.playback_widget
         self.playback_back_button = controls.playback_back_button
         self.playback_play_button = controls.playback_play_button
@@ -589,6 +579,12 @@ class MainWindow(
 
     def _set_status(self, text: str) -> None:
         self.status_label.setText(text)
+
+    def _set_app_window_title(self, record: HistoryRecord | None = None) -> None:
+        if record is None:
+            self.setWindowTitle("NoisNote")
+            return
+        self.setWindowTitle(f"{record.display_name} - NoisNote")
 
     def _show_error(self, message: str) -> None:
         self._set_status(message)

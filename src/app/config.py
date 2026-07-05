@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -249,6 +250,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     "models": {
+        "root_dir": str(DEFAULT_DATA_ROOT / "models"),
         "downloaded": {},
     },
 }
@@ -336,7 +338,7 @@ def get_notebooks(config: dict | None = None) -> list[dict[str, Any]]:
 
 def get_model_root_dir(config: dict | None = None) -> Path:
     """获取模型根目录（data_root/models）。"""
-    return get_data_root(config) / "models"
+    return (get_data_root(config) / "models").expanduser().resolve()
 
 
 def get_log_dir(config: dict | None = None) -> Path:
@@ -372,9 +374,10 @@ def get_config() -> dict:
             config = _create_default_config()
         else:
             config, changed = _merge_defaults(config, DEFAULT_CONFIG)
+            config, storage_changed = _normalize_storage_paths(config)
             config, normalized = _normalize_model_config(config)
             _notebooks, notebook_changed = normalize_notebooks(config)
-            if changed or normalized or notebook_changed:
+            if changed or storage_changed or normalized or notebook_changed:
                 save_config(config)
     else:
         config = _create_default_config()
@@ -386,6 +389,7 @@ def get_config() -> dict:
 def _create_default_config() -> dict:
     """创建并保存默认配置。"""
     config = copy.deepcopy(DEFAULT_CONFIG)
+    _normalize_storage_paths(config)
     normalize_notebooks(config)
     save_config(config)
     logger.info("已创建默认配置文件: %s", CONFIG_FILE)
@@ -460,6 +464,44 @@ def _merge_defaults(config: dict, defaults: dict) -> tuple[dict, bool]:
             merged[key], sub_changed = _merge_defaults(merged[key], value)
             changed = changed or sub_changed
     return merged, changed
+
+
+def _normalize_storage_paths(config: dict) -> tuple[dict, bool]:
+    """归一化用户数据目录，避免测试/旧配置把应用带到临时目录。"""
+    changed = False
+    data_root = get_data_root(config)
+    if _is_transient_test_path(data_root):
+        config["data_root"] = str(DEFAULT_DATA_ROOT)
+        data_root = DEFAULT_DATA_ROOT
+        changed = True
+
+    models = config.setdefault("models", {})
+    expected_model_root = str((data_root / "models").expanduser().resolve())
+    if models.get("root_dir") != expected_model_root:
+        models["root_dir"] = expected_model_root
+        changed = True
+    if "catalog" in models:
+        models.pop("catalog", None)
+        changed = True
+
+    audio = config.setdefault("audio", {})
+    output_dir = audio.get("output_dir")
+    if output_dir and _is_transient_test_path(Path(str(output_dir))):
+        audio["output_dir"] = str((data_root / "data").expanduser())
+        changed = True
+    return config, changed
+
+
+def _is_transient_test_path(path: Path) -> bool:
+    """判断路径是否指向 pytest 临时目录，防止测试配置污染真实用户配置。"""
+    try:
+        resolved = path.expanduser().resolve(strict=False)
+        temp_root = Path(tempfile.gettempdir()).resolve(strict=False)
+    except OSError:
+        return False
+    if resolved != temp_root and temp_root not in resolved.parents:
+        return False
+    return any(part.startswith("pytest-") or part.startswith("pytest-of-") for part in resolved.parts)
 
 
 def _normalize_model_config(config: dict) -> tuple[dict, bool]:

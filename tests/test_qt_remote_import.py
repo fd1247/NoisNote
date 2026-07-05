@@ -18,6 +18,7 @@ from src.remote_import.types import RemoteMediaInfo
 def make_config(root: Path) -> dict:
     return {
         "demo_audio_imported": True,
+        "data_root": str(root),
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
             "tool_dir": str(root / "vendor" / "qwen3-asr-gguf"),
@@ -44,6 +45,7 @@ def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     config = make_config(tmp_path)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
     app = QApplication.instance() or QApplication([])
@@ -62,10 +64,11 @@ def wait_for_workers(window: MainWindow, timeout_ms: int = 1000) -> None:
     app.processEvents()
 
 
-def test_remote_import_button_is_in_sidebar(monkeypatch, tmp_path: Path) -> None:
+def test_remote_import_button_is_in_quick_toolbar(monkeypatch, tmp_path: Path) -> None:
     window = make_window(monkeypatch, tmp_path)
     try:
-        assert window.remote_import_sidebar_button.text() == "从链接导入"
+        assert not hasattr(window, "remote_import_sidebar_button")
+        assert window.remote_import_toolbar_button.toolTip() == "从链接导入"
     finally:
         window.close()
 

@@ -98,6 +98,7 @@ def make_window(monkeypatch, tmp_path: Path, config: dict | None = None) -> Main
     config = config or make_config(tmp_path)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", FakeRecorder)
     app = QApplication.instance() or QApplication([])

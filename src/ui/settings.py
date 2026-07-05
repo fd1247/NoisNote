@@ -234,19 +234,6 @@ class SettingsPanel(QWidget):
 
         layout.addLayout(form)
 
-        # 检查更新
-        version_layout = QHBoxLayout()
-        version_layout.setContentsMargins(0, 16, 0, 0)
-        version_layout.setSpacing(12)
-
-        check_update_button = QPushButton("检查更新")
-        check_update_button.setObjectName("SmallButton")
-        check_update_button.clicked.connect(self._on_check_update_clicked)
-        version_layout.addWidget(check_update_button)
-
-        version_layout.addStretch(1)
-        layout.addLayout(version_layout)
-
         layout.addStretch(1)
         return tab
 

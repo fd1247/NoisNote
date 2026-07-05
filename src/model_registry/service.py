@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..app.config import DEFAULT_MODEL_CATALOG
+from ..app.config import DEFAULT_MODEL_CATALOG, get_model_root_dir
 from .types import (
     DiskSpaceCheck,
     DownloadTaskState,
@@ -24,12 +24,7 @@ class ModelService:
     def __init__(self, config: dict[str, Any]):
         self.config = config
         models_config = self.config.setdefault("models", {})
-        self.root_dir = Path(
-            models_config.setdefault(
-                "root_dir",
-                str(Path.home() / "Documents" / "NoisNote" / "models"),
-            )
-        ).expanduser()
+        self.root_dir = get_model_root_dir(self.config)
         models_config["root_dir"] = str(self.root_dir)
         models_config.setdefault("downloaded", {})
 

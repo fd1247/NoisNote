@@ -48,6 +48,7 @@ def make_config(root: Path) -> dict:
     )
     return {
         "demo_audio_imported": True,
+        "data_root": str(root),
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
             "tool_dir": str(root / "vendor" / "qwen3-asr-gguf"),
@@ -87,6 +88,16 @@ def test_catalog_only_returns_gguf_asr_and_target_inside_root(tmp_path: Path) ->
     ]
     assert catalog[0].backend == "qwen3_asr_gguf"
     assert service.get_target_dir(catalog[0]) == (tmp_path / "models" / QWEN3_ASR_GGUF_06B_SLUG).resolve()
+
+
+def test_model_service_uses_data_root_models_when_legacy_root_dir_is_stale(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    config["models"]["root_dir"] = str(tmp_path / "stale-models")
+
+    service = ModelService(config)
+
+    assert service.root_dir == (tmp_path / "models").resolve()
+    assert config["models"]["root_dir"] == str((tmp_path / "models").resolve())
 
 
 def test_get_entry_accepts_alias_for_current_values(tmp_path: Path) -> None:
@@ -608,6 +619,8 @@ def test_main_window_settings_dialog_shows_model_section(monkeypatch, tmp_path: 
     app = QApplication.instance() or QApplication([])
     config = make_config(tmp_path)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda: None)
     window = MainWindow()

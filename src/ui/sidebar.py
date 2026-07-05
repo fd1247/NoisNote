@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit
 
 from .widgets.history_tree import HistoryTreeWidget
@@ -16,14 +16,10 @@ from .widgets.history_tree import HistoryTreeWidget
 class HistorySidebarControls:
     """历史侧边栏控件引用。"""
 
-    new_recording_button: QPushButton
-    import_audio_button: QPushButton
-    remote_import_button: QPushButton
     history_search: QLineEdit
     history_filter_button: QPushButton
     history_tree: HistoryTreeWidget
     empty_history_label: QLabel
-    settings_button: QPushButton
 
 
 @dataclass(frozen=True)
@@ -40,11 +36,7 @@ class SettingsSidebarControls:
 def build_history_sidebar(
     parent: QWidget,
     make_icon: Callable[[str], QIcon],
-    new_recording: Callable[[], None],
-    import_audio_recording: Callable[[], None],
-    import_remote_url: Callable[[], None],
     select_history_item: Callable[[object], None],
-    show_settings: Callable[[], None],
 ) -> tuple[QFrame, HistorySidebarControls]:
     """创建主界面历史侧边栏。"""
     sidebar = QFrame(parent)
@@ -53,24 +45,6 @@ def build_history_sidebar(
     layout = QVBoxLayout(sidebar)
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(8)
-
-    new_recording_button = QPushButton("创建新录音")
-    new_recording_button.setObjectName("SidebarPrimaryButton")
-    new_recording_button.setIcon(make_icon("record_light"))
-    new_recording_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    new_recording_button.clicked.connect(new_recording)
-
-    import_audio_button = QPushButton("导入本地音视频")
-    import_audio_button.setObjectName("SidebarSecondaryButton")
-    import_audio_button.setIcon(make_icon("import"))
-    import_audio_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    import_audio_button.clicked.connect(import_audio_recording)
-
-    remote_import_button = QPushButton("从链接导入")
-    remote_import_button.setObjectName("SidebarSecondaryButton")
-    remote_import_button.setIcon(make_icon("import"))
-    remote_import_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    remote_import_button.clicked.connect(import_remote_url)
 
     title = QLabel("历史记录")
     title.setObjectName("SectionTitle")
@@ -97,31 +71,16 @@ def build_history_sidebar(
     empty_history_label.setObjectName("Muted")
     empty_history_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-    settings_button = QPushButton("设置")
-    settings_button.setObjectName("SidebarSettingsButton")
-    settings_button.setIcon(make_icon("settings"))
-    settings_button.setIconSize(QSize(16, 16))
-    settings_button.clicked.connect(show_settings)
-
-    layout.addWidget(new_recording_button)
-    layout.addWidget(import_audio_button)
-    layout.addWidget(remote_import_button)
-    layout.addSpacing(12)
     layout.addWidget(title)
     layout.addLayout(search_row)
     layout.addWidget(history_tree, stretch=1)
     layout.addWidget(empty_history_label)
-    layout.addWidget(settings_button)
 
     controls = HistorySidebarControls(
-        new_recording_button=new_recording_button,
-        import_audio_button=import_audio_button,
-        remote_import_button=remote_import_button,
         history_search=history_search,
         history_filter_button=history_filter_button,
         history_tree=history_tree,
         empty_history_label=empty_history_label,
-        settings_button=settings_button,
     )
     return sidebar, controls
 

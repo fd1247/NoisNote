@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
 
@@ -34,6 +34,7 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
 def make_config(root: Path) -> dict:
     return {
         "demo_audio_imported": True,
+        "data_root": str(root),
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
             "tool_dir": str(root / "vendor" / "qwen3-asr-gguf"),
@@ -60,6 +61,7 @@ def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     config = make_config(tmp_path)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
     app = QApplication.instance() or QApplication([])
@@ -162,37 +164,36 @@ def test_demo_audio_flag_is_set_when_history_already_exists(monkeypatch, tmp_pat
         app.processEvents()
 
 
-def test_sidebar_actions_do_not_create_processing_task_button(monkeypatch, tmp_path: Path) -> None:
+def test_history_sidebar_keeps_import_actions_out_of_sidebar(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
+        assert not hasattr(window, "new_recording_sidebar_button")
+        assert not hasattr(window, "import_audio_sidebar_button")
+        assert not hasattr(window, "remote_import_sidebar_button")
+        assert not hasattr(window, "settings_button")
+
         window.is_recording = True
         window._sync_sidebar_actions()
 
         assert not hasattr(window, "active_recording_button")
-        assert window.new_recording_sidebar_button.text() == "正在录音中"
-        assert window.new_recording_sidebar_button.isEnabled()
-        assert window.new_recording_sidebar_button.objectName() == "SidebarRecordingTaskButton"
-        assert not window.import_audio_sidebar_button.isEnabled()
+        assert window.record_toolbar_button.objectName() == "ToolbarRecordingButton"
+        assert window.import_audio_toolbar_button.isEnabled()
 
         window.is_recording = False
         window.is_processing = True
         window.processing_source = "import"
         window._sync_sidebar_actions()
 
-        assert window.new_recording_sidebar_button.text() == "创建新录音"
-        assert not window.new_recording_sidebar_button.isEnabled()
-        assert window.import_audio_sidebar_button.text() == "导入本地音视频"
-        assert not window.import_audio_sidebar_button.isEnabled()
+        assert window.record_toolbar_button.objectName() == "ToolbarIconButton"
+        assert window.import_audio_toolbar_button.isEnabled()
 
         window.is_processing = False
         window.processing_source = None
         window._sync_sidebar_actions()
 
-        assert window.new_recording_sidebar_button.text() == "创建新录音"
-        assert window.import_audio_sidebar_button.text() == "导入本地音视频"
-        assert window.new_recording_sidebar_button.isEnabled()
-        assert window.import_audio_sidebar_button.isEnabled()
+        assert window.record_toolbar_button.objectName() == "ToolbarIconButton"
+        assert window.import_audio_toolbar_button.isEnabled()
     finally:
         window.close()
         app.processEvents()
@@ -225,6 +226,37 @@ def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: 
         assert window.remote_import_toolbar_button.toolTip() == "从链接导入"
         assert not window.task_panel.isHidden()
         assert window.workbench_splitter.widget(0) == window.sidebar_stack
+        assert not hasattr(window, "new_recording_sidebar_button")
+        assert not hasattr(window, "settings_button")
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_help_check_update_does_not_open_settings_dialog(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        calls: list[str] = []
+        window.show_settings = lambda: (_ for _ in ()).throw(AssertionError("不应打开设置界面"))
+        window.settings_panel._on_check_update_clicked = lambda: calls.append("checked")
+
+        window._show_update_check()
+
+        assert calls == ["checked"]
+        assert window.settings_dialog is None
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_general_settings_page_has_no_check_update_button(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        button_texts = {button.text() for button in window.settings_panel.general_page.findChildren(QPushButton)}
+
+        assert "检查更新" not in button_texts
     finally:
         window.close()
         app.processEvents()
@@ -473,7 +505,8 @@ def test_detail_header_populates_record_metadata(monkeypatch, tmp_path: Path) ->
         assert window.detail_size_label.text() == format_size(record.total_size_bytes)
         assert window.detail_status_label.text() == record.status_text
         assert window.detail_time_label.text() == record.created_at.strftime("%Y-%m-%d %H:%M")
-        assert not window.export_button.isHidden()
+        assert not hasattr(window, "export_button")
+        assert window.windowTitle() == "meeting - NoisNote"
     finally:
         window.close()
         app.processEvents()

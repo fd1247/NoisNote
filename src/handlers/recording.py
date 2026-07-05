@@ -372,6 +372,7 @@ class RecordingHandlers:
             self.hide_settings()
         self.content_stack.setCurrentWidget(self.recording_page)
         self.page_title_label.setText("")
+        self._set_app_window_title()
         if hasattr(self, "history_tree"):
             self.history_tree.clearSelection()
         self._sync_history_selection(-1)
@@ -381,35 +382,7 @@ class RecordingHandlers:
         self._sync_recording_dialog_state()
 
     def _sync_sidebar_actions(self) -> None:
-        """统一更新侧栏入口按钮文案和可用状态。"""
-        if self.is_recording:
-            self.new_recording_sidebar_button.setText("正在录音中")
-            self.new_recording_sidebar_button.setEnabled(True)
-            self._set_button_object_name(self.new_recording_sidebar_button, "SidebarRecordingTaskButton")
-            self.import_audio_sidebar_button.setText("导入本地音视频")
-            self.import_audio_sidebar_button.setEnabled(False)
-            self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
-            self.remote_import_sidebar_button.setEnabled(False)
-            self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
-        elif self.is_processing:
-            self.new_recording_sidebar_button.setText("创建新录音")
-            self.new_recording_sidebar_button.setEnabled(False)
-            self._set_button_object_name(self.new_recording_sidebar_button, "SidebarPrimaryButton")
-            self.import_audio_sidebar_button.setText("导入本地音视频")
-            self.import_audio_sidebar_button.setEnabled(False)
-            self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
-            self.remote_import_sidebar_button.setEnabled(False)
-            self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
-        else:
-            self.new_recording_sidebar_button.setText("创建新录音")
-            self.new_recording_sidebar_button.setEnabled(True)
-            self._set_button_object_name(self.new_recording_sidebar_button, "SidebarPrimaryButton")
-            self.import_audio_sidebar_button.setText("导入本地音视频")
-            self.import_audio_sidebar_button.setEnabled(True)
-            self._set_button_object_name(self.import_audio_sidebar_button, "SidebarSecondaryButton")
-            self.remote_import_sidebar_button.setEnabled(True)
-            self._set_button_object_name(self.remote_import_sidebar_button, "SidebarSecondaryButton")
-        self.settings_button.setEnabled(not self.is_processing)
+        """统一更新主操作入口状态。"""
         self._sync_record_toolbar_state()
 
     def _sync_record_toolbar_state(self) -> None:
