@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup
-from PySide6.QtWidgets import QListWidgetItem, QMenu
+from PySide6.QtWidgets import QMenu
 
 from ..history.service import HistoryRecord, HistoryStatus
 from ..history.types import format_size
-from ..ui.widgets.history_item import HistoryListItemWidget
 
 
 class HistoryViewHandlers:
@@ -54,7 +53,7 @@ class HistoryViewHandlers:
             self.stop_playback()
             self.playback_record_id = ""
         self.current_record = None
-        self.history_list.setCurrentRow(-1)
+        self.history_tree.clearSelection()
         self._sync_history_selection(-1)
         self.detail_title_label.setText("请选择历史记录")
         self.detail_duration_label.setText("--:--")
@@ -73,22 +72,18 @@ class HistoryViewHandlers:
         self.retry_transcription_button.hide()
 
     def _render_history_list(self) -> None:
-        updates_enabled = self.history_list.updatesEnabled()
-        self.history_list.setUpdatesEnabled(False)
+        updates_enabled = self.history_tree.updatesEnabled()
+        self.history_tree.setUpdatesEnabled(False)
         try:
-            self.history_list.clear()
             self._last_history_selected_index = -1
-            for index, item in enumerate(self.current_items):
-                list_item = QListWidgetItem()
-                list_item.setToolTip(str(item.record_dir if item.layout == "folder" else item.audio_path))
-                list_item.setData(Qt.UserRole, index)
-                self.history_list.addItem(list_item)
-                widget = HistoryListItemWidget(item, index, self, self._history_subtitle_for_record(item))
-                list_item.setSizeHint(widget.sizeHint())
-                self.history_list.setItemWidget(list_item, widget)
+            self.history_tree.render(
+                self.config.get("notebooks", []),
+                self.current_items,
+                self._history_subtitle_for_record,
+            )
             self.empty_history_label.setVisible(not self.current_items)
         finally:
-            self.history_list.setUpdatesEnabled(updates_enabled)
+            self.history_tree.setUpdatesEnabled(updates_enabled)
 
     def _filtered_history_items(self) -> list[HistoryRecord]:
         query = self.history_search_text.strip().lower()
@@ -105,6 +100,7 @@ class HistoryViewHandlers:
         parts = [
             record.display_name,
             record.record_id,
+            record.notebook_name,
             record.status_text,
             record.audio_path.name,
         ]
@@ -143,20 +139,19 @@ class HistoryViewHandlers:
         self._render_history_list()
 
     def _sync_selected_record_in_visible_list(self, record_key: str) -> bool:
-        for index, record in enumerate(self.current_items):
-            if record.record_key == record_key:
-                self.history_list.setCurrentRow(index)
-                self._sync_history_selection(index)
-                return True
-        self.history_list.setCurrentRow(-1)
-        self._sync_history_selection(-1)
-        return False
+        matched = self.history_tree.select_record(record_key)
+        self._sync_history_selection(
+            next((index for index, record in enumerate(self.current_items) if record.record_key == record_key), -1)
+        )
+        return matched
 
-    def _select_history_item(self, item: QListWidgetItem) -> None:
-        index = item.data(Qt.UserRole)
-        if index is None:
+    def _select_history_item(self, item) -> None:
+        if isinstance(item, str):
+            self._select_record_by_key(item)
             return
-        self.select_history_index(index)
+        record_key = item.data(0, Qt.ItemDataRole.UserRole + 1) if item is not None else ""
+        if record_key:
+            self._select_record_by_key(str(record_key))
 
     def select_history_index(self, index: int) -> None:
         """按索引选中并加载历史记录。"""
@@ -164,7 +159,8 @@ class HistoryViewHandlers:
             return
         recording = self.current_items[index]
         self._dismiss_history_notice(recording)
-        self.history_list.setCurrentRow(index)
+        self.history_tree.select_record(recording.record_key)
+        self.history_tree.update_subtitles(self._history_subtitle_for_record)
         self._load_history_record(recording)
         self._sync_history_selection(index)
 
@@ -271,16 +267,42 @@ class HistoryViewHandlers:
         return False
 
     def _sync_history_selection(self, selected_index: int) -> None:
-        rows = {selected_index, getattr(self, "_last_history_selected_index", -1)}
-        for row in rows:
-            self._sync_history_row(row, selected_index)
         self._last_history_selected_index = selected_index
 
     def _sync_history_row(self, row: int, selected_index: int) -> None:
-        if row < 0 or row >= self.history_list.count():
+        return
+
+    def _record_index_by_key(self, record_key: str) -> int:
+        for index, record in enumerate(self.current_items):
+            if record.record_key == record_key:
+                return index
+        return -1
+
+    def _rename_record_by_key(self, record_key: str) -> None:
+        index = self._record_index_by_key(record_key)
+        if index >= 0:
+            self.rename_history_record(index)
+
+    def _open_record_folder_by_key(self, record_key: str) -> None:
+        index = self._record_index_by_key(record_key)
+        if index >= 0:
+            self.open_history_record_folder(index)
+
+    def _delete_record_by_key(self, record_key: str) -> None:
+        index = self._record_index_by_key(record_key)
+        if index >= 0:
+            self.delete_history_record(index)
+
+    def _move_record_to_notebook(self, record_key: str, target_notebook_id: str) -> None:
+        record = next((item for item in self.all_history_items if item.record_key == record_key), None)
+        if not record:
             return
-        item = self.history_list.item(row)
-        widget = self.history_list.itemWidget(item)
-        if isinstance(widget, HistoryListItemWidget):
-            widget.set_selected(row == selected_index)
-            widget.set_subtitle(self._history_subtitle_for_record(widget.record))
+        result = self.history_service.move_record_to_notebook(record, target_notebook_id)
+        if not result.success:
+            self._show_error(result.message)
+            return
+        self.load_recordings()
+        moved = next((item for item in self.all_history_items if item.record_dir == result.target_dir), None)
+        if moved is not None:
+            self._select_record_by_key(moved.record_key)
+        self._set_status(result.message)

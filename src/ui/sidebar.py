@@ -6,8 +6,10 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit
+
+from .widgets.history_tree import HistoryTreeWidget
 
 
 @dataclass(frozen=True)
@@ -19,7 +21,7 @@ class HistorySidebarControls:
     remote_import_button: QPushButton
     history_search: QLineEdit
     history_filter_button: QPushButton
-    history_list: QListWidget
+    history_tree: HistoryTreeWidget
     empty_history_label: QLabel
     settings_button: QPushButton
 
@@ -88,10 +90,8 @@ def build_history_sidebar(
     search_row.addWidget(history_search, stretch=1)
     search_row.addWidget(history_filter_button)
 
-    history_list = QListWidget()
-    history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    history_list.setUniformItemSizes(True)
-    history_list.itemClicked.connect(select_history_item)
+    history_tree = HistoryTreeWidget()
+    history_tree.record_selected.connect(lambda record_key: select_history_item(record_key))
 
     empty_history_label = QLabel("暂无录音")
     empty_history_label.setObjectName("Muted")
@@ -109,7 +109,7 @@ def build_history_sidebar(
     layout.addSpacing(12)
     layout.addWidget(title)
     layout.addLayout(search_row)
-    layout.addWidget(history_list, stretch=1)
+    layout.addWidget(history_tree, stretch=1)
     layout.addWidget(empty_history_label)
     layout.addWidget(settings_button)
 
@@ -119,7 +119,7 @@ def build_history_sidebar(
         remote_import_button=remote_import_button,
         history_search=history_search,
         history_filter_button=history_filter_button,
-        history_list=history_list,
+        history_tree=history_tree,
         empty_history_label=empty_history_label,
         settings_button=settings_button,
     )

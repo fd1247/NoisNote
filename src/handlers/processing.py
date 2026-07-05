@@ -62,11 +62,8 @@ class ProcessingHandlers:
         return ""
 
     def _refresh_history_status_indicators(self) -> None:
-        for row in range(self.history_list.count()):
-            item = self.history_list.item(row)
-            widget = self.history_list.itemWidget(item)
-            if hasattr(widget, "record") and hasattr(widget, "set_subtitle"):
-                widget.set_subtitle(self._history_subtitle_for_record(widget.record))
+        if hasattr(self, "history_tree"):
+            self.history_tree.update_subtitles(self._history_subtitle_for_record)
 
     def _dismiss_history_notice(self, record: HistoryRecord) -> None:
         self.history_record_notices.pop(record.record_key, None)

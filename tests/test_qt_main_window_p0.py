@@ -69,9 +69,26 @@ def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
 
 
 def history_subtitle_at(window: MainWindow, row: int) -> str:
-    item = window.history_list.item(row)
-    widget = window.history_list.itemWidget(item)
-    return widget.subtitle_label.toolTip()
+    item = history_record_item_at(window, row)
+    return str(item.data(0, Qt.ItemDataRole.UserRole + 2) or "")
+
+
+def history_record_item_at(window: MainWindow, row: int):
+    current_row = 0
+    for root_index in range(window.history_tree.topLevelItemCount()):
+        root = window.history_tree.topLevelItem(root_index)
+        for child_index in range(root.childCount()):
+            if current_row == row:
+                return root.child(child_index)
+            current_row += 1
+    raise IndexError(row)
+
+
+def history_tree_record_count(window: MainWindow) -> int:
+    total = 0
+    for root_index in range(window.history_tree.topLevelItemCount()):
+        total += window.history_tree.topLevelItem(root_index).childCount()
+    return total
 
 
 def test_resolve_demo_audio_path_uses_src_assets_in_development(monkeypatch) -> None:
@@ -255,7 +272,57 @@ def test_history_search_filters_visible_records(monkeypatch, tmp_path: Path) -> 
         app.processEvents()
 
         assert [record.record_id for record in window.current_items] == ["alpha-meeting"]
-        assert window.history_list.count() == 1
+        assert history_tree_record_count(window) == 1
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_history_tree_groups_records_by_notebook(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    default_dir = tmp_path / "default"
+    work_dir = tmp_path / "work"
+    try:
+        write_wav(default_dir / "daily" / "audio.wav")
+        write_wav(work_dir / "meeting" / "audio.wav")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
+
+        window.load_recordings()
+
+        assert window.history_tree.topLevelItemCount() == 2
+        assert window.history_tree.topLevelItem(0).text(0) == "默认笔记本"
+        assert window.history_tree.topLevelItem(0).child(0).text(0) == "daily"
+        assert window.history_tree.topLevelItem(1).text(0) == "工作"
+        assert window.history_tree.topLevelItem(1).child(0).text(0) == "meeting"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_history_tree_selects_duplicate_record_id_by_record_key(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    default_dir = tmp_path / "default"
+    work_dir = tmp_path / "work"
+    try:
+        write_wav(default_dir / "meeting" / "audio.wav")
+        write_wav(work_dir / "meeting" / "audio.wav")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
+        window.load_recordings()
+
+        window.history_tree.record_selected.emit("work:meeting")
+
+        assert window.current_record is not None
+        assert window.current_record.record_key == "work:meeting"
     finally:
         window.close()
         app.processEvents()
@@ -281,7 +348,7 @@ def test_settings_dialog_save_refreshes_history_after_external_delete(monkeypatc
         app.processEvents()
 
         assert window.current_record is None
-        assert window.history_list.count() == 0
+        assert history_tree_record_count(window) == 0
         assert not window.settings_dialog or not window.settings_dialog.isVisible()
     finally:
         window.close()
@@ -794,9 +861,7 @@ def test_menu_rename_non_current_record_keeps_current_selection(monkeypatch, tmp
         assert window.current_record.record_id == selected_id
         assert (tmp_path / "records" / "renamed-target").exists()
         assert not (tmp_path / "records" / "target").exists()
-        assert window.history_list.currentRow() == next(
-            index for index, record in enumerate(window.current_items) if record.record_id == selected_id
-        )
+        assert window.history_tree.currentItem().data(0, Qt.ItemDataRole.UserRole + 1) == window.current_record.record_key
     finally:
         window.close()
         app.processEvents()
@@ -822,7 +887,7 @@ def test_menu_delete_non_current_record_keeps_current_selection(monkeypatch, tmp
         assert (tmp_path / "records" / "selected").exists()
         assert not (tmp_path / "records" / "target").exists()
         assert [record.record_id for record in window.current_items] == ["selected"]
-        assert window.history_list.currentRow() == 0
+        assert window.history_tree.currentItem().data(0, Qt.ItemDataRole.UserRole + 1) == window.current_record.record_key
         assert window.content_stack.currentWidget() == window.history_page
     finally:
         window.close()

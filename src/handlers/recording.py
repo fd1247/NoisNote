@@ -346,7 +346,8 @@ class RecordingHandlers:
             self.hide_settings()
         self.content_stack.setCurrentWidget(self.recording_page)
         self.page_title_label.setText("")
-        self.history_list.setCurrentRow(-1)
+        if hasattr(self, "history_tree"):
+            self.history_tree.clearSelection()
         self._sync_history_selection(-1)
 
     def _update_recording_entry(self) -> None:

@@ -243,11 +243,15 @@ class MainWindow(
         self.remote_import_sidebar_button = controls.remote_import_button
         self.history_search = controls.history_search
         self.history_filter_button = controls.history_filter_button
-        self.history_list = controls.history_list
+        self.history_tree = controls.history_tree
         self.empty_history_label = controls.empty_history_label
         self.settings_button = controls.settings_button
         self.history_search.textChanged.connect(self._on_history_search_changed)
         self.history_filter_button.setMenu(self._build_history_filter_menu())
+        self.history_tree.rename_requested.connect(self._rename_record_by_key)
+        self.history_tree.open_folder_requested.connect(self._open_record_folder_by_key)
+        self.history_tree.delete_requested.connect(self._delete_record_by_key)
+        self.history_tree.move_requested.connect(self._move_record_to_notebook)
         return sidebar
 
     def _build_settings_sidebar(self) -> QWidget:
