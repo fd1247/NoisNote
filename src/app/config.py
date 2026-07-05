@@ -205,6 +205,7 @@ DEFAULT_ASR_MODEL_CATALOG_BY_NAME = {
 DEFAULT_CONFIG: dict[str, Any] = {
     "demo_audio_imported": False,
     "data_root": str(DEFAULT_DATA_ROOT),
+    "notebooks": [],
     "hotword_sets": [],  # 热词表列表
     "active_hotword_set_ids": [],  # 激活的热词表ID列表
     "selected_asr": {
@@ -264,6 +265,70 @@ def get_output_dir(config: dict | None = None) -> Path:
     return get_data_root(config) / "data"
 
 
+def default_notebooks(config: dict | None = None) -> list[dict[str, Any]]:
+    """返回默认笔记本配置，默认笔记本兼容现有 data 目录。"""
+    cfg = config or {}
+    return [
+        {
+            "id": "default",
+            "name": "默认笔记本",
+            "path": str(get_output_dir(cfg)),
+            "is_default": True,
+        }
+    ]
+
+
+def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
+    """规范化笔记本配置，保证默认笔记本始终存在且位于首位。"""
+    changed = False
+    raw_items = config.get("notebooks")
+    if not isinstance(raw_items, list):
+        raw_items = []
+        changed = True
+
+    default = default_notebooks(config)[0]
+    normalized: list[dict[str, Any]] = [default]
+    seen_ids = {"default"}
+    seen_paths = {str(Path(default["path"]).expanduser())}
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            changed = True
+            continue
+        notebook_id = str(item.get("id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        path_text = str(item.get("path") or "").strip()
+        if not notebook_id or notebook_id == "default" or not path_text:
+            changed = True
+            continue
+        expanded = str(Path(path_text).expanduser())
+        if notebook_id in seen_ids or expanded in seen_paths:
+            changed = True
+            continue
+        normalized.append(
+            {
+                "id": notebook_id,
+                "name": name or Path(path_text).name or "笔记本",
+                "path": path_text,
+                "is_default": False,
+            }
+        )
+        seen_ids.add(notebook_id)
+        seen_paths.add(expanded)
+
+    if config.get("notebooks") != normalized:
+        config["notebooks"] = normalized
+        changed = True
+    return normalized, changed
+
+
+def get_notebooks(config: dict | None = None) -> list[dict[str, Any]]:
+    """读取规范化后的笔记本配置。"""
+    cfg = config or get_config()
+    notebooks, _changed = normalize_notebooks(cfg)
+    return notebooks
+
+
 def get_model_root_dir(config: dict | None = None) -> Path:
     """获取模型根目录（data_root/models）。"""
     return get_data_root(config) / "models"
@@ -282,6 +347,9 @@ def ensure_dirs(config: dict | None = None) -> None:
     (data_root / "data").mkdir(parents=True, exist_ok=True)
     (data_root / "models").mkdir(parents=True, exist_ok=True)
     (data_root / "logs").mkdir(parents=True, exist_ok=True)
+    notebooks, _changed = normalize_notebooks(config or {})
+    for notebook in notebooks:
+        Path(str(notebook["path"])).expanduser().mkdir(parents=True, exist_ok=True)
 
 
 def get_config() -> dict:
@@ -300,7 +368,8 @@ def get_config() -> dict:
         else:
             config, changed = _merge_defaults(config, DEFAULT_CONFIG)
             config, normalized = _normalize_model_config(config)
-            if changed or normalized:
+            _notebooks, notebook_changed = normalize_notebooks(config)
+            if changed or normalized or notebook_changed:
                 save_config(config)
     else:
         config = _create_default_config()
@@ -312,6 +381,7 @@ def get_config() -> dict:
 def _create_default_config() -> dict:
     """创建并保存默认配置。"""
     config = copy.deepcopy(DEFAULT_CONFIG)
+    normalize_notebooks(config)
     save_config(config)
     logger.info("已创建默认配置文件: %s", CONFIG_FILE)
     return config

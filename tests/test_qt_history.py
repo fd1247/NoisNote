@@ -17,6 +17,48 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
         wav_file.writeframes(b"\0\0" * frames)
 
 
+def test_notebook_defaults_include_existing_data_dir(tmp_path: Path) -> None:
+    from src.app.config import default_notebooks, get_output_dir, normalize_notebooks
+
+    config = {"data_root": str(tmp_path)}
+    notebooks, changed = normalize_notebooks(config)
+
+    assert changed is True
+    assert notebooks == [
+        {
+            "id": "default",
+            "name": "默认笔记本",
+            "path": str(get_output_dir(config)),
+            "is_default": True,
+        }
+    ]
+    assert config["notebooks"] == notebooks
+
+
+def test_notebook_normalization_preserves_user_notebook(tmp_path: Path) -> None:
+    from src.app.config import normalize_notebooks
+
+    custom_dir = tmp_path / "work"
+    config = {
+        "data_root": str(tmp_path / "root"),
+        "notebooks": [
+            {"id": "work", "name": "工作", "path": str(custom_dir), "is_default": False}
+        ],
+    }
+
+    notebooks, changed = normalize_notebooks(config)
+
+    assert changed is True
+    assert notebooks[0]["id"] == "default"
+    assert notebooks[0]["is_default"] is True
+    assert notebooks[1] == {
+        "id": "work",
+        "name": "工作",
+        "path": str(custom_dir),
+        "is_default": False,
+    }
+
+
 def test_scan_folder_record(tmp_path: Path) -> None:
     record_dir = tmp_path / "20260618_120000"
     write_wav(record_dir / "audio.wav")
