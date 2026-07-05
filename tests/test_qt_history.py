@@ -59,6 +59,35 @@ def test_notebook_normalization_preserves_user_notebook(tmp_path: Path) -> None:
     }
 
 
+def test_notebook_normalization_dedupes_equivalent_paths(tmp_path: Path) -> None:
+    from src.app.config import get_output_dir, normalize_notebooks
+
+    config = {
+        "data_root": str(tmp_path / "root"),
+        "notebooks": [
+            {
+                "id": "duplicate",
+                "name": "重复",
+                "path": str(tmp_path / "root" / ".." / "root" / "data"),
+                "is_default": False,
+            }
+        ],
+    }
+
+    notebooks, changed = normalize_notebooks(config)
+
+    assert changed is True
+    assert notebooks == [
+        {
+            "id": "default",
+            "name": "默认笔记本",
+            "path": str(get_output_dir(config)),
+            "is_default": True,
+        }
+    ]
+    assert config["notebooks"] == notebooks
+
+
 def test_scan_folder_record(tmp_path: Path) -> None:
     record_dir = tmp_path / "20260618_120000"
     write_wav(record_dir / "audio.wav")

@@ -265,6 +265,11 @@ def get_output_dir(config: dict | None = None) -> Path:
     return get_data_root(config) / "data"
 
 
+def _notebook_path_key(path_text: str) -> str:
+    """返回用于笔记本去重的规范化路径键。"""
+    return os.path.normcase(os.path.abspath(os.path.expanduser(path_text)))
+
+
 def default_notebooks(config: dict | None = None) -> list[dict[str, Any]]:
     """返回默认笔记本配置，默认笔记本兼容现有 data 目录。"""
     cfg = config or {}
@@ -289,7 +294,7 @@ def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
     default = default_notebooks(config)[0]
     normalized: list[dict[str, Any]] = [default]
     seen_ids = {"default"}
-    seen_paths = {str(Path(default["path"]).expanduser())}
+    seen_paths = {_notebook_path_key(str(default["path"]))}
 
     for item in raw_items:
         if not isinstance(item, dict):
@@ -301,8 +306,8 @@ def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
         if not notebook_id or notebook_id == "default" or not path_text:
             changed = True
             continue
-        expanded = str(Path(path_text).expanduser())
-        if notebook_id in seen_ids or expanded in seen_paths:
+        path_key = _notebook_path_key(path_text)
+        if notebook_id in seen_ids or path_key in seen_paths:
             changed = True
             continue
         normalized.append(
@@ -314,7 +319,7 @@ def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
             }
         )
         seen_ids.add(notebook_id)
-        seen_paths.add(expanded)
+        seen_paths.add(path_key)
 
     if config.get("notebooks") != normalized:
         config["notebooks"] = normalized
