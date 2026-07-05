@@ -46,6 +46,7 @@ from ..ui.sidebar import build_history_sidebar, build_settings_sidebar
 from ..ui.icons import make_action_icon, make_app_icon
 from ..ui.recording import build_recording_page
 from ..ui.result import set_result_tab, set_summary_text, set_transcript_text
+from ..ui.settings_dialog import SettingsDialog
 from ..utils.logging import log_event, record_context
 
 if TYPE_CHECKING:
@@ -110,6 +111,7 @@ class MainWindow(
         self.playback_duration_ms = 0
         self.playback_rate = 1.0
         self._updating_playback_slider = False
+        self.settings_dialog: SettingsDialog | None = None
 
         self.setWindowTitle("NoisNote")
         self.setWindowIcon(make_app_icon())
@@ -221,7 +223,6 @@ class MainWindow(
         self.settings_panel.hotwords_changed.connect(self._persist_settings_config)
         self.content_stack.addWidget(self.recording_page)
         self.content_stack.addWidget(self.history_page)
-        self.content_stack.addWidget(self.settings_panel)
 
         layout.addWidget(self.content_stack, stretch=1)
         return container

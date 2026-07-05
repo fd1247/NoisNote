@@ -604,7 +604,7 @@ def test_download_manager_rejects_download_when_disk_space_is_insufficient(monke
         manager.deleteLater()
 
 
-def test_main_window_settings_mode_reuses_main_surface(monkeypatch, tmp_path: Path) -> None:
+def test_main_window_settings_dialog_shows_model_section(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     config = make_config(tmp_path)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
@@ -614,16 +614,16 @@ def test_main_window_settings_mode_reuses_main_surface(monkeypatch, tmp_path: Pa
     try:
         window.show_settings()
 
-        assert window.sidebar_stack.currentWidget() == window.settings_sidebar
-        assert window.content_stack.currentWidget() == window.settings_panel
-        assert window.settings_general_button.isChecked()
+        assert window.settings_dialog.isVisible()
+        assert window.sidebar_stack.currentWidget() == window.main_sidebar
+        assert window.settings_dialog.nav_buttons["general"].isChecked()
 
         window.show_settings_section("models")
-        assert window.settings_models_button.isChecked()
+        assert window.settings_dialog.nav_buttons["models"].isChecked()
         assert window.settings_panel.settings_stack.currentWidget() == window.settings_panel.model_manager
 
         window.hide_settings()
-        assert window.sidebar_stack.currentWidget() == window.main_sidebar
+        assert not window.settings_dialog.isVisible()
         assert window.content_stack.currentWidget() != window.settings_panel
     finally:
         window.close()

@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
 
@@ -216,43 +216,91 @@ def test_history_search_filters_visible_records(monkeypatch, tmp_path: Path) -> 
         app.processEvents()
 
 
-def test_hide_settings_refreshes_history_after_external_delete(monkeypatch, tmp_path: Path) -> None:
+def test_settings_dialog_save_refreshes_history_after_external_delete(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
-        service = HistoryService(tmp_path / "records")
         record_dir = tmp_path / "records" / "external-delete"
         write_wav(record_dir / "audio.wav")
-        window.history_service = service
+        window.config["data_root"] = str(tmp_path / "root")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(tmp_path / "records"), "is_default": True}
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
         window.load_recordings()
         window.select_history_index(0)
 
         window.show_settings()
         shutil.rmtree(record_dir)
-        window.hide_settings()
+        window._apply_settings_config(window.config)
         app.processEvents()
 
         assert window.current_record is None
         assert window.history_list.count() == 0
-        assert window.content_stack.currentWidget() == window.recording_page
+        assert not window.settings_dialog or not window.settings_dialog.isVisible()
     finally:
         window.close()
         app.processEvents()
 
 
-def test_escape_key_returns_from_settings_to_main_surface(monkeypatch, tmp_path: Path) -> None:
+def test_escape_key_closes_settings_dialog(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
         window.show_settings()
+        app.processEvents()
+        assert window.settings_dialog.isVisible()
 
         event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
-        window.keyPressEvent(event)
+        window.settings_dialog.keyPressEvent(event)
         app.processEvents()
 
         assert event.isAccepted()
-        assert window.sidebar_stack.currentWidget() == window.main_sidebar
-        assert window.content_stack.currentWidget() == window.recording_page
+        assert not window.settings_dialog or not window.settings_dialog.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_settings_notebook_page_adds_selected_directory(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    selected_dir = tmp_path / "work-notebook"
+    try:
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(selected_dir))
+        window.show_settings()
+        window.show_settings_section("notebooks")
+
+        window.settings_panel.add_notebook_button.click()
+        updated = window.settings_panel.updated_config()
+
+        assert any(item["path"] == str(selected_dir) for item in updated["notebooks"])
+        assert window.settings_panel.settings_stack.currentWidget() == window.settings_panel.notebooks_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_persist_settings_config_rebuilds_history_service_from_notebooks(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    work_dir = tmp_path / "work"
+    write_wav(work_dir / "meeting" / "audio.wav")
+    try:
+        updated = dict(window.config)
+        updated["data_root"] = str(tmp_path / "root")
+        updated["active_notebook_id"] = "work"
+        updated["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(tmp_path / "root" / "data"), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+        ]
+
+        window._persist_settings_config(updated)
+        records = window.history_service.scan()
+
+        assert len(records) == 1
+        assert records[0].notebook_id == "work"
+        assert records[0].record_id == "meeting"
     finally:
         window.close()
         app.processEvents()

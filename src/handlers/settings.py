@@ -1,30 +1,33 @@
 """主窗口设置页和模型下载状态回调。"""
 from __future__ import annotations
 
-from ..app.config import get_output_dir, get_model_root_dir, save_config
+from ..app.config import get_notebooks, save_config
 from ..history.service import HistoryService
 from ..model_registry.service import ModelService
+from ..ui.settings_dialog import SettingsDialog
 
 
 class SettingsHandlers:
     """设置覆盖页导航、配置保存和模型下载状态处理。"""
 
     def show_settings(self) -> None:
-        if self.content_stack.currentWidget() != self.settings_panel:
-            self.previous_content_widget = self.content_stack.currentWidget()
         if hasattr(self, "stop_playback"):
             self.stop_playback()
             self.playback_record_id = ""
         self.settings_panel.reset_from_config()
-        self.sidebar_stack.setCurrentWidget(self.settings_sidebar)
-        self.content_stack.setCurrentWidget(self.settings_panel)
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self.settings_panel, self.show_settings_section, self)
         self.show_settings_section("general")
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
         self._set_status("")
 
     def show_settings_section(self, section: str) -> None:
         """切换设置模式中的左侧导航和右侧详情。"""
         titles = {
             "general": "通用",
+            "notebooks": "笔记本",
             "models": "模型",
             "hotwords": "",
             "shortcuts": "快捷键",
@@ -39,13 +42,17 @@ class SettingsHandlers:
             "shortcuts": self.settings_shortcuts_button,
         }
         button_map.get(section, self.settings_general_button).setChecked(True)
+        if self.settings_dialog is not None:
+            self.settings_dialog.set_active_section(section)
         self.page_title_label.setText(titles.get(section, "设置"))
         self._set_status("")
 
     def hide_settings(self) -> None:
-        """退出设置模式并回到之前页面。"""
+        """关闭设置窗口并刷新历史记录。"""
         self.load_recordings()
-        self._leave_settings()
+        if self.settings_dialog is not None:
+            self.settings_dialog.hide()
+        self._set_status("")
 
     def _leave_settings(self) -> None:
         """切回主界面，不重复刷新历史记录。"""
@@ -68,17 +75,19 @@ class SettingsHandlers:
     def _apply_settings_config(self, updated_config: dict) -> None:
         self._persist_settings_config(updated_config)
         self.load_recordings()
-        self._leave_settings()
+        self.hide_settings()
         self._set_status("配置已保存")
 
     def _persist_settings_config(self, updated_config: dict) -> None:
         """保存设置配置并同步依赖，不切换当前页面。"""
         self.config = updated_config
         save_config(self.config)
-        output_dir = get_output_dir(self.config)
-        self.history_service = HistoryService(str(output_dir))
+        self.history_service = HistoryService.from_notebooks(
+            get_notebooks(self.config),
+            active_notebook_id=str(self.config.get("active_notebook_id") or "default"),
+        )
         if self.recorder:
-            self.recorder.set_output_dir(str(output_dir))
+            self.recorder.set_output_dir(str(self.history_service.recordings_dir))
         self.model_download_manager.config = self.config
         self.model_download_manager.service = ModelService(self.config)
         self.settings_panel.config = self.config
