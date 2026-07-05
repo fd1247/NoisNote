@@ -205,7 +205,7 @@ class AudioRecorder:
 
         # 启动 DeviceManager 轮询
         try:
-            self._device_manager.start()
+            self._device_manager.start(self.settings.system_device_id)
         except RuntimeError:
             raise CaptureDeviceUnavailable("未找到可用的系统声音设备")
 
@@ -343,7 +343,7 @@ class AudioRecorder:
         _record_stream 持续读取直到设备变化或停止。
         """
         while self._is_running and not self._stop_requested:
-            mic = self._device_manager.get_loopback_microphone()
+            mic = self._device_manager.get_loopback_microphone(self.settings.system_device_id)
             if mic is None:
                 logger.warning("无可用 loopback 设备，等待中...")
                 for _ in range(50):
@@ -351,7 +351,7 @@ class AudioRecorder:
                         return
                     time.sleep(0.1)
                     try:
-                        mic = self._device_manager.get_loopback_microphone()
+                        mic = self._device_manager.get_loopback_microphone(self.settings.system_device_id)
                     except Exception:
                         mic = None
                     if mic is not None:
@@ -360,7 +360,7 @@ class AudioRecorder:
                     continue
 
             try:
-                recorder = mic.recorder(samplerate=self._recording_rate)
+                recorder = self._open_recorder(mic)
                 with recorder as rec:
                     logger.info("已连接到录音设备: %s", mic.name)
                     self._device_name = mic.name
@@ -380,7 +380,7 @@ class AudioRecorder:
             return
 
         try:
-            recorder = self._mic_device.recorder(samplerate=self._recording_rate)
+            recorder = self._open_recorder(self._mic_device)
             with recorder as rec:
                 logger.info("已连接到麦克风: %s", self._mic_device.name)
                 self._device_name = self._mic_device.name
@@ -389,6 +389,16 @@ class AudioRecorder:
             logger.warning("麦克风录音异常: %s", exc)
 
     # ---- 音频处理 ----
+
+    def _open_recorder(self, mic):
+        """打开 soundcard recorder，优先显式指定声道数。"""
+        try:
+            return mic.recorder(
+                samplerate=int(self._recording_rate),
+                channels=int(self._recording_channels),
+            )
+        except TypeError:
+            return mic.recorder(samplerate=int(self._recording_rate))
 
     def _process_audio_block(self, data: np.ndarray) -> None:
         """处理一个音频块：追加到 buffer、计算 RMS 电平。

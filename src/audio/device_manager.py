@@ -64,23 +64,24 @@ class DeviceManager:
 
     # ---- 生命周期 ----
 
-    def start(self) -> None:
+    def start(self, preferred_loopback_id: str | None = None) -> None:
         """初始化设备发现并启动轮询线程。
 
         Raises:
             RuntimeError: 未找到可用的扬声器设备。
         """
+        loopback = self.get_loopback_microphone(preferred_loopback_id)
         speaker = _get_default_speaker()
-        if speaker is None:
+        if loopback is None and speaker is None:
             raise RuntimeError(
                 "未找到音频输出设备。请确保扬声器或耳机已连接。"
             )
 
         with self._lock:
-            self._current_speaker_id = speaker.id
-            self._current_device_name = speaker.name
+            self._current_speaker_id = str(getattr(loopback or speaker, "id", ""))
+            self._current_device_name = str(getattr(loopback or speaker, "name", "未检测到设备"))
 
-        logger.info("当前默认播放设备: %s (ID: %s)", speaker.name, speaker.id)
+        logger.info("当前录音设备: %s (ID: %s)", self._current_device_name, self._current_speaker_id)
 
         self._running = True
         self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
@@ -94,7 +95,7 @@ class DeviceManager:
 
     # ---- 核心方法 ----
 
-    def get_loopback_microphone(self):
+    def get_loopback_microphone(self, preferred_id: str | None = None):
         """获取当前默认扬声器对应的 Loopback 麦克风。
 
         通过 include_loopback=True 列出所有 loopback 虚拟麦克风，
@@ -110,12 +111,17 @@ class DeviceManager:
             mic.id == speaker.id（WASAPI 端点 ID 精确匹配）
         """
         try:
+            mics = sc.all_microphones(include_loopback=True)
+            if preferred_id:
+                for mic in mics:
+                    if mic.id == preferred_id:
+                        return mic
+
             speaker = _get_default_speaker()
             if speaker is None:
                 return None
 
             # 查找匹配的 loopback 麦克风（ID 精确匹配）
-            mics = sc.all_microphones(include_loopback=True)
             for mic in mics:
                 if mic.id == speaker.id:
                     return mic

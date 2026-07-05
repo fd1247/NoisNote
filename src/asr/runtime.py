@@ -77,6 +77,7 @@ class Qwen3AsrGgufRuntime:
                            "use_dml": self.device.onnx_provider == "DML"})
         self._validate_model_files()
         tool_dir = self._resolve_tool_dir()
+        self._validate_runtime_dependencies(tool_dir)
         log_event("asr.load.engine_import", level="INFO", module="asr",
                   context={"tool_dir": str(tool_dir)})
         start = time.perf_counter()
@@ -262,6 +263,22 @@ class Qwen3AsrGgufRuntime:
                     "missing_files=" + ", ".join(missing_aligner),
                     "MissingAlignerModelFile",
                 )
+
+    def _validate_runtime_dependencies(self, tool_dir: Path) -> None:
+        bin_dir = tool_dir / "qwen_asr_gguf" / "inference" / "bin"
+        required_dlls = ("llama.dll", "ggml.dll", "ggml-base.dll")
+        missing: list[str] = []
+        if not bin_dir.exists() or not bin_dir.is_dir():
+            missing.append(str(bin_dir))
+        else:
+            missing.extend(name for name in required_dlls if not (bin_dir / name).exists())
+        if not missing:
+            return
+        raise Qwen3AsrGgufError(
+            "缺少 Qwen3-ASR GGUF 运行时依赖，请先运行 scripts/download_deps.py 或重新安装应用。",
+            "missing_runtime_dependencies=" + ", ".join(missing),
+            "MissingRuntimeDependency",
+        )
 
     def _import_engine(self, tool_dir: Path):
         if str(tool_dir) not in sys.path:

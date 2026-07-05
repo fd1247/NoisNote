@@ -19,6 +19,8 @@ class SettingsDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("设置")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setMinimumSize(920, 640)
         self._panel = panel
         self._section_changed = section_changed

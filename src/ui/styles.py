@@ -523,6 +523,23 @@ QMenu::separator {
     background: #e5e7eb;
     margin: 5px 8px;
 }
+QMenuBar {
+    background: #ffffff;
+    border: none;
+    padding: 0;
+}
+QMenuBar::item {
+    background: transparent;
+    border: none;
+    padding: 6px 18px;
+    outline: none;
+}
+QMenuBar::item:selected,
+QMenuBar::item:pressed {
+    background: #f3f4f6;
+    border: none;
+    color: #111827;
+}
 QPlainTextEdit,
 QTextBrowser,
 QLineEdit {
@@ -722,6 +739,10 @@ QToolBar#QuickToolbar {
     border-bottom: 1px solid #e5e7eb;
     background: #f8fafc;
 }
+QToolBar#QuickToolbar::separator {
+    width: 0;
+    background: transparent;
+}
 QToolButton#ToolbarIconButton, QToolButton#ToolbarRecordingButton {
     min-width: 34px;
     min-height: 34px;
@@ -730,6 +751,11 @@ QToolButton#ToolbarIconButton, QToolButton#ToolbarRecordingButton {
     border-radius: 6px;
     border: 1px solid transparent;
     background: transparent;
+}
+QToolButton#ToolbarIconButton::menu-indicator,
+QToolButton#ToolbarRecordingButton::menu-indicator {
+    image: none;
+    width: 0;
 }
 QToolButton#ToolbarIconButton:hover {
     background: #eef2f7;

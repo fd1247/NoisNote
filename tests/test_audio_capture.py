@@ -64,8 +64,10 @@ class FakeMicrophone:
         self.channels = channels
         self._fail_open = False
         self._fail_read = False
+        self.recorder_calls: list[dict] = []
 
-    def recorder(self, samplerate: int = 48000) -> FakeRecorder:
+    def recorder(self, samplerate: int = 48000, channels: int | None = None) -> FakeRecorder:
+        self.recorder_calls.append({"samplerate": samplerate, "channels": channels})
         return FakeRecorder(self)
 
 
@@ -201,6 +203,32 @@ def test_recorder_retries_on_open_error(
 
     result = recorder.stop_recording()
     assert result is None
+
+
+def test_recorder_uses_selected_loopback_device_and_channels(monkeypatch, tmp_path) -> None:
+    speaker = FakeSpeaker("default", "默认扬声器", channels=2)
+    default_loopback = FakeMicrophone("default", "默认 Loopback", channels=2)
+    selected_loopback = FakeMicrophone("selected", "外接声卡 Loopback", channels=2)
+
+    monkeypatch.setattr(dm_module, "_get_default_speaker", lambda: speaker)
+    monkeypatch.setattr(
+        dm_module.sc,
+        "all_microphones",
+        lambda include_loopback: [default_loopback, selected_loopback] if include_loopback else [],
+    )
+
+    recorder = AudioRecorder(
+        output_dir=tmp_path,
+        settings=CaptureSettings(mode=CaptureMode.SYSTEM, system_device_id="selected"),
+    )
+    recorder.start_recording()
+    import time
+    time.sleep(0.3)
+    recorder.stop_recording()
+
+    assert not default_loopback.recorder_calls
+    assert selected_loopback.recorder_calls
+    assert selected_loopback.recorder_calls[0]["channels"] == 2
 
 
 # ---- DeviceManager 测试 ----

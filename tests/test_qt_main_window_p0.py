@@ -233,6 +233,19 @@ def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: 
         app.processEvents()
 
 
+def test_history_sidebar_resizes_without_blank_child_region(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.history_tree.textElideMode() == Qt.TextElideMode.ElideRight
+        assert window.history_tree.indentation() <= 10
+        assert window.main_sidebar.maximumWidth() > window.sidebar_stack.maximumWidth()
+        assert 520 <= window.sidebar_stack.maximumWidth() <= 680
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_help_check_update_does_not_open_settings_dialog(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

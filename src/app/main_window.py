@@ -156,10 +156,10 @@ class MainWindow(
 
         self.sidebar_stack = QStackedWidget()
         self.sidebar_stack.setMinimumWidth(220)
+        self.sidebar_stack.setMaximumWidth(620)
         self.main_sidebar = self._build_sidebar()
         self.settings_sidebar = self._build_settings_sidebar()
         self.main_sidebar.setMinimumWidth(220)
-        self.main_sidebar.setMaximumWidth(420)
         self.sidebar_stack.addWidget(self.main_sidebar)
         self.sidebar_stack.addWidget(self.settings_sidebar)
 

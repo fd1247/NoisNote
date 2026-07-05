@@ -41,7 +41,7 @@ def build_history_sidebar(
     """创建主界面历史侧边栏。"""
     sidebar = QFrame(parent)
     sidebar.setObjectName("Sidebar")
-    sidebar.setFixedWidth(240)
+    sidebar.setMinimumWidth(220)
     layout = QVBoxLayout(sidebar)
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(8)

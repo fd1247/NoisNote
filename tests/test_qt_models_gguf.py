@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
@@ -25,7 +27,10 @@ from src.app.main_window import MainWindow, SettingsPanel
 from src.model_registry.downloader import ModelDownloadManager
 from src.model_registry.service import DownloadTaskState, ModelService, ModelStatus
 from src.asr.runtime import (
+    Qwen3AsrGgufError,
     Qwen3AsrGgufResult,
+    Qwen3AsrGgufRuntime,
+    Qwen3AsrGgufRuntimeConfig,
     build_context,
     resolve_device_mode,
 )
@@ -628,6 +633,8 @@ def test_main_window_settings_dialog_shows_model_section(monkeypatch, tmp_path: 
         window.show_settings()
 
         assert window.settings_dialog.isVisible()
+        assert window.settings_dialog.isModal()
+        assert window.settings_dialog.windowModality() == Qt.WindowModality.ApplicationModal
         assert window.sidebar_stack.currentWidget() == window.main_sidebar
         assert window.settings_dialog.nav_buttons["general"].isChecked()
 
@@ -651,6 +658,27 @@ def test_device_resolver_maps_ui_values() -> None:
     assert gpu.resolved_device == "gpu"
     assert gpu.onnx_provider == "DML"
     assert gpu.llm_use_gpu is True
+
+
+def test_runtime_reports_missing_vendor_bin_as_dependency_error(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / QWEN3_ASR_GGUF_06B_SLUG
+    write_required_model_files(model_dir)
+    tool_dir = tmp_path / "vendor" / "qwen3-asr-gguf"
+    (tool_dir / "qwen_asr_gguf" / "inference").mkdir(parents=True)
+    runtime = Qwen3AsrGgufRuntime(
+        Qwen3AsrGgufRuntimeConfig(
+            model_dir=model_dir,
+            model_name=QWEN3_ASR_GGUF_06B_ID,
+            model_size="0.6B",
+            tool_dir=tool_dir,
+        )
+    )
+
+    with pytest.raises(Qwen3AsrGgufError) as exc_info:
+        runtime.load()
+
+    assert exc_info.value.error_type == "MissingRuntimeDependency"
+    assert "运行时依赖" in exc_info.value.user_message
 
 
 def test_build_context_merges_user_context_and_hotwords() -> None:
