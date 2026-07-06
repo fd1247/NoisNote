@@ -2058,6 +2058,27 @@ def test_summary_page_renders_markdown_but_copies_source(monkeypatch, tmp_path: 
         app.processEvents()
 
 
+def test_copy_transcript_uses_detail_cache_not_hidden_widget(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.transcript_plain_text = "cached transcript"
+        window.transcript_text.clear()
+        QApplication.clipboard().clear()
+
+        window.copy_panel_text("transcript")
+
+        assert QApplication.clipboard().text() == "cached transcript"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_empty_result_copy_buttons_are_hidden(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

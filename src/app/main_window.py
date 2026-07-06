@@ -605,14 +605,17 @@ class MainWindow(
 
     def copy_panel_text(self, kind: str) -> None:
         """复制转录或总结文本到系统剪贴板。"""
+        if not self.current_record:
+            self._set_status("请先选择一条历史记录")
+            return
         if kind == "transcript":
-            text = self.transcript_text.toPlainText()
+            text = self.transcript_plain_text or self.history_service.read_transcript(self.current_record)
             label = "转录文字"
         elif kind == "timeline":
-            text = self.timeline_text.toPlainText()
+            text = self._detail_timeline_copy_text(self.current_record)
             label = "逐句时间轴"
         else:
-            text = self.summary_markdown_text
+            text = self.summary_markdown_text or self.history_service.read_summary(self.current_record)
             label = "总结内容"
 
         if not text.strip():
