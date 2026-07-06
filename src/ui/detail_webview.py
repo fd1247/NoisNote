@@ -88,7 +88,11 @@ class DetailWebView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         if self._can_create_webengine():
-            self._setup_webengine(layout)
+            try:
+                self._setup_webengine(layout)
+            except Exception:
+                self._reset_webengine_state()
+                self._setup_fallback(layout)
         else:
             self._setup_fallback(layout)
 
@@ -143,12 +147,26 @@ class DetailWebView(QWidget):
         self._fallback = browser
         self._render_fallback()
 
+    def _reset_webengine_state(self) -> None:
+        """WebEngine 初始化失败时清空半初始化状态，确保降级视图可继续使用。"""
+
+        web_view = self._web_view
+        if web_view is not None and hasattr(web_view, "deleteLater"):
+            layout = self.layout()
+            if layout is not None and isinstance(web_view, QWidget):
+                layout.removeWidget(web_view)
+            try:
+                web_view.deleteLater()
+            except RuntimeError:
+                pass
+        self._web_view = None
+        self._page_ready = False
+        self._pending_content = None
+        self._pending_playback = None
+
     def _handle_load_finished(self, ok: bool) -> None:
         if not ok:
-            if self._web_view is not None:
-                self.layout().removeWidget(self._web_view)
-                self._web_view.deleteLater()
-                self._web_view = None
+            self._reset_webengine_state()
             self._setup_fallback(self.layout())  # type: ignore[arg-type]
             return
         self._flush_pending_js()

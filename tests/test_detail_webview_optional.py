@@ -78,6 +78,37 @@ def test_detail_webview_fallback_instantiates_and_renders_readable_content() -> 
         assert "第一句" in rendered
 
 
+def test_detail_webview_falls_back_when_webengine_setup_raises(monkeypatch) -> None:
+    _app()
+
+    from src.ui.detail_webview import DetailWebView
+
+    def raise_setup(self, layout) -> None:  # noqa: ANN001
+        self._web_view = object()
+        raise RuntimeError("broken webengine runtime")
+
+    monkeypatch.setattr(DetailWebView, "_can_create_webengine", lambda self: True)
+    monkeypatch.setattr(DetailWebView, "_setup_webengine", raise_setup)
+
+    view = DetailWebView()
+    payload = {
+        "mode": "transcript",
+        "title": "降级检查",
+        "content": "WebEngine 失败后仍应显示文本。",
+        "timeline": [{"start": 0, "end": 1, "text": "可读时间轴"}],
+    }
+
+    view.set_content(payload)
+
+    assert not view.is_webengine_available()
+    browser = view.findChild(QTextBrowser)
+    assert browser is not None
+    rendered = browser.toPlainText()
+    assert "降级检查" in rendered
+    assert "WebEngine 失败后仍应显示文本。" in rendered
+    assert "可读时间轴" in rendered
+
+
 def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
 
@@ -96,3 +127,13 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert "setContent" in script
     assert "updatePlayback" in script
     assert "markdownit" in markdown.read_text(encoding="utf-8")
+
+
+def test_detail_viewer_timeline_rendering_uses_generation_token() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    script = (root / "detail-viewer.js").read_text(encoding="utf-8")
+
+    assert "timelineRenderGeneration" in script
+    assert "state.timelineRenderGeneration += 1" in script
+    assert "renderTimelineChunk(items, 0, generation)" in script
+    assert "generation !== state.timelineRenderGeneration" in script

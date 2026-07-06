@@ -6,7 +6,8 @@
     playback: {},
     bridge: null,
     activeId: null,
-    scrollTimer: 0
+    scrollTimer: 0,
+    timelineRenderGeneration: 0
   };
 
   var renderer = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: true }) : null;
@@ -91,7 +92,10 @@
     }
   }
 
-  function renderTimelineChunk(items, index) {
+  function renderTimelineChunk(items, index, generation) {
+    if (generation !== state.timelineRenderGeneration) {
+      return;
+    }
     var list = $("timelinePanel");
     var fragment = document.createDocumentFragment();
     var limit = Math.min(index + 120, items.length);
@@ -124,17 +128,22 @@
       });
       fragment.appendChild(row);
     }
+    if (generation !== state.timelineRenderGeneration) {
+      return;
+    }
     list.appendChild(fragment);
     if (limit < items.length) {
       window.requestAnimationFrame(function () {
-        renderTimelineChunk(items, limit);
+        renderTimelineChunk(items, limit, generation);
       });
-    } else if (state.playback) {
+    } else if (generation === state.timelineRenderGeneration && state.playback) {
       updatePlayback(state.playback);
     }
   }
 
   function renderTimeline(items) {
+    state.timelineRenderGeneration += 1;
+    var generation = state.timelineRenderGeneration;
     clearTimeline();
     if (!Array.isArray(items) || !items.length) {
       var row = document.createElement("li");
@@ -143,7 +152,7 @@
       $("timelinePanel").appendChild(row);
       return;
     }
-    renderTimelineChunk(items, 0);
+    renderTimelineChunk(items, 0, generation);
   }
 
   function setContent(payload) {
