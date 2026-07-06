@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -153,6 +154,8 @@ def parse_detail_command(value: Any, current_record_key: str, current_revision: 
         )
 
     if command == "openExternalUrl":
+        if not _is_current_message(value, current_record_key, current_revision):
+            return None
         url = value.get("url")
         if not isinstance(url, str) or not url:
             return None
@@ -187,6 +190,7 @@ def _source_label(source_kind: str) -> str:
         "local_video": "本地文件",
         "imported_file": "本地文件",
         "remote_url": "视频链接",
+        "remote_audio": "视频链接",
         "remote_subtitle": "视频链接",
     }
     return labels.get(source_kind, _MISSING)
@@ -234,9 +238,10 @@ def _is_current_message(value: Mapping[str, Any], current_record_key: str, curre
 
 def _maybe_float(value: Any) -> float | None:
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _maybe_int(value: Any) -> int | None:

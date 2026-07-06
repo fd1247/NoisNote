@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from src.ui.detail_models import (
     build_detail_payload,
     build_metadata_fields,
     find_active_timeline_segment,
+    normalize_timeline_items,
     parse_detail_command,
     timeline_display_text,
 )
@@ -75,6 +77,20 @@ def test_build_detail_payload_falls_back_to_transcript_mode(tmp_path: Path) -> N
     assert payload["playback"]["positionSeconds"] == 0.0
 
 
+def test_build_detail_payload_normalizes_non_finite_playback_position(tmp_path: Path) -> None:
+    payload = build_detail_payload(
+        record=_record(tmp_path),
+        mode="transcript",
+        revision=1,
+        content="text",
+        timeline=[],
+        position_seconds=float("inf"),
+        is_playing=False,
+    )
+
+    assert payload["playback"]["positionSeconds"] == 0.0
+
+
 def test_metadata_fields_include_remote_url_and_model_names(tmp_path: Path) -> None:
     record = _record(tmp_path)
     record.record_dir.mkdir(parents=True)
@@ -112,6 +128,12 @@ def test_metadata_fields_include_remote_url_and_model_names(tmp_path: Path) -> N
     assert by_label["总结模型"] == "gpt-4.1"
 
 
+def test_metadata_fields_maps_remote_audio_to_video_link(tmp_path: Path) -> None:
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(_record(tmp_path, source_kind="remote_audio"))}
+
+    assert fields["来源"] == "视频链接"
+
+
 def test_metadata_fields_use_local_and_recording_labels_and_local_path_fallback(tmp_path: Path) -> None:
     local_record = _record(
         tmp_path,
@@ -144,6 +166,22 @@ def test_timeline_active_segment_and_display_text() -> None:
     assert timeline_display_text(items) == "00:00.000 - 00:01.000  hello\n00:02.000 - 00:03.000  world"
 
 
+def test_timeline_non_finite_values_normalize_to_displayable_text() -> None:
+    items = [
+        {"start": float("inf"), "end": float("nan"), "text": "bad start"},
+        {"start": 2, "end": float("-inf"), "text": "bad end"},
+    ]
+
+    normalized = normalize_timeline_items(items)
+
+    assert all(math.isfinite(item["start"]) and math.isfinite(item["end"]) for item in normalized)
+    assert normalized[0]["start"] == 0.0
+    assert normalized[0]["end"] == 0.0
+    assert normalized[1]["start"] == 2.0
+    assert normalized[1]["end"] == 2.0
+    assert timeline_display_text(items) == "00:00.000 - 00:00.000  bad start\n00:02.000 - 00:02.000  bad end"
+
+
 def test_parse_detail_command_rejects_stale_and_malformed_input() -> None:
     assert parse_detail_command(None, "record:1", 2) is None
     assert parse_detail_command({"command": "unknown"}, "record:1", 2) is None
@@ -166,6 +204,25 @@ def test_parse_detail_command_rejects_stale_and_malformed_input() -> None:
     assert parse_detail_command({"command": "seek", "recordKey": "record:1", "revision": "bad"}, "record:1", 2) is None
 
 
+def test_parse_detail_command_rejects_non_finite_seek() -> None:
+    assert (
+        parse_detail_command(
+            {"command": "seek", "recordKey": "record:1", "revision": 2, "seconds": float("inf")},
+            "record:1",
+            2,
+        )
+        is None
+    )
+    assert (
+        parse_detail_command(
+            {"command": "seek", "recordKey": "record:1", "revision": 2, "seconds": float("nan")},
+            "record:1",
+            2,
+        )
+        is None
+    )
+
+
 def test_parse_detail_command_accepts_current_seek() -> None:
     command = parse_detail_command(
         {"command": "seek", "recordKey": "record:1", "revision": 2, "seconds": "3.5", "segmentId": 7},
@@ -176,3 +233,32 @@ def test_parse_detail_command_accepts_current_seek() -> None:
     assert command is not None
     assert command.command == "seek"
     assert command.payload == {"seconds": 3.5, "segmentId": 7}
+
+
+def test_parse_detail_command_checks_open_external_url_freshness() -> None:
+    assert (
+        parse_detail_command(
+            {"command": "openExternalUrl", "recordKey": "record:0", "revision": 2, "url": "https://example.com"},
+            "record:1",
+            2,
+        )
+        is None
+    )
+    assert (
+        parse_detail_command(
+            {"command": "openExternalUrl", "recordKey": "record:1", "revision": 1, "url": "https://example.com"},
+            "record:1",
+            2,
+        )
+        is None
+    )
+
+    command = parse_detail_command(
+        {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": "https://example.com"},
+        "record:1",
+        2,
+    )
+
+    assert command is not None
+    assert command.command == "openExternalUrl"
+    assert command.payload == {"url": "https://example.com"}
