@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' qrc:; script-src 'self' qrc:; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>NoisNote Detail Viewer</title>
+    <link rel="stylesheet" href="./detail-viewer.css">
+  </head>
+  <body>
+    <main class="detail-shell">
+      <header class="detail-header">
+        <div>
+          <p class="detail-kicker" id="modeLabel">转录</p>
+          <h1 id="detailTitle">详情</h1>
+        </div>
+        <button id="copyButton" class="icon-button" type="button" title="复制当前内容" aria-label="复制当前内容">⧉</button>
+      </header>
+      <section id="emptyState" class="state-panel">选择一条历史记录后查看内容。</section>
+      <section id="errorState" class="state-panel error" hidden></section>
+      <section id="contentPanel" class="content-panel" hidden>
+        <article id="transcriptPanel" class="markdown-body"></article>
+        <article id="summaryPanel" class="markdown-body" hidden></article>
+        <ol id="timelinePanel" class="timeline-list" hidden></ol>
+      </section>
+    </main>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script src="./vendor/markdown-it.min.js"></script>
+    <script src="./detail-viewer.js"></script>
+  </body>
+</html>
