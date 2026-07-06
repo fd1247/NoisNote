@@ -1566,6 +1566,27 @@ def test_timeline_items_sync_to_visible_detail_webview(monkeypatch, tmp_path: Pa
         app.processEvents()
 
 
+def test_playback_position_updates_visible_detail_webview(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        payloads = []
+
+        def capture_playback(payload: dict) -> None:
+            payloads.append(payload)
+
+        window.detail_webview.update_playback = capture_playback
+        window.media_player = FakeMediaPlayer()
+
+        window._on_playback_position_changed(2500)
+
+        assert payloads[-1]["positionSeconds"] == 2.5
+        assert "isPlaying" in payloads[-1]
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_detail_web_command_placeholder_does_not_change_status_or_state(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
