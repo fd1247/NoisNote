@@ -143,6 +143,12 @@
     }).join("");
   }
 
+  function postBridgeMessage(command) {
+    if (state.bridge && state.bridge.postMessage) {
+      state.bridge.postMessage(JSON.stringify(command || {}));
+    }
+  }
+
   function sendCommand(command) {
     try {
       command = command || {};
@@ -152,9 +158,7 @@
       if (state.payload.revision != null && command.revision == null) {
         command.revision = state.payload.revision;
       }
-      if (state.bridge && state.bridge.postMessage) {
-        state.bridge.postMessage(command);
-      }
+      postBridgeMessage(command);
     } catch (error) {
       showError(error);
     }
@@ -166,9 +170,7 @@
       panel.hidden = false;
       panel.textContent = "详情渲染失败：" + (error && error.message ? error.message : String(error));
     }
-    if (state.bridge && state.bridge.postMessage) {
-      state.bridge.postMessage({ command: "renderError", message: panel ? panel.textContent : String(error) });
-    }
+    postBridgeMessage({ command: "renderError", message: panel ? panel.textContent : String(error) });
   }
 
   function setMode(mode) {

@@ -42,6 +42,13 @@ def test_bridge_post_message_emits_dict_and_json_string() -> None:
     ]
 
 
+def test_bridge_webchannel_slot_accepts_json_string_protocol() -> None:
+    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail_webview.py").read_text(encoding="utf-8")
+
+    assert "@Slot(str)" in source
+    assert "@Slot(object)" not in source
+
+
 def test_bridge_post_message_handles_malformed_input_without_raising() -> None:
     from src.ui.detail_webview import DetailWebBridge
 
@@ -278,6 +285,10 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert 'html: true' in script
     assert 'breaks: false' in script
     assert 'langPrefix: "lang-"' in script
+    assert "postBridgeMessage" in script
+    assert "JSON.stringify(command || {})" in script
+    assert "state.bridge.postMessage(command)" not in script
+    assert 'state.bridge.postMessage({ command: "renderError"' not in script
     assert "markdownItAnchor" in script
     assert "markdownItTocDoneRight" in script
     assert '"vx-data-anchor-icon": "¶"' in script

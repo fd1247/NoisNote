@@ -52,7 +52,7 @@ class DetailWebBridge(QObject):
 
     commandReceived = Signal(dict)
 
-    @Slot(object)
+    @Slot(str)
     def postMessage(self, value: object) -> None:
         """接收 JS 消息；支持 dict 和 JSON 字符串， malformed 输入不向外抛异常。"""
 
