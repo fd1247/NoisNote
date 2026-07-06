@@ -64,14 +64,18 @@ _PYSIDE6_EXCLUDE_BINARIES = {
     "opengl32sw.dll",       # Mesa 软件 OpenGL 渲染器
 }
 
-# 需要排除的翻译文件（保留 zh_CN）
+# Keep only Chinese translations, plus QtWebEngine locale directories.
 def _should_keep_translation(path_str: str) -> bool:
     path_lower = path_str.lower().replace("\\", "/")
     if "/translations/" not in path_lower:
-        return True  # 不是翻译文件，保留
-    if "/translations/qtwebengine_locales/" in path_lower:
         return True
-    return "zh_cn" in path_lower or "zh-cn" in path_lower  # 只保留中文翻译
+    if (
+        "/translations/qtwebengine_locales/" in path_lower
+        or path_lower.endswith("/translations/qtwebengine_locales")
+    ):
+        return True
+    return "zh_cn" in path_lower or "zh-cn" in path_lower
+
 
 def _filter_pyside6_datas(datas):
     """过滤 PySide6 数据文件，排除不需要的目录和翻译。"""
@@ -386,7 +390,10 @@ def _should_keep_pyside6_dat(dst: str) -> bool:
             return False
     # 翻译文件只保留中文
     if "/translations/" in dst_lower:
-        if "/translations/qtwebengine_locales/" in dst_lower:
+        if (
+            "/translations/qtwebengine_locales/" in dst_lower
+            or dst_lower.endswith("/translations/qtwebengine_locales")
+        ):
             return True
         return "zh_cn" in dst_lower or "zh-cn" in dst_lower
     return True
