@@ -1,58 +1,46 @@
 """主窗口历史列表与详情加载逻辑。"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup
-from PySide6.QtWidgets import QMenu
+import os
+import uuid
+from pathlib import Path
 
+from PySide6.QtCore import Qt
+
+from ..app.config import get_notebooks, normalize_notebooks, save_config
 from ..history.service import HistoryRecord, HistoryStatus
 from ..history.types import format_size
+from ..ui.notebook_dialogs import ManageNotebooksDialog, NewNotebookDialog
 
 
 class HistoryViewHandlers:
-    """历史记录过滤、选择和详情加载。"""
-
-    def _build_history_filter_menu(self) -> QMenu:
-        menu = QMenu(self)
-        group = QActionGroup(menu)
-        group.setExclusive(True)
-        options = [
-            ("all", "全部"),
-            (HistoryStatus.AUDIO_ONLY.value, "仅录音"),
-            (HistoryStatus.TRANSCRIBED.value, "已转录"),
-            (HistoryStatus.SUMMARIZED.value, "已总结"),
-            (HistoryStatus.EXPORTED.value, "已导出"),
-            (HistoryStatus.ERROR.value, "异常"),
-            (HistoryStatus.MISSING_AUDIO.value, "缺少音频"),
-        ]
-        for value, label in options:
-            action = QAction(label, menu)
-            action.setCheckable(True)
-            action.setData(value)
-            action.setChecked(value == self.history_status_filter)
-            action.triggered.connect(lambda checked=False, key=value, text=label: self._set_history_filter(key, text))
-            group.addAction(action)
-            menu.addAction(action)
-        return menu
+    """历史记录选择和详情加载。"""
 
     def load_recordings(self) -> None:
-        selected_key = self.current_record.record_key if self.current_record else ""
+        active_notebook_id = self._active_notebook_id()
+        selected_key = (
+            self.current_record.record_key
+            if self.current_record and self.current_record.notebook_id == active_notebook_id
+            else ""
+        )
+        self._refresh_notebook_selector()
         self.all_history_items = self.history_service.scan()
         self.current_items = self._filtered_history_items()
         self._render_history_list()
-        if selected_key:
-            still_exists = any(record.record_key == selected_key for record in self.all_history_items)
-            if still_exists:
-                self._sync_selected_record_in_visible_list(selected_key)
-            else:
-                self._clear_missing_current_record()
+        self._restore_visible_record_selection(preferred_key=selected_key)
 
-    def _clear_missing_current_record(self) -> None:
+    def _active_notebook_id(self) -> str:
+        return str(getattr(self, "current_notebook_id", "") or self.config.get("active_notebook_id") or "default")
+
+    def _clear_missing_current_record(self, *, clear_persisted_selection: bool = True) -> None:
         """当前历史记录被外部删除时，清空右侧详情引用。"""
+        missing_record = self.current_record
         if self.current_record and self.current_record.record_key == self.playback_record_id:
             self.stop_playback()
             self.playback_record_id = ""
         self.current_record = None
+        if clear_persisted_selection:
+            self._clear_persisted_record_selection(record=missing_record)
         self._set_app_window_title()
         self.history_tree.clearSelection()
         self._sync_history_selection(-1)
@@ -72,6 +60,43 @@ class HistoryViewHandlers:
         self.manual_summary_button.hide()
         self.retry_transcription_button.hide()
 
+    def _last_selected_record_key_for_notebook(self, notebook_id: str) -> str:
+        selected_keys = self.config.get("last_selected_record_keys")
+        if isinstance(selected_keys, dict):
+            record_key = str(selected_keys.get(notebook_id) or "").strip()
+            if record_key:
+                return record_key
+        legacy_key = str(self.config.get("last_selected_record_key") or "").strip()
+        if legacy_key.startswith(f"{notebook_id}:"):
+            return legacy_key
+        return ""
+
+    def _restore_visible_record_selection(self, *, preferred_key: str = "") -> bool:
+        active_notebook_id = self._active_notebook_id()
+        candidate_keys = [
+            key
+            for key in (
+                preferred_key,
+                self._last_selected_record_key_for_notebook(active_notebook_id),
+            )
+            if key
+        ]
+        for record_key in dict.fromkeys(candidate_keys):
+            for index, record in enumerate(self.current_items):
+                if record.record_key == record_key:
+                    if self.current_record and self.current_record.record_key == record_key:
+                        self._sync_selected_record_in_visible_list(record_key)
+                        return True
+                    self.select_history_index(index)
+                    return True
+            self._clear_persisted_record_selection(notebook_id=active_notebook_id, record_key=record_key)
+        if self.current_items:
+            self.select_history_index(0)
+            return True
+        self._clear_missing_current_record(clear_persisted_selection=False)
+        self._clear_persisted_record_selection(notebook_id=active_notebook_id)
+        return False
+
     def _render_history_list(self) -> None:
         updates_enabled = self.history_tree.updatesEnabled()
         self.history_tree.setUpdatesEnabled(False)
@@ -87,57 +112,133 @@ class HistoryViewHandlers:
             self.history_tree.setUpdatesEnabled(updates_enabled)
 
     def _filtered_history_items(self) -> list[HistoryRecord]:
-        query = self.history_search_text.strip().lower()
+        notebook_id = str(getattr(self, "current_notebook_id", "") or self.config.get("active_notebook_id") or "default")
         items: list[HistoryRecord] = []
         for record in self.all_history_items:
-            if self.history_status_filter != "all" and record.status.value != self.history_status_filter:
-                continue
-            if query and query not in self._history_search_blob(record):
+            if notebook_id and record.notebook_id != notebook_id:
                 continue
             items.append(record)
         return items
 
-    def _history_search_blob(self, record: HistoryRecord) -> str:
-        parts = [
-            record.display_name,
-            record.record_id,
-            record.notebook_name,
-            record.status_text,
-            record.audio_path.name,
-        ]
-        if record.original_file_path:
-            parts.append(record.original_file_path.name)
-        return " ".join(parts).lower()
+    def _refresh_notebook_selector(self) -> None:
+        """同步主侧栏的笔记本下拉框。"""
+        if not hasattr(self, "notebook_selector"):
+            return
+        notebooks = get_notebooks(self.config)
+        current_id = str(getattr(self, "current_notebook_id", "") or self.config.get("active_notebook_id") or "default")
+        if not any(str(item.get("id") or "") == current_id for item in notebooks):
+            current_id = str(notebooks[0].get("id") or "default")
+            self.current_notebook_id = current_id
+            self.config["active_notebook_id"] = current_id
 
-    def _on_history_search_changed(self, text: str) -> None:
-        self.history_search_text = text
+        self.notebook_selector.blockSignals(True)
+        try:
+            self.notebook_selector.clear()
+            for notebook in notebooks:
+                notebook_id = str(notebook.get("id") or "")
+                self.notebook_selector.addItem(str(notebook.get("name") or "笔记本"), notebook_id)
+            index = self.notebook_selector.findData(current_id)
+            self.notebook_selector.setCurrentIndex(max(index, 0))
+        finally:
+            self.notebook_selector.blockSignals(False)
+
+    def _on_notebook_selection_changed(self, index: int) -> None:
+        """切换当前笔记本并刷新可见记录。"""
+        if index < 0:
+            return
+        notebook_id = str(self.notebook_selector.itemData(index) or "")
+        if not notebook_id:
+            return
+        self._set_current_notebook(notebook_id, persist=True)
+
+    def _set_current_notebook(self, notebook_id: str, *, persist: bool) -> None:
+        """设置当前笔记本并同步历史服务。"""
+        if notebook_id == self.current_notebook_id and self.history_service.active_notebook_id == notebook_id:
+            return
+        self.current_notebook_id = notebook_id
+        self.config["active_notebook_id"] = notebook_id
+        if persist:
+            save_config(self.config)
+        self._refresh_notebook_selector()
+        self.history_service = self.history_service.from_notebooks(
+            get_notebooks(self.config),
+            active_notebook_id=notebook_id,
+        )
+        if self.recorder:
+            self.recorder.set_output_dir(str(self.history_service.recordings_dir))
+        self.all_history_items = self.history_service.scan()
         self.current_items = self._filtered_history_items()
         self._render_history_list()
-        if self.current_record:
-            self._sync_selected_record_in_visible_list(self.current_record.record_key)
+        preferred_key = (
+            self.current_record.record_key
+            if self.current_record and self.current_record.notebook_id == notebook_id
+            else ""
+        )
+        self._restore_visible_record_selection(preferred_key=preferred_key)
 
-    def _set_history_filter(self, value: str, label: str) -> None:
-        self.history_status_filter = value
-        self.history_filter_button.setToolTip("筛选历史记录" if value == "all" else f"筛选：{label}")
-        self.current_items = self._filtered_history_items()
-        self._render_history_list()
-        if self.current_record:
-            self._sync_selected_record_in_visible_list(self.current_record.record_key)
+    def show_new_notebook_dialog(self) -> None:
+        """显示新建笔记本窗口，创建成功后切换到新笔记本。"""
+        dialog = NewNotebookDialog(self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        name, path = dialog.values()
+        if not name:
+            self._show_error("笔记本名称不能为空")
+            return
+        if not str(path).strip():
+            self._show_error("请选择笔记本根文件夹")
+            return
+        if self._notebook_path_exists(path):
+            self._show_error("这个目录已经在笔记本列表中")
+            return
+        notebook_id = f"notebook-{uuid.uuid4().hex[:8]}"
+        path.mkdir(parents=True, exist_ok=True)
+        notebooks = get_notebooks(self.config)
+        notebooks.append(
+            {
+                "id": notebook_id,
+                "name": name,
+                "path": str(path),
+                "is_default": False,
+            }
+        )
+        self.config["notebooks"] = notebooks
+        self.config["active_notebook_id"] = notebook_id
+        normalize_notebooks(self.config)
+        save_config(self.config)
+        self._set_current_notebook(notebook_id, persist=False)
+        self._set_status("笔记本已新建")
 
-    def _clear_history_filters(self) -> None:
-        self.history_search_text = ""
-        if hasattr(self, "history_search"):
-            self.history_search.blockSignals(True)
-            self.history_search.clear()
-            self.history_search.blockSignals(False)
-        self.history_status_filter = "all"
-        self.history_filter_button.setToolTip("筛选历史记录")
-        menu = self.history_filter_button.menu()
-        if menu:
-            for action in menu.actions():
-                action.setChecked(action.data() == "all")
-        self.current_items = list(self.all_history_items)
-        self._render_history_list()
+    def show_manage_notebooks_dialog(self) -> None:
+        """显示笔记本管理窗口，保存名称修改。"""
+        dialog = ManageNotebooksDialog(get_notebooks(self.config), self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        updated = dialog.notebooks()
+        for item in updated:
+            if not str(item.get("name") or "").strip():
+                self._show_error("笔记本名称不能为空")
+                return
+        active_id = str(self.config.get("active_notebook_id") or self.current_notebook_id or "default")
+        self.config["notebooks"] = updated
+        self.config["active_notebook_id"] = active_id
+        normalize_notebooks(self.config)
+        save_config(self.config)
+        self.history_service = self.history_service.from_notebooks(
+            get_notebooks(self.config),
+            active_notebook_id=active_id,
+        )
+        self._refresh_notebook_selector()
+        self.load_recordings()
+        self._set_status("笔记本已更新")
+
+    def _notebook_path_exists(self, path: Path) -> bool:
+        target = os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
+        for item in get_notebooks(self.config):
+            existing = os.path.normcase(os.path.abspath(os.path.expanduser(str(item.get("path") or ""))))
+            if existing == target:
+                return True
+        return False
 
     def _sync_selected_record_in_visible_list(self, record_key: str) -> bool:
         matched = self.history_tree.select_record(record_key)
@@ -169,6 +270,7 @@ class HistoryViewHandlers:
         """加载一条历史记录到右侧内容区。"""
         self._release_timeline_resources()
         self.current_record = recording
+        self._persist_last_selected_record(recording)
         self.transcript_loaded_record_id = ""
         self.summary_loaded_record_id = ""
         self.timeline_loaded_record_id = ""
@@ -196,6 +298,53 @@ class HistoryViewHandlers:
         self._set_playback_source(recording)
         self._sync_detail_processing_view()
         self._set_status("")
+
+    def _persist_last_selected_record(self, record: HistoryRecord) -> None:
+        """保存最后一次选中的笔记本和记录，用于下次启动恢复。"""
+        changed = False
+        selected_keys = self.config.get("last_selected_record_keys")
+        if not isinstance(selected_keys, dict):
+            selected_keys = {}
+            self.config["last_selected_record_keys"] = selected_keys
+            changed = True
+        if selected_keys.get(record.notebook_id) != record.record_key:
+            selected_keys[record.notebook_id] = record.record_key
+            changed = True
+        if self.config.get("last_selected_record_key") != record.record_key:
+            self.config["last_selected_record_key"] = record.record_key
+            changed = True
+        if self.config.get("active_notebook_id") != record.notebook_id:
+            self.config["active_notebook_id"] = record.notebook_id
+            self.current_notebook_id = record.notebook_id
+            changed = True
+        if changed:
+            save_config(self.config)
+
+    def _clear_persisted_record_selection(
+        self,
+        *,
+        record: HistoryRecord | None = None,
+        notebook_id: str = "",
+        record_key: str = "",
+    ) -> None:
+        target_notebook_id = notebook_id or (record.notebook_id if record else "")
+        target_record_key = record_key or (record.record_key if record else "")
+        changed = False
+        selected_keys = self.config.get("last_selected_record_keys")
+        if isinstance(selected_keys, dict) and target_notebook_id:
+            existing_key = str(selected_keys.get(target_notebook_id) or "")
+            if existing_key and (not target_record_key or existing_key == target_record_key):
+                selected_keys.pop(target_notebook_id, None)
+                changed = True
+        legacy_key = str(self.config.get("last_selected_record_key") or "")
+        if legacy_key and (
+            (target_record_key and legacy_key == target_record_key)
+            or (target_notebook_id and legacy_key.startswith(f"{target_notebook_id}:"))
+        ):
+            self.config["last_selected_record_key"] = ""
+            changed = True
+        if changed:
+            save_config(self.config)
 
     def _ensure_active_result_loaded(self) -> None:
         if not self.current_record:
@@ -236,19 +385,29 @@ class HistoryViewHandlers:
         self.timeline_loaded_record_id = record_key
 
     def _update_detail_header(self, record: HistoryRecord) -> None:
-        self.detail_title_label.setText(record.display_name)
+        self._set_detail_title(record.display_name)
         self.detail_duration_label.setText(record.duration_text)
         self.detail_size_label.setText(format_size(record.total_size_bytes))
         self.detail_time_label.setText(record.created_at.strftime("%Y-%m-%d %H:%M"))
         self.detail_status_label.setText(record.status_text)
+
+    def _set_detail_title(self, title: str) -> None:
+        """设置详情标题，超长记录名用省略号避免撑宽布局。"""
+        max_width = 520
+        self.detail_title_label.setMaximumWidth(max_width)
+        self.detail_title_label.setToolTip(title)
+        elided = self.detail_title_label.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, max_width)
+        self.detail_title_label.setText(elided)
 
     def _select_record_by_id(self, record_id: str) -> bool:
         for index, record in enumerate(self.current_items):
             if record.record_id == record_id:
                 self.select_history_index(index)
                 return True
-        if any(record.record_id == record_id for record in self.all_history_items):
-            self._clear_history_filters()
+        target = next((record for record in self.all_history_items if record.record_id == record_id), None)
+        if target is not None:
+            if target.notebook_id != self.current_notebook_id:
+                self._set_current_notebook(target.notebook_id, persist=True)
             for index, record in enumerate(self.current_items):
                 if record.record_id == record_id:
                     self.select_history_index(index)
@@ -260,8 +419,10 @@ class HistoryViewHandlers:
             if record.record_key == record_key:
                 self.select_history_index(index)
                 return True
-        if any(record.record_key == record_key for record in self.all_history_items):
-            self._clear_history_filters()
+        target = next((record for record in self.all_history_items if record.record_key == record_key), None)
+        if target is not None:
+            if target.notebook_id != self.current_notebook_id:
+                self._set_current_notebook(target.notebook_id, persist=True)
             for index, record in enumerate(self.current_items):
                 if record.record_key == record_key:
                     self.select_history_index(index)
@@ -270,9 +431,6 @@ class HistoryViewHandlers:
 
     def _sync_history_selection(self, selected_index: int) -> None:
         self._last_history_selected_index = selected_index
-
-    def _sync_history_row(self, row: int, selected_index: int) -> None:
-        return
 
     def _record_index_by_key(self, record_key: str) -> int:
         for index, record in enumerate(self.current_items):
@@ -290,21 +448,31 @@ class HistoryViewHandlers:
         if index >= 0:
             self.open_history_record_folder(index)
 
-    def _delete_record_by_key(self, record_key: str) -> None:
-        index = self._record_index_by_key(record_key)
-        if index >= 0:
-            self.delete_history_record(index)
+    def _delete_records_by_keys(self, record_keys: list[str]) -> None:
+        records = self._records_for_keys(record_keys)
+        if records:
+            self._delete_records(records)
 
-    def _move_record_to_notebook(self, record_key: str, target_notebook_id: str) -> None:
-        record = next((item for item in self.all_history_items if item.record_key == record_key), None)
-        if not record:
+    def _move_records_to_notebook(self, record_keys: list[str], target_notebook_id: str) -> None:
+        records = self._records_for_keys(record_keys)
+        if not records:
             return
-        result = self.history_service.move_record_to_notebook(record, target_notebook_id)
-        if not result.success:
-            self._show_error(result.message)
-            return
+        failures: list[str] = []
+        moved_keys: set[str] = set()
+        for record in records:
+            result = self.history_service.move_record_to_notebook(record, target_notebook_id)
+            if result.success:
+                moved_keys.add(record.record_key)
+            else:
+                failures.append(f"{record.display_name}: {result.message}")
         self.load_recordings()
-        moved = next((item for item in self.all_history_items if item.record_dir == result.target_dir), None)
-        if moved is not None:
-            self._select_record_by_key(moved.record_key)
-        self._set_status(result.message)
+        if self.current_record and self.current_record.record_key in moved_keys:
+            self._clear_missing_current_record()
+        if failures:
+            self._show_error("部分记录移动失败：\n" + "\n".join(failures))
+            return
+        self._set_status(f"已移动 {len(moved_keys)} 条记录")
+
+    def _records_for_keys(self, record_keys: list[str]) -> list[HistoryRecord]:
+        ordered_keys = {str(key) for key in record_keys if key}
+        return [record for record in self.all_history_items if record.record_key in ordered_keys]

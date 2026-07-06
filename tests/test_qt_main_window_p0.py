@@ -9,9 +9,10 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QDialog
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
 
@@ -59,8 +60,13 @@ def make_config(root: Path) -> dict:
 
 def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     config = make_config(tmp_path)
+    return make_window_with_config(monkeypatch, config)
+
+
+def make_window_with_config(monkeypatch, config: dict) -> MainWindow:
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.handlers.history_view.save_config", lambda _config: None)
     monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
@@ -76,21 +82,13 @@ def history_subtitle_at(window: MainWindow, row: int) -> str:
 
 
 def history_record_item_at(window: MainWindow, row: int):
-    current_row = 0
-    for root_index in range(window.history_tree.topLevelItemCount()):
-        root = window.history_tree.topLevelItem(root_index)
-        for child_index in range(root.childCount()):
-            if current_row == row:
-                return root.child(child_index)
-            current_row += 1
+    if row < window.history_tree.topLevelItemCount():
+        return window.history_tree.topLevelItem(row)
     raise IndexError(row)
 
 
 def history_tree_record_count(window: MainWindow) -> int:
-    total = 0
-    for root_index in range(window.history_tree.topLevelItemCount()):
-        total += window.history_tree.topLevelItem(root_index).childCount()
-    return total
+    return window.history_tree.topLevelItemCount()
 
 
 def test_resolve_demo_audio_path_uses_src_assets_in_development(monkeypatch) -> None:
@@ -199,7 +197,7 @@ def test_history_sidebar_keeps_import_actions_out_of_sidebar(monkeypatch, tmp_pa
         app.processEvents()
 
 
-def test_recording_task_button_returns_to_recording_page(monkeypatch, tmp_path: Path) -> None:
+def test_recording_task_button_opens_dialog_without_switching_main_page(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -208,7 +206,23 @@ def test_recording_task_button_returns_to_recording_page(monkeypatch, tmp_path: 
 
         window.new_recording()
 
-        assert window.content_stack.currentWidget() == window.recording_page
+        assert window.content_stack.currentWidget() == window.history_page
+        assert window.recording_dialog.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_main_workbench_starts_on_history_detail(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.content_stack.currentWidget() == window.history_page
+        assert not window.recording_page.isVisible()
+        assert window.recording_page.parent() is None
+        assert not window.capture_mode_combo.isVisible()
+        assert window.settings_panel.parent() is None
+        assert not window.settings_panel.isVisible()
     finally:
         window.close()
         app.processEvents()
@@ -218,7 +232,8 @@ def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: 
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
-        assert [action.text() for action in window.menuBar().actions()] == ["文件", "导出", "视图", "帮助"]
+        assert window.menuBar().objectName() == "WorkbenchMenuBar"
+        assert [action.text() for action in window.menuBar().actions()] == ["文件", "笔记本", "导出", "视图", "帮助"]
         assert not window.quick_toolbar.isHidden()
         assert window.record_toolbar_button.toolTip() == "录音"
         assert window.record_toolbar_button.text() == ""
@@ -228,6 +243,8 @@ def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: 
         assert window.workbench_splitter.widget(0) == window.sidebar_stack
         assert not hasattr(window, "new_recording_sidebar_button")
         assert not hasattr(window, "settings_button")
+        assert "enterEvent" not in window.record_toolbar_button.__dict__
+        assert "leaveEvent" not in window.record_toolbar_button.__dict__
     finally:
         window.close()
         app.processEvents()
@@ -237,8 +254,18 @@ def test_history_sidebar_resizes_without_blank_child_region(monkeypatch, tmp_pat
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
+        assert window.notebook_selector.objectName() == "NotebookSelector"
+        assert window.notebook_selector.currentText() == "默认笔记本"
+        assert window.notebook_selector.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        assert window.notebook_selector.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
         assert window.history_tree.textElideMode() == Qt.TextElideMode.ElideRight
-        assert window.history_tree.indentation() <= 10
+        assert window.history_tree.indentation() == 16
+        assert window.history_tree.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+        assert window.history_tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
+        assert window.history_tree.dragDropMode() == QAbstractItemView.DragDropMode.NoDragDrop
+        assert not window.history_tree.dragDropOverwriteMode()
+        assert not hasattr(window, "history_search")
+        assert not hasattr(window, "history_filter_button")
         assert window.main_sidebar.maximumWidth() > window.sidebar_stack.maximumWidth()
         assert 520 <= window.sidebar_stack.maximumWidth() <= 680
     finally:
@@ -289,6 +316,31 @@ def test_record_toolbar_button_opens_recording_dialog(monkeypatch, tmp_path: Pat
         app.processEvents()
 
 
+def test_recording_dialog_reopens_with_recording_page_visible(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.show_recording_dialog()
+        app.processEvents()
+
+        assert window.recording_dialog.isVisible()
+        assert window.recording_page.isVisible()
+        assert window.capture_mode_combo.isVisible()
+
+        window.recording_dialog.hide()
+        app.processEvents()
+        assert window.recording_page.isHidden()
+
+        window.show_recording_dialog()
+        app.processEvents()
+
+        assert window.recording_dialog.isVisible()
+        assert window.recording_page.isVisible()
+        assert window.capture_mode_combo.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
 def test_view_menu_toggles_workbench_regions(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -317,30 +369,10 @@ def test_view_menu_toggles_workbench_regions(monkeypatch, tmp_path: Path) -> Non
         app.processEvents()
 
 
-def test_history_search_filters_visible_records(monkeypatch, tmp_path: Path) -> None:
+def test_notebook_selector_filters_visible_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
-    try:
-        service = HistoryService(tmp_path / "records")
-        write_wav(tmp_path / "records" / "alpha-meeting" / "audio.wav")
-        write_wav(tmp_path / "records" / "beta-note" / "audio.wav")
-        window.history_service = service
-
-        window.load_recordings()
-        window.history_search.setText("alpha")
-        app.processEvents()
-
-        assert [record.record_id for record in window.current_items] == ["alpha-meeting"]
-        assert history_tree_record_count(window) == 1
-    finally:
-        window.close()
-        app.processEvents()
-
-
-def test_history_tree_groups_records_by_notebook(monkeypatch, tmp_path: Path) -> None:
-    app = QApplication.instance() or QApplication([])
-    window = make_window(monkeypatch, tmp_path)
-    default_dir = tmp_path / "default"
+    default_dir = tmp_path / "data"
     work_dir = tmp_path / "work"
     try:
         write_wav(default_dir / "daily" / "audio.wav")
@@ -353,11 +385,121 @@ def test_history_tree_groups_records_by_notebook(monkeypatch, tmp_path: Path) ->
 
         window.load_recordings()
 
-        assert window.history_tree.topLevelItemCount() == 2
-        assert window.history_tree.topLevelItem(0).text(0) == "默认笔记本"
-        assert window.history_tree.topLevelItem(0).child(0).text(0) == "daily"
-        assert window.history_tree.topLevelItem(1).text(0) == "工作"
-        assert window.history_tree.topLevelItem(1).child(0).text(0) == "meeting"
+        assert [window.notebook_selector.itemText(index) for index in range(window.notebook_selector.count())] == [
+            "默认笔记本",
+            "工作",
+        ]
+        assert [record.record_id for record in window.current_items] == ["daily"]
+        assert history_tree_record_count(window) == 1
+        assert history_record_item_at(window, 0).text(0) == "daily"
+        assert history_record_item_at(window, 0).toolTip(0) == "daily"
+        window.select_history_index(0)
+        assert history_record_item_at(window, 0).toolTip(0) == "daily"
+        window.history_tree.update_subtitles(window._history_subtitle_for_record)
+        assert history_record_item_at(window, 0).toolTip(0) == "daily"
+        assert window.current_record.record_id == "daily"
+        assert window.config["last_selected_record_key"] == "default:daily"
+
+        window.notebook_selector.setCurrentIndex(window.notebook_selector.findData("work"))
+        app.processEvents()
+
+        assert window.current_notebook_id == "work"
+        assert window.history_service.active_notebook_id == "work"
+        assert window.current_record is not None
+        assert window.current_record.record_id == "meeting"
+        assert [record.record_id for record in window.current_items] == ["meeting"]
+        assert history_record_item_at(window, 0).text(0) == "meeting"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_load_recordings_selects_first_record_when_no_notebook_selection(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    records_dir = tmp_path / "records"
+    try:
+        write_wav(records_dir / "a" / "audio.wav")
+        write_wav(records_dir / "b" / "audio.wav")
+        window.history_service = HistoryService(records_dir)
+
+        window.load_recordings()
+
+        assert window.current_items
+        assert window.current_record is not None
+        assert window.current_record.record_key == window.current_items[0].record_key
+        assert window.history_tree.currentItem().data(0, Qt.ItemDataRole.UserRole + 1) == window.current_record.record_key
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_notebook_selector_restores_each_notebooks_selected_record(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    default_dir = tmp_path / "data"
+    work_dir = tmp_path / "work"
+    try:
+        write_wav(default_dir / "a" / "audio.wav")
+        write_wav(default_dir / "b" / "audio.wav")
+        write_wav(work_dir / "x" / "audio.wav")
+        write_wav(work_dir / "y" / "audio.wav")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "Default", "path": str(default_dir), "is_default": True},
+            {"id": "work", "name": "Work", "path": str(work_dir), "is_default": False},
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
+        window.load_recordings()
+        assert window._select_record_by_key("default:b")
+
+        window.notebook_selector.setCurrentIndex(window.notebook_selector.findData("work"))
+        app.processEvents()
+
+        assert window.current_record is not None
+        assert window.current_record.record_key == "work:x"
+        assert window._select_record_by_key("work:y")
+
+        window.notebook_selector.setCurrentIndex(window.notebook_selector.findData("default"))
+        app.processEvents()
+
+        assert window.current_record is not None
+        assert window.current_record.record_key == "default:b"
+
+        window.notebook_selector.setCurrentIndex(window.notebook_selector.findData("work"))
+        app.processEvents()
+
+        assert window.current_record is not None
+        assert window.current_record.record_key == "work:y"
+        assert window.config["last_selected_record_keys"] == {
+            "default": "default:b",
+            "work": "work:y",
+        }
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_startup_restores_last_selected_record_and_notebook(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    default_dir = tmp_path / "default"
+    work_dir = tmp_path / "work"
+    write_wav(default_dir / "daily" / "audio.wav")
+    write_wav(work_dir / "meeting" / "audio.wav")
+    config = make_config(tmp_path)
+    config["notebooks"] = [
+        {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+    ]
+    config["active_notebook_id"] = "default"
+    config["last_selected_record_key"] = "work:meeting"
+    window = make_window_with_config(monkeypatch, config)
+    try:
+        assert window.current_notebook_id == "work"
+        assert window.notebook_selector.currentData() == "work"
+        assert window.current_record is not None
+        assert window.current_record.record_key == "work:meeting"
+        assert [record.record_id for record in window.current_items] == ["meeting"]
+        assert window.history_tree.currentItem().data(0, Qt.ItemDataRole.UserRole + 1) == "work:meeting"
     finally:
         window.close()
         app.processEvents()
@@ -382,6 +524,81 @@ def test_history_tree_selects_duplicate_record_id_by_record_key(monkeypatch, tmp
 
         assert window.current_record is not None
         assert window.current_record.record_key == "work:meeting"
+        assert window.current_notebook_id == "work"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_move_record_keeps_current_notebook_selected(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    default_dir = tmp_path / "default"
+    work_dir = tmp_path / "work"
+    try:
+        write_wav(default_dir / "daily" / "audio.wav")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
+        window.load_recordings()
+        window.select_history_index(0)
+
+        window._move_records_to_notebook(["default:daily"], "work")
+
+        assert window.current_notebook_id == "default"
+        assert window.notebook_selector.currentData() == "default"
+        assert window.current_record is None
+        assert window.current_items == []
+        assert history_tree_record_count(window) == 0
+        assert (work_dir / "daily" / "audio.wav").exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_multi_select_records_and_move_to_notebook(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    default_dir = tmp_path / "default"
+    work_dir = tmp_path / "work"
+    try:
+        write_wav(default_dir / "a" / "audio.wav")
+        write_wav(default_dir / "b" / "audio.wav")
+        write_wav(default_dir / "c" / "audio.wav")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
+        window.load_recordings()
+
+        history_record_item_at(window, 0).setSelected(True)
+        history_record_item_at(window, 2).setSelected(True)
+        expected_keys = [
+            str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1))
+            for row in (0, 2)
+        ]
+        window.history_tree.setCurrentItem(
+            history_record_item_at(window, 2),
+            0,
+            QItemSelectionModel.SelectionFlag.NoUpdate,
+        )
+
+        assert window.history_tree.selected_record_keys() == expected_keys
+
+        window.history_tree.record_selected.emit("default:c")
+
+        assert window.current_record.record_id == "c"
+        assert window.history_tree.selected_record_keys() == expected_keys
+
+        window._move_records_to_notebook(window.history_tree.selected_record_keys(), "work")
+
+        assert window.current_notebook_id == "default"
+        assert [record.record_id for record in window.current_items] == ["b"]
+        assert (work_dir / "a" / "audio.wav").exists()
+        assert (work_dir / "c" / "audio.wav").exists()
     finally:
         window.close()
         app.processEvents()
@@ -433,20 +650,116 @@ def test_escape_key_closes_settings_dialog(monkeypatch, tmp_path: Path) -> None:
         app.processEvents()
 
 
-def test_settings_notebook_page_adds_selected_directory(monkeypatch, tmp_path: Path) -> None:
+def test_new_notebook_dialog_adds_and_switches_notebook(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     selected_dir = tmp_path / "work-notebook"
     try:
-        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(selected_dir))
-        window.show_settings()
-        window.show_settings_section("notebooks")
+        class FakeDialog:
+            DialogCode = QDialog.DialogCode
 
-        window.settings_panel.add_notebook_button.click()
-        updated = window.settings_panel.updated_config()
+            def __init__(self, parent=None):
+                pass
 
-        assert any(item["path"] == str(selected_dir) for item in updated["notebooks"])
-        assert window.settings_panel.settings_stack.currentWidget() == window.settings_panel.notebooks_page
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def values(self):
+                return "工作", selected_dir
+
+        monkeypatch.setattr("src.handlers.history_view.NewNotebookDialog", FakeDialog)
+
+        window.show_new_notebook_dialog()
+
+        assert window.current_notebook_id.startswith("notebook-")
+        assert window.notebook_selector.currentText() == "工作"
+        assert any(item["name"] == "工作" and item["path"] == str(selected_dir) for item in window.config["notebooks"])
+        assert selected_dir.exists()
+        assert window.history_service.active_notebook_id == window.current_notebook_id
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_manage_notebooks_dialog_omits_missing_notebook(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    existing_dir = tmp_path / "existing"
+    missing_dir = tmp_path / "missing"
+    existing_dir.mkdir()
+    seen_ids: list[str] = []
+    try:
+        window.config["notebooks"] = [
+            {"id": "default", "name": "Default", "path": str(tmp_path / "records"), "is_default": True},
+            {"id": "missing", "name": "Missing", "path": str(missing_dir), "is_default": False},
+            {"id": "existing", "name": "Existing", "path": str(existing_dir), "is_default": False},
+        ]
+        window.config["active_notebook_id"] = "missing"
+        window.config["last_selected_record_key"] = "missing:old-record"
+
+        class FakeDialog:
+            DialogCode = QDialog.DialogCode
+
+            def __init__(self, notebooks, parent=None):
+                self._notebooks = [dict(item) for item in notebooks]
+                seen_ids[:] = [str(item.get("id") or "") for item in self._notebooks]
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def notebooks(self):
+                return [dict(item) for item in self._notebooks]
+
+        monkeypatch.setattr("src.handlers.history_view.ManageNotebooksDialog", FakeDialog)
+
+        window.show_manage_notebooks_dialog()
+
+        assert seen_ids == ["default", "existing"]
+        assert [item["id"] for item in window.config["notebooks"]] == ["default", "existing"]
+        assert window.config["active_notebook_id"] == "default"
+        assert window.config["last_selected_record_key"] == ""
+        assert not missing_dir.exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_manage_notebooks_dialog_renames_notebook(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    try:
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(tmp_path / "records"), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(work_dir), "is_default": False},
+        ]
+        window.config["active_notebook_id"] = "work"
+        window._set_current_notebook("work", persist=False)
+
+        class FakeDialog:
+            DialogCode = QDialog.DialogCode
+
+            def __init__(self, notebooks, parent=None):
+                self._notebooks = [dict(item) for item in notebooks]
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def notebooks(self):
+                updated = [dict(item) for item in self._notebooks]
+                for item in updated:
+                    if item["id"] == "work":
+                        item["name"] = "项目"
+                return updated
+
+        monkeypatch.setattr("src.handlers.history_view.ManageNotebooksDialog", FakeDialog)
+
+        window.show_manage_notebooks_dialog()
+
+        assert next(item for item in window.config["notebooks"] if item["id"] == "work")["name"] == "项目"
+        assert window.notebook_selector.currentText() == "项目"
+        assert window.current_notebook_id == "work"
     finally:
         window.close()
         app.processEvents()
@@ -477,31 +790,6 @@ def test_persist_settings_config_rebuilds_history_service_from_notebooks(monkeyp
         app.processEvents()
 
 
-def test_history_status_filter_limits_visible_records(monkeypatch, tmp_path: Path) -> None:
-    app = QApplication.instance() or QApplication([])
-    window = make_window(monkeypatch, tmp_path)
-    try:
-        service = HistoryService(tmp_path / "records")
-        write_wav(tmp_path / "records" / "audio-only" / "audio.wav")
-        write_wav(tmp_path / "records" / "done" / "audio.wav")
-        records = {record.record_id: record for record in service.scan()}
-        service.save_transcript(records["done"], "转录")
-        window.history_service = service
-
-        window.load_recordings()
-        window._set_history_filter(HistoryStatus.TRANSCRIBED.value, "已转录")
-
-        assert [record.record_id for record in window.current_items] == ["done"]
-        assert window.history_filter_button.text() == ""
-        assert window.history_filter_button.toolTip() == "筛选：已转录"
-
-        window._set_history_filter("all", "全部")
-        assert len(window.current_items) == 2
-    finally:
-        window.close()
-        app.processEvents()
-
-
 def test_detail_header_populates_record_metadata(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -520,6 +808,22 @@ def test_detail_header_populates_record_metadata(monkeypatch, tmp_path: Path) ->
         assert window.detail_time_label.text() == record.created_at.strftime("%Y-%m-%d %H:%M")
         assert not hasattr(window, "export_button")
         assert window.windowTitle() == "meeting - NoisNote"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_header_elides_long_record_name(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    long_name = "very-long-record-name-" * 12
+    try:
+        window._set_detail_title(long_name)
+
+        assert window.detail_title_label.toolTip() == long_name
+        assert window.detail_title_label.text() != long_name
+        assert len(window.detail_title_label.text()) < len(long_name)
+        assert window.detail_title_label.maximumWidth() == 520
     finally:
         window.close()
         app.processEvents()
@@ -589,20 +893,22 @@ def test_processing_notice_clicks_to_record_and_then_hides(monkeypatch, tmp_path
     try:
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "imported" / "audio.wav")
-        record = service.scan()[0]
+        write_wav(tmp_path / "records" / "selected" / "audio.wav")
         window.history_service = service
         window.load_recordings()
-        record = window.current_items[0]
+        assert window._select_record_by_id("selected")
+        record = next(item for item in window.current_items if item.record_id == "imported")
         window.history_record_notices[record.record_key] = "处理完成，点击查看详情"
         window._render_history_list()
 
-        assert history_subtitle_at(window, 0) == "处理完成，点击查看详情"
+        notice_index = next(index for index, item in enumerate(window.current_items) if item.record_key == record.record_key)
+        assert history_subtitle_at(window, notice_index) == "处理完成，点击查看详情"
 
-        window.select_history_index(0)
+        window.select_history_index(notice_index)
 
         assert window.current_record.record_id == record.record_id
         assert window.content_stack.currentWidget() == window.history_page
-        assert history_subtitle_at(window, 0) == ""
+        assert history_subtitle_at(window, notice_index) == ""
     finally:
         window.close()
         app.processEvents()
@@ -899,6 +1205,30 @@ def test_delete_history_record_uses_unified_confirm_dialog(monkeypatch, tmp_path
         app.processEvents()
 
 
+def test_settings_dialog_shows_embedded_panel(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.settings_panel.isHidden()
+
+        window.show_settings()
+        app.processEvents()
+
+        assert window.settings_dialog is not None
+        assert window.settings_dialog.isVisible()
+        assert window.settings_panel.isVisible()
+        assert window.settings_panel.parent() == window.settings_dialog
+        assert window.settings_panel.settings_stack.currentWidget() == window.settings_panel.general_page
+        assert window.settings_panel.asr_model.isVisible()
+
+        window.hide_settings()
+        app.processEvents()
+
+        assert window.settings_panel.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
 def test_menu_rename_non_current_record_keeps_current_selection(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -949,6 +1279,39 @@ def test_menu_delete_non_current_record_keeps_current_selection(monkeypatch, tmp
         assert [record.record_id for record in window.current_items] == ["selected"]
         assert window.history_tree.currentItem().data(0, Qt.ItemDataRole.UserRole + 1) == window.current_record.record_key
         assert window.content_stack.currentWidget() == window.history_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_context_delete_selected_records_deletes_batch_once(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "a" / "audio.wav")
+        write_wav(tmp_path / "records" / "b" / "audio.wav")
+        write_wav(tmp_path / "records" / "c" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        assert window._select_record_by_id("b")
+        calls: list[str] = []
+
+        def fake_confirm(parent, title, text, confirm_text="确认", cancel_text="取消"):
+            calls.append(text)
+            return True
+
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", fake_confirm)
+
+        window._delete_records_by_keys(["default:a", "default:c"])
+
+        assert len(calls) == 1
+        assert "2 条历史记录" in calls[0]
+        assert (tmp_path / "records" / "b").exists()
+        assert not (tmp_path / "records" / "a").exists()
+        assert not (tmp_path / "records" / "c").exists()
+        assert window.current_record.record_id == "b"
+        assert [record.record_id for record in window.current_items] == ["b"]
     finally:
         window.close()
         app.processEvents()
@@ -1231,7 +1594,7 @@ def test_new_recording_stops_playback_and_clears_playback_record(monkeypatch, tm
         assert fake.stopped is True
         assert window.playback_record_id == ""
         assert window.current_record is None
-        assert window.content_stack.currentWidget() == window.recording_page
+        assert window.content_stack.currentWidget() == window.history_page
     finally:
         window.close()
         app.processEvents()

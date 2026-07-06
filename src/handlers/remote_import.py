@@ -16,7 +16,7 @@ class RemoteImportHandlers:
     def import_remote_url(self) -> None:
         """弹出链接输入框并启动远程导入。"""
         if self.is_recording:
-            self.show_recording_page()
+            self.show_recording_dialog()
             self._set_status("正在录音，完成后再导入")
             return
         if self.is_processing:

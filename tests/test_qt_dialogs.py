@@ -5,9 +5,10 @@ from datetime import datetime, timezone
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton, QTableWidget, QWidget
 
 from src.app.update import UpdateInfo
+from src.ui.notebook_dialogs import ManageNotebooksDialog
 from src.ui.widgets.dialogs import (
     _ConfirmDialog,
     _add_confirm_buttons,
@@ -17,6 +18,33 @@ from src.ui.widgets.dialogs import (
     confirm_without_icon,
 )
 from src.ui.widgets.update_dialog import UpdateDialog
+
+
+def test_manage_notebooks_dialog_uses_list_rows_instead_of_edit_table(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    notebooks = [
+        {"id": "default", "name": "默认", "path": r"C:\NoisNote\data", "is_default": True},
+        {"id": "work", "name": "工作", "path": r"D:\NoisNote\work", "is_default": False},
+    ]
+    dialog = ManageNotebooksDialog(notebooks)
+    try:
+        assert dialog.findChild(QTableWidget) is None
+        assert len(dialog.findChildren(QLabel, "NotebookManageName")) == 2
+        assert dialog.findChild(QLabel, "NotebookDefaultBadge").text() == "默认"
+        assert dialog.ok_button.isEnabled() is False
+
+        monkeypatch.setattr(
+            "src.ui.notebook_dialogs.QInputDialog.getText",
+            lambda *args, **kwargs: ("项目", True),
+        )
+
+        dialog._rename_notebook(dialog._notebooks[1])
+
+        assert dialog.ok_button.isEnabled() is True
+        assert dialog.notebooks()[1]["name"] == "项目"
+    finally:
+        dialog.close()
+        app.processEvents()
 
 
 def test_confirm_dialog_default_button_texts_are_confirm_and_cancel() -> None:

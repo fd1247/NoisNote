@@ -207,18 +207,7 @@ class RecordingHandlers:
     def show_recording_dialog(self) -> None:
         """显示录音源和录音状态弹窗。"""
         if self.recording_dialog is None:
-            self.recording_dialog = RecordingDialog(
-                {
-                    "capture_mode": self.capture_mode_combo,
-                    "system_device": self.system_device_widget,
-                    "microphone_device": self.microphone_device_widget,
-                    "device_label": self.record_device_label,
-                    "duration": self.duration_label,
-                    "level": self.level_bar,
-                },
-                self,
-            )
-            self.recording_dialog.start_stop_button.clicked.connect(self.toggle_recording)
+            self.recording_dialog = RecordingDialog(self.recording_page, self.record_button, self)
         self.recording_dialog.sync_recording_state(self.is_recording)
         self.recording_dialog.show()
         self.recording_dialog.raise_()
@@ -363,19 +352,18 @@ class RecordingHandlers:
         self._sync_recording_dialog_state()
 
     def show_recording_page(self) -> None:
-        """显示新录音/正在录音页面。"""
+        """兼容旧入口：停止播放并打开录音弹窗。"""
         if hasattr(self, "stop_playback"):
             self.stop_playback()
         if hasattr(self, "playback_record_id"):
             self.playback_record_id = ""
-        if self.content_stack.currentWidget() == self.settings_panel:
-            self.hide_settings()
-        self.content_stack.setCurrentWidget(self.recording_page)
+        self.content_stack.setCurrentWidget(self.history_page)
         self.page_title_label.setText("")
         self._set_app_window_title()
         if hasattr(self, "history_tree"):
             self.history_tree.clearSelection()
         self._sync_history_selection(-1)
+        self.show_recording_dialog()
 
     def _update_recording_entry(self) -> None:
         self._sync_sidebar_actions()
@@ -443,11 +431,15 @@ class RecordingHandlers:
 
     def new_recording(self) -> None:
         if self.is_recording:
-            self.show_recording_page()
+            self.show_recording_dialog()
             return
         if self.is_processing:
             self._set_status("正在处理中，请稍后重试")
             return
+        if hasattr(self, "stop_playback"):
+            self.stop_playback()
+        if hasattr(self, "playback_record_id"):
+            self.playback_record_id = ""
 
         self.current_record = None
         self.processing_source = None
@@ -471,5 +463,10 @@ class RecordingHandlers:
         self.level_text_label.setText("")
         self.recording_hint_label.setText("准备捕获系统声音")
         self._update_recording_entry()
-        self.show_recording_page()
+        self.content_stack.setCurrentWidget(self.history_page)
+        self.page_title_label.setText("")
+        self._set_app_window_title()
+        if hasattr(self, "history_tree"):
+            self.history_tree.clearSelection()
+        self._sync_history_selection(-1)
         self._set_status("")

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # 设备轮询间隔（秒）
 _POLL_INTERVAL = 1.0
-
+_LOOPBACK_NAME_RE = re.compile(r"\b(loopback|what u hear|stereo mix|立体声混音|系统声音)\b", re.IGNORECASE)
 
 class DeviceManager:
     """音频设备管理器。
@@ -111,7 +112,7 @@ class DeviceManager:
             mic.id == speaker.id（WASAPI 端点 ID 精确匹配）
         """
         try:
-            mics = sc.all_microphones(include_loopback=True)
+            mics = _list_loopback_microphones()
             if preferred_id:
                 for mic in mics:
                     if mic.id == preferred_id:
@@ -128,8 +129,11 @@ class DeviceManager:
 
             # 如果 ID 匹配不上，尝试用名字匹配（兼容非标准设备）
             for mic in mics:
-                if mic.name == speaker.name:
+                if _same_endpoint_name(mic.name, speaker.name):
                     return mic
+
+            if len(mics) == 1:
+                return mics[0]
 
             return None
         except Exception as e:
@@ -142,7 +146,7 @@ class DeviceManager:
         try:
             default_speaker = _get_default_speaker()
             default_id = default_speaker.id if default_speaker else None
-            mics = sc.all_microphones(include_loopback=True)
+            mics = _list_loopback_microphones()
             for mic in mics:
                 devices.append(
                     CaptureDeviceInfo(
@@ -232,6 +236,53 @@ def _get_default_speaker():
         return None
 
 
+
+def _list_loopback_microphones() -> list:
+    """只返回真正的系统回环录音端点。"""
+    loopback_candidates = list(sc.all_microphones(include_loopback=True))
+    candidate_ids = {str(getattr(mic, "id", "")) for mic in loopback_candidates}
+    try:
+        normal_ids = {str(getattr(mic, "id", "")) for mic in sc.all_microphones(include_loopback=False)}
+    except Exception:
+        normal_ids = set()
+    if normal_ids == candidate_ids:
+        normal_ids = set()
+
+    filtered = [
+        mic
+        for mic in loopback_candidates
+        if _looks_like_loopback(mic) or str(getattr(mic, "id", "")) not in normal_ids
+    ]
+    return filtered or loopback_candidates
+
+def _looks_like_loopback(mic) -> bool:
+    """根据 soundcard 属性和名称判断设备是否为 WASAPI loopback。"""
+    for attr in ("isloopback", "is_loopback", "_isloopback", "_is_loopback"):
+        value = getattr(mic, attr, None)
+        if isinstance(value, bool) and value:
+            return True
+    name = str(getattr(mic, "name", ""))
+    return bool(_LOOPBACK_NAME_RE.search(name))
+
+def _same_endpoint_name(left: str, right: str) -> bool:
+    """比较去掉 loopback 后缀后的端点名称。"""
+    normalized_left = _normalize_endpoint_name(left)
+    normalized_right = _normalize_endpoint_name(right)
+    if not normalized_left or not normalized_right:
+        return False
+    return (
+        normalized_left == normalized_right
+        or normalized_left in normalized_right
+        or normalized_right in normalized_left
+    )
+
+def _normalize_endpoint_name(value: str) -> str:
+    text = value.lower()
+    text = _LOOPBACK_NAME_RE.sub(" ", text)
+    text = re.sub(r"[\[\]\(\)（）:：,，._-]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
 # ---- 公共函数 ----
 
 def list_capture_devices() -> list[CaptureDeviceInfo]:
@@ -252,7 +303,7 @@ def list_capture_devices() -> list[CaptureDeviceInfo]:
 
     # 系统声音 loopback 设备
     try:
-        mics = sc.all_microphones(include_loopback=True)
+        mics = _list_loopback_microphones()
         for mic in mics:
             devices.append(
                 CaptureDeviceInfo(

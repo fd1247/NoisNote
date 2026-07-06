@@ -2,51 +2,39 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class RecordingDialog(QDialog):
-    """主界面中间显示的录音控制窗口。"""
+    """承载原录音页布局的录音控制窗口。"""
 
-    def __init__(self, controls: dict[str, QWidget], parent=None):
+    def __init__(self, recording_page: QWidget, start_stop_button: QPushButton, parent=None):
         super().__init__(parent)
         self.setWindowTitle("录音")
         self.setMinimumSize(440, 360)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(recording_page)
+        recording_page.show()
+        self.recording_page = recording_page
+        self.start_stop_button = start_stop_button
 
-        title = QLabel("录音")
-        title.setObjectName("DetailTitle")
-        layout.addWidget(title)
+    def showEvent(self, event) -> None:
+        self.recording_page.show()
+        super().showEvent(event)
 
-        for key in (
-            "capture_mode",
-            "system_device",
-            "microphone_device",
-            "device_label",
-            "duration",
-            "level",
-        ):
-            widget = controls.get(key)
-            if widget is not None:
-                layout.addWidget(widget)
+    def hideEvent(self, event) -> None:
+        self.recording_page.hide()
+        super().hideEvent(event)
 
-        self.wave_label = QLabel("▁▃▆▇▆▃▁")
-        self.wave_label.setObjectName("RecordingWave")
-        self.wave_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.wave_label)
-
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        self.start_stop_button = QPushButton("开始录音")
-        self.start_stop_button.setObjectName("PrimaryButton")
-        actions.addWidget(self.start_stop_button)
-        layout.addLayout(actions)
+    def closeEvent(self, event) -> None:
+        self.recording_page.hide()
+        super().closeEvent(event)
 
     def sync_recording_state(self, is_recording: bool) -> None:
         self.start_stop_button.setText("结束录音" if is_recording else "开始录音")
-        self.start_stop_button.setObjectName("DangerButton" if is_recording else "PrimaryButton")
+        self.start_stop_button.setObjectName("DangerButton" if is_recording else "RecordButton")
         self.start_stop_button.style().unpolish(self.start_stop_button)
         self.start_stop_button.style().polish(self.start_stop_button)
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -665,12 +666,47 @@ class HistoryService(HistoryStorageMixin):
         if target_dir.exists():
             return MoveRecordResult(False, source_dir, target_dir, f"目标笔记本中已存在同名记录：{source_dir.name}")
 
+        temp_dir = target_root / f".move-{source_dir.name}-{uuid.uuid4().hex[:8]}"
         try:
             target_root.mkdir(parents=True, exist_ok=True)
-            source_dir.rename(target_dir)
+            shutil.copytree(source_dir, temp_dir)
+            if target_dir.exists():
+                shutil.rmtree(temp_dir)
+                return MoveRecordResult(False, source_dir, target_dir, f"目标笔记本中已存在同名记录：{source_dir.name}")
+            temp_dir.rename(target_dir)
+            try:
+                shutil.rmtree(source_dir)
+            except OSError as exc:
+                rollback_error = self._remove_move_target(target_dir)
+                if rollback_error:
+                    return MoveRecordResult(
+                        False,
+                        source_dir,
+                        target_dir,
+                        f"移动失败：{exc}；目标目录回滚失败：{rollback_error}，请手动检查重复记录。",
+                    )
+                return MoveRecordResult(False, source_dir, target_dir, f"移动失败：{exc}")
         except OSError as exc:
+            cleanup_error = self._remove_move_target(temp_dir)
+            if cleanup_error:
+                return MoveRecordResult(
+                    False,
+                    source_dir,
+                    target_dir,
+                    f"移动失败：{exc}；临时目录清理失败：{cleanup_error}",
+                )
             return MoveRecordResult(False, source_dir, target_dir, f"移动失败：{exc}")
         return MoveRecordResult(True, source_dir, target_dir, "记录已移动")
+
+    def _remove_move_target(self, path: Path) -> str:
+        """清理移动过程中的目标或临时目录，失败时返回错误信息。"""
+        if not path.exists():
+            return ""
+        try:
+            shutil.rmtree(path)
+            return ""
+        except OSError as exc:
+            return str(exc)
 
     def delete_record(self, record: HistoryRecord) -> DeleteResult:
         """删除记录及其关联文件，删除前进行路径边界校验。"""

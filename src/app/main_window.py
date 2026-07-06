@@ -15,7 +15,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QSplitter,
@@ -43,7 +42,7 @@ from ..history.service import HistoryRecord, HistoryService
 from ..model_registry.downloader import ModelDownloadManager
 from ..ui.settings import SettingsPanel
 from ..ui.content import HistoryPageCallbacks, build_history_page
-from ..ui.sidebar import build_history_sidebar, build_settings_sidebar
+from ..ui.sidebar import build_history_sidebar
 from ..ui.icons import make_action_icon, make_app_icon
 from ..ui.recording import build_recording_page
 from ..ui.result import set_result_tab, set_summary_text, set_transcript_text
@@ -85,8 +84,7 @@ class MainWindow(
         self.processing_record: HistoryRecord | None = None
         self.all_history_items: list[HistoryRecord] = []
         self.current_items: list[HistoryRecord] = []
-        self.history_search_text = ""
-        self.history_status_filter = "all"
+        self.current_notebook_id = str(self.config.get("active_notebook_id") or "default")
         self.active_workers: list[object] = []
         self.is_recording = False
         self.is_processing = False
@@ -137,6 +135,7 @@ class MainWindow(
         self._init_recorder()
         self.load_recordings()
         self._import_demo_audio_if_empty()
+        self._restore_last_selected_record()
         self._set_status("")
         log_event(
             "app.window.ready",
@@ -149,19 +148,19 @@ class MainWindow(
         self._build_workbench_chrome()
 
         root = QWidget()
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         self.setCentralWidget(root)
+
+        root_layout.addWidget(self.quick_toolbar)
 
         self.sidebar_stack = QStackedWidget()
         self.sidebar_stack.setMinimumWidth(220)
         self.sidebar_stack.setMaximumWidth(620)
         self.main_sidebar = self._build_sidebar()
-        self.settings_sidebar = self._build_settings_sidebar()
         self.main_sidebar.setMinimumWidth(220)
         self.sidebar_stack.addWidget(self.main_sidebar)
-        self.sidebar_stack.addWidget(self.settings_sidebar)
 
         self.workbench_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.workbench_splitter.setObjectName("WorkbenchSplitter")
@@ -175,7 +174,7 @@ class MainWindow(
         self.workbench_splitter.setStretchFactor(2, 0)
         self.workbench_splitter.setSizes([240, 760, 240])
 
-        root_layout.addWidget(self.workbench_splitter)
+        root_layout.addWidget(self.workbench_splitter, stretch=1)
 
     def _build_workbench_chrome(self) -> None:
         toolbar_controls = build_quick_toolbar(
@@ -193,16 +192,14 @@ class MainWindow(
         self.remote_import_toolbar_button = toolbar_controls.remote_import_button
         self.export_toolbar_button = toolbar_controls.export_button
         self.settings_toolbar_button = toolbar_controls.settings_button
-        self.record_toolbar_button.enterEvent = self._show_recording_status_popup
-        self.record_toolbar_button.leaveEvent = self._hide_recording_status_popup
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.quick_toolbar)
-
         view_actions = install_workbench_menus(
             self,
             record=self.show_recording_dialog,
             import_audio=self.import_audio_recording,
             remote_import=self.import_remote_url,
             export_result=self._export_result_with_format,
+            new_notebook=self.show_new_notebook_dialog,
+            manage_notebooks=self.show_manage_notebooks_dialog,
             settings=self.show_settings,
             check_update=self._show_update_check,
             toggle_quick_toolbar=self._set_quick_toolbar_visible,
@@ -234,39 +231,17 @@ class MainWindow(
     def _build_sidebar(self) -> QWidget:
         sidebar, controls = build_history_sidebar(
             self,
-            make_action_icon,
             self._select_history_item,
         )
-        self.history_search = controls.history_search
-        self.history_filter_button = controls.history_filter_button
+        self.notebook_selector = controls.notebook_selector
         self.history_tree = controls.history_tree
         self.empty_history_label = controls.empty_history_label
-        self.history_search.textChanged.connect(self._on_history_search_changed)
-        self.history_filter_button.setMenu(self._build_history_filter_menu())
+        self._refresh_notebook_selector()
+        self.notebook_selector.currentIndexChanged.connect(self._on_notebook_selection_changed)
         self.history_tree.rename_requested.connect(self._rename_record_by_key)
         self.history_tree.open_folder_requested.connect(self._open_record_folder_by_key)
-        self.history_tree.delete_requested.connect(self._delete_record_by_key)
-        self.history_tree.move_requested.connect(self._move_record_to_notebook)
-        return sidebar
-
-    def _build_settings_sidebar(self) -> QWidget:
-        sidebar, controls = build_settings_sidebar(
-            self,
-            make_action_icon,
-            self.hide_settings,
-            self.show_settings_section,
-        )
-        self.settings_back_button = controls.back_button
-        self.settings_general_button = controls.general_button
-        self.settings_models_button = controls.models_button
-        self.settings_hotwords_button = controls.hotwords_button
-        self.settings_shortcuts_button = controls.shortcuts_button
-        self.settings_nav_buttons = [
-            self.settings_general_button,
-            self.settings_models_button,
-            self.settings_hotwords_button,
-            self.settings_shortcuts_button,
-        ]
+        self.history_tree.delete_requested.connect(self._delete_records_by_keys)
+        self.history_tree.move_requested.connect(self._move_records_to_notebook)
         return sidebar
 
     def _build_main_area(self) -> QWidget:
@@ -286,19 +261,20 @@ class MainWindow(
         self.content_stack = QStackedWidget()
         self.recording_page = self._build_recording_page()
         self.history_page = self._build_history_page()
-        self.settings_panel = SettingsPanel(self.config, self.model_download_manager, self)
+        self.settings_panel = SettingsPanel(self.config, self.model_download_manager, None)
         self.settings_panel.saved.connect(self._apply_settings_config)
         self.settings_panel.cancelled.connect(self.hide_settings)
         self.settings_panel.hotwords_changed.connect(self._persist_settings_config)
-        self.content_stack.addWidget(self.recording_page)
+        self.settings_panel.hide()
         self.content_stack.addWidget(self.history_page)
+        self.content_stack.setCurrentWidget(self.history_page)
 
         layout.addWidget(self.content_stack, stretch=1)
         return container
 
     def _build_recording_page(self) -> QWidget:
         page, controls = build_recording_page(
-            self,
+            None,
             make_action_icon,
             self.toggle_recording,
             self._on_capture_mode_changed,
@@ -315,6 +291,7 @@ class MainWindow(
         self.level_text_label = controls.level_text_label
         self.record_device_label = controls.record_device_label
         self.recording_hint_label = controls.recording_hint_label
+        page.hide()
         return page
 
     def _build_history_page(self) -> QWidget:
@@ -441,6 +418,19 @@ class MainWindow(
                 message="导入内置测试音频失败",
                 context={"error": str(exc)},
             )
+
+    def _restore_last_selected_record(self) -> None:
+        """启动后恢复上次选中的笔记本和记录。"""
+        record_key = self._last_selected_record_key_for_notebook(self.current_notebook_id)
+        if not record_key:
+            record_key = str(self.config.get("last_selected_record_key") or "")
+        if not record_key:
+            self._restore_visible_record_selection()
+            return
+        if self._select_record_by_key(record_key):
+            return
+        self._clear_persisted_record_selection(notebook_id=self.current_notebook_id, record_key=record_key)
+        self._restore_visible_record_selection()
 
     def _resolve_demo_audio_path(self) -> Path | None:
         """定位内置测试音频文件路径。"""
@@ -576,6 +566,66 @@ class MainWindow(
             self.new_recording()
         self.load_recordings()
         self._set_status(result.message)
+
+    def _delete_records(self, records: list[HistoryRecord]) -> None:
+        """批量删除历史记录，只弹出一次确认。"""
+        if not records:
+            return
+        confirmed = confirm_without_icon(
+            self,
+            "删除历史记录",
+            f"确定删除选中的 {len(records)} 条历史记录吗?\n"
+            "音频文件、转录结果等都会被清理。",
+        )
+        if not confirmed:
+            self._set_status("已取消删除")
+            return
+
+        current_key = self.current_record.record_key if self.current_record else ""
+        clear_current = any(record.record_key == current_key for record in records)
+        failures: list[str] = []
+        deleted_count = 0
+        for record in records:
+            if record.record_key == self.playback_record_id:
+                self.stop_playback()
+                self.playback_record_id = ""
+                QApplication.processEvents()
+            log_event(
+                "record.delete.started",
+                module="history",
+                message="开始删除历史记录",
+                record_id=record.record_id,
+                context={"record": record_context(record)},
+            )
+            result = self.history_service.delete_record(record)
+            if not result.success:
+                log_event(
+                    "record.delete.failed",
+                    level="ERROR",
+                    module="history",
+                    message="删除历史记录失败",
+                    record_id=record.record_id,
+                    context={"record": record_context(record), "error": result.message},
+                    error_code="HIS-002",
+                )
+                failures.append(f"{record.display_name}: {result.message}")
+                continue
+            deleted_count += 1
+            log_event(
+                "record.delete.completed",
+                module="history",
+                message="历史记录已删除",
+                record_id=record.record_id,
+                context={"deleted_count": len(result.deleted_paths), "skipped_count": len(result.skipped_paths)},
+            )
+
+        if clear_current:
+            self._clear_missing_current_record()
+        self.load_recordings()
+        if failures:
+            self._show_error("部分记录删除失败：\n" + "\n".join(failures))
+        else:
+            self._set_status(f"已删除 {deleted_count} 条记录")
 
     def _set_status(self, text: str) -> None:
         self.status_label.setText(text)

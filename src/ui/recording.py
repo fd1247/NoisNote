@@ -29,7 +29,7 @@ class RecordingPageControls:
 
 
 def build_recording_page(
-    parent: QWidget,
+    parent: QWidget | None,
     make_icon: Callable[[str], QIcon],
     toggle_recording: Callable[[], None],
     capture_mode_changed: Callable[[], None],

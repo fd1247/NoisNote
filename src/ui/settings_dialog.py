@@ -38,7 +38,6 @@ class SettingsDialog(QDialog):
 
         for section, label in (
             ("general", "通用"),
-            ("notebooks", "笔记本"),
             ("models", "模型"),
             ("hotwords", "热词"),
             ("shortcuts", "快捷键"),
@@ -53,6 +52,14 @@ class SettingsDialog(QDialog):
 
         root.addWidget(nav)
         root.addWidget(panel, stretch=1)
+
+    def showEvent(self, event) -> None:
+        self._panel.show()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self._panel.hide()
+        super().hideEvent(event)
 
     def show_section(self, section: str) -> None:
         """切换设置窗口内的设置分类。"""

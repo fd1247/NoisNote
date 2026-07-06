@@ -72,6 +72,8 @@ def install_workbench_menus(
     import_audio: Callable[[], None],
     remote_import: Callable[[], None],
     export_result: Callable[[str], None],
+    new_notebook: Callable[[], None],
+    manage_notebooks: Callable[[], None],
     settings: Callable[[], None],
     check_update: Callable[[], None],
     toggle_quick_toolbar: Callable[[bool], None],
@@ -81,12 +83,17 @@ def install_workbench_menus(
 ) -> dict[str, QAction]:
     """安装主菜单并返回视图菜单 action 引用。"""
     menu_bar = window.menuBar()
+    menu_bar.setObjectName("WorkbenchMenuBar")
     menu_bar.clear()
 
     file_menu = menu_bar.addMenu("文件")
     file_menu.addAction("录音", record)
     file_menu.addAction("导入音视频", import_audio)
     file_menu.addAction("从链接导入", remote_import)
+
+    notebook_menu = menu_bar.addMenu("笔记本")
+    notebook_menu.addAction("新建笔记本", new_notebook)
+    notebook_menu.addAction("管理笔记本", manage_notebooks)
 
     export_menu = menu_bar.addMenu("导出")
     _add_export_actions(export_menu, export_result)

@@ -118,6 +118,11 @@ QLabel#SectionTitle {
     font-weight: 400;
     color: #6b7280;
 }
+QLabel#NotebookSectionTitle {
+    font-size: 13px;
+    font-weight: 400;
+    color: #111827;
+}
 QLabel#Muted {
     color: #6b7280;
 }
@@ -125,6 +130,7 @@ QLabel#DetailTitle {
     color: #111827;
     font-size: 22px;
     font-weight: 700;
+    max-height: 32px;
 }
 QLabel#DetailMetaLabel {
     color: #7a8496;
@@ -438,17 +444,6 @@ QPushButton#SmallButton {
     padding: 5px 10px;
     min-width: 52px;
 }
-QPushButton#HistoryFilterButton {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    color: #374151;
-    padding: 7px 8px;
-}
-QPushButton#HistoryFilterButton::menu-indicator {
-    image: none;
-    width: 0;
-}
 QPushButton#PlayerIconButton,
 QPushButton#PlayerPlayButton {
     background: #ffffff;
@@ -523,19 +518,23 @@ QMenu::separator {
     background: #e5e7eb;
     margin: 5px 8px;
 }
-QMenuBar {
+QMenuBar#WorkbenchMenuBar {
     background: #ffffff;
     border: none;
-    padding: 0;
+    border-bottom: 1px solid #eef2f7;
+    padding: 2px 12px 0 0;
+    spacing: 8px;
 }
-QMenuBar::item {
+QMenuBar#WorkbenchMenuBar::item {
     background: transparent;
     border: none;
-    padding: 6px 18px;
-    outline: none;
+    border-radius: 4px;
+    color: #111827;
+    margin: 0;
+    padding: 5px 12px 6px 12px;
 }
-QMenuBar::item:selected,
-QMenuBar::item:pressed {
+QMenuBar#WorkbenchMenuBar::item:selected,
+QMenuBar#WorkbenchMenuBar::item:pressed {
     background: #f3f4f6;
     border: none;
     color: #111827;
@@ -614,12 +613,63 @@ QLineEdit#HotwordSearchBox {
     min-height: 28px;
     padding: 7px 10px;
 }
-QLineEdit#HistorySearchBox {
+QComboBox#NotebookSelector {
     background: #ffffff;
     border: 1px solid #d8dee8;
+    border-radius: 4px;
+    min-height: 24px;
+    padding: 5px 28px 5px 8px;
+}
+QComboBox#NotebookSelector:hover,
+QComboBox#NotebookSelector:focus,
+QComboBox#NotebookSelector:on {
+    border: 2px solid #2563eb;
+}
+QLabel#NotebookDialogTitle {
+    color: #111827;
+    font-size: 18px;
+    font-weight: 700;
+}
+QLabel#NotebookDialogCount {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 4px;
+    color: #1d4ed8;
+    font-size: 12px;
+    padding: 2px 7px;
+}
+QScrollArea#NotebookManageScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#NotebookManageScroll QWidget {
+    background: transparent;
+}
+QFrame#NotebookManageRow {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
     border-radius: 8px;
-    min-height: 28px;
-    padding: 6px 9px;
+}
+QFrame#NotebookManageRow:hover {
+    border-color: #bfdbfe;
+    background: #f8fbff;
+}
+QLabel#NotebookManageName {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 600;
+}
+QLabel#NotebookManagePath {
+    color: #6b7280;
+    font-size: 12px;
+}
+QLabel#NotebookDefaultBadge {
+    background: #ecfdf5;
+    border: 1px solid #bbf7d0;
+    border-radius: 4px;
+    color: #166534;
+    font-size: 11px;
+    padding: 1px 6px;
 }
 QListWidget {
     background: transparent;
@@ -778,17 +828,15 @@ QTreeWidget#HistoryTree {
     outline: 0;
 }
 QTreeWidget#HistoryTree::item {
-    min-height: 34px;
-    padding: 4px 6px;
+    min-height: 28px;
+    padding: 0;
 }
 QTreeWidget#HistoryTree::item:hover {
-    background: #eef2f7;
-    border-radius: 6px;
+    background: #ececec;
 }
 QTreeWidget#HistoryTree::item:selected {
     background: #dbeafe;
     color: #111827;
-    border-radius: 6px;
 }
 QFrame#RecordingStatusPopup {
     background: #111827;

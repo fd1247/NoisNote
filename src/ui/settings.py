@@ -1,7 +1,6 @@
 """设置页面与模型管理 Qt 控件。"""
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -27,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..app.config import ANTHROPIC_DEFAULT_BASE_URL, ANTHROPIC_DEFAULT_MODEL, normalize_notebooks
+from ..app.config import ANTHROPIC_DEFAULT_BASE_URL, ANTHROPIC_DEFAULT_MODEL
 from ..hotwords.service import HotwordService
 from ..hotwords.import_export import export_hotword_sets, import_hotword_sets
 from ..model_registry.downloader import ModelDownloadManager
@@ -77,13 +76,11 @@ class SettingsPanel(QWidget):
 
         self.settings_stack = QStackedWidget()
         self.general_page = self._build_general_tab()
-        self.notebooks_page = self._build_notebooks_page()
         self.model_manager = ModelManagerWidget(self.config, self.download_manager, self)
         self.model_manager.models_changed.connect(self._refresh_asr_model_options)
         self.hotwords_page = self._build_hotword_page()
         self.shortcuts_page = self._build_shortcuts_page()
         self.settings_stack.addWidget(self.general_page)
-        self.settings_stack.addWidget(self.notebooks_page)
         self.settings_stack.addWidget(self.model_manager)
         self.settings_stack.addWidget(self.hotwords_page)
         self.settings_stack.addWidget(self.shortcuts_page)
@@ -109,7 +106,6 @@ class SettingsPanel(QWidget):
         self._sync_hotword_service()
         sections = {
             "general": self.general_page,
-            "notebooks": self.notebooks_page,
             "models": self.model_manager,
             "hotwords": self.hotwords_page,
             "shortcuts": self.shortcuts_page,
@@ -118,8 +114,6 @@ class SettingsPanel(QWidget):
         self.settings_stack.setCurrentWidget(target)
         if target is self.general_page:
             self._refresh_asr_model_options()
-        elif target is self.notebooks_page:
-            self._refresh_notebook_list()
         elif target is self.hotwords_page:
             self._refresh_hotword_list()
         self.footer_widget.setVisible(target is not self.hotwords_page)
@@ -139,7 +133,6 @@ class SettingsPanel(QWidget):
         self.auto_summarize.setChecked(bool(self.config["audio"].get("auto_summarize", True)))
         self.auto_transcribe.setChecked(bool(self.config["audio"].get("auto_transcribe", True)))
         self.model_manager.refresh_lists()
-        self._refresh_notebook_list(reset=True)
         self._refresh_hotword_list()
 
     def _sync_hotword_service(self) -> None:
@@ -248,138 +241,6 @@ class SettingsPanel(QWidget):
         layout.addStretch(1)
         return page
 
-    def _build_notebooks_page(self) -> QWidget:
-        """创建笔记本设置页。"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
-
-        form = QGridLayout()
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(10)
-        form.setColumnMinimumWidth(0, 110)
-        form.setColumnStretch(1, 1)
-
-        self.active_notebook_combo = QComboBox()
-        form.addWidget(self._make_label("新记录保存到"), 0, 0)
-        form.addWidget(self.active_notebook_combo, 0, 1)
-        layout.addLayout(form)
-
-        toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.setSpacing(8)
-        self.add_notebook_button = QPushButton("添加笔记本")
-        self.add_notebook_button.setObjectName("PrimaryButton")
-        self.add_notebook_button.clicked.connect(self._on_add_notebook)
-        self.remove_notebook_button = QPushButton("移除")
-        self.remove_notebook_button.setObjectName("SmallButton")
-        self.remove_notebook_button.clicked.connect(self._on_remove_notebook)
-        toolbar.addWidget(self.add_notebook_button)
-        toolbar.addWidget(self.remove_notebook_button)
-        toolbar.addStretch(1)
-
-        self.notebook_list = QListWidget()
-        self.notebook_list.setObjectName("NotebookList")
-        self.notebook_list.currentRowChanged.connect(self._sync_notebook_buttons)
-
-        hint = QLabel("默认笔记本兼容现有 data 目录；新增笔记本使用用户选择的目录。")
-        hint.setObjectName("Muted")
-        hint.setWordWrap(True)
-
-        layout.addLayout(toolbar)
-        layout.addWidget(self.notebook_list, stretch=1)
-        layout.addWidget(hint)
-        self._refresh_notebook_list(reset=True)
-        return page
-
-    def _refresh_notebook_list(self, reset: bool = False) -> None:
-        """刷新笔记本列表和当前笔记本下拉框。"""
-        if not hasattr(self, "notebook_list"):
-            return
-        working_config = dict(self.config)
-        notebooks, _changed = normalize_notebooks(working_config)
-        if reset or not hasattr(self, "_notebook_items") or self.settings_stack.currentWidget() is not self.notebooks_page:
-            self._notebook_items = [dict(item) for item in notebooks]
-
-        selected_id = self._selected_notebook_id()
-        active_id = str(self.config.get("active_notebook_id") or "default")
-        if hasattr(self, "active_notebook_combo"):
-            combo_active = self.active_notebook_combo.currentData()
-            if combo_active:
-                active_id = str(combo_active)
-
-        self.notebook_list.blockSignals(True)
-        self.notebook_list.clear()
-        for item in self._notebook_items:
-            label = f"{item.get('name') or '笔记本'}\n{item.get('path') or ''}"
-            list_item = QListWidgetItem(label)
-            list_item.setData(Qt.ItemDataRole.UserRole, str(item.get("id") or ""))
-            list_item.setToolTip(str(item.get("path") or ""))
-            self.notebook_list.addItem(list_item)
-            if str(item.get("id") or "") == selected_id:
-                self.notebook_list.setCurrentItem(list_item)
-        self.notebook_list.blockSignals(False)
-
-        self.active_notebook_combo.blockSignals(True)
-        self.active_notebook_combo.clear()
-        active_index = 0
-        for index, item in enumerate(self._notebook_items):
-            item_id = str(item.get("id") or "")
-            self.active_notebook_combo.addItem(str(item.get("name") or item_id), item_id)
-            if item_id == active_id:
-                active_index = index
-        self.active_notebook_combo.setCurrentIndex(active_index)
-        self.active_notebook_combo.blockSignals(False)
-        self._sync_notebook_buttons()
-
-    def _selected_notebook_id(self) -> str:
-        if not hasattr(self, "notebook_list"):
-            return ""
-        current = self.notebook_list.currentItem()
-        return str(current.data(Qt.ItemDataRole.UserRole) or "") if current else ""
-
-    def _sync_notebook_buttons(self) -> None:
-        if not hasattr(self, "remove_notebook_button"):
-            return
-        selected_id = self._selected_notebook_id()
-        self.remove_notebook_button.setEnabled(bool(selected_id and selected_id != "default"))
-
-    def _on_add_notebook(self) -> None:
-        path_text = QFileDialog.getExistingDirectory(self, "选择笔记本目录")
-        if not path_text:
-            return
-        path = Path(path_text).expanduser()
-        path_key = str(path.resolve(strict=False)).lower()
-        for item in self._notebook_items:
-            existing_key = str(Path(str(item.get("path") or "")).expanduser().resolve(strict=False)).lower()
-            if existing_key == path_key:
-                alert_without_icon(self, "无法添加", "这个目录已经在笔记本列表中")
-                return
-        notebook_id = f"notebook-{uuid.uuid4().hex[:8]}"
-        self._notebook_items.append(
-            {
-                "id": notebook_id,
-                "name": path.name or "笔记本",
-                "path": str(path),
-                "is_default": False,
-            }
-        )
-        self._refresh_notebook_list()
-        for row in range(self.notebook_list.count()):
-            if self.notebook_list.item(row).data(Qt.ItemDataRole.UserRole) == notebook_id:
-                self.notebook_list.setCurrentRow(row)
-                break
-
-    def _on_remove_notebook(self) -> None:
-        selected_id = self._selected_notebook_id()
-        if not selected_id or selected_id == "default":
-            return
-        self._notebook_items = [item for item in self._notebook_items if item.get("id") != selected_id]
-        if self.active_notebook_combo.currentData() == selected_id:
-            self.config["active_notebook_id"] = "default"
-        self._refresh_notebook_list()
-
     def _refresh_asr_model_options(self) -> None:
         """刷新通用页中的已下载 ASR 模型列表。"""
         if not hasattr(self, "asr_model"):
@@ -474,13 +335,6 @@ class SettingsPanel(QWidget):
 
         config["audio"]["auto_transcribe"] = self.auto_transcribe.isChecked()
         config["audio"]["auto_summarize"] = self.auto_summarize.isChecked()
-        config["notebooks"] = [dict(item) for item in getattr(self, "_notebook_items", [])]
-        active_notebook_id = str(self.active_notebook_combo.currentData() or config.get("active_notebook_id") or "default")
-        config["active_notebook_id"] = active_notebook_id
-        notebooks, _changed = normalize_notebooks(config)
-        notebook_ids = {str(item.get("id") or "") for item in notebooks}
-        if config["active_notebook_id"] not in notebook_ids:
-            config["active_notebook_id"] = "default"
 
         # 包含热词配置
         config["hotword_sets"] = list(self.config.get("hotword_sets", []))

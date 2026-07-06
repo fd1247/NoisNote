@@ -15,7 +15,6 @@ from src.audio import (
 from src.audio import device_manager as dm_module
 from src.audio import recorder as rec_module
 
-
 # ---- Fake soundcard 对象 ----
 
 class FakeSpeaker:
@@ -25,7 +24,6 @@ class FakeSpeaker:
         self.id = id_
         self.name = name
         self.channels = channels
-
 
 class FakeRecorder:
     """模拟 soundcard 的 recorder 上下文管理器。
@@ -49,7 +47,6 @@ class FakeRecorder:
             raise RuntimeError("device read failed")
         return np.zeros((numframes, self._mic.channels), dtype=np.float32)
 
-
 class FakeMicrophone:
     """模拟 soundcard.Microphone."""
 
@@ -70,7 +67,6 @@ class FakeMicrophone:
         self.recorder_calls.append({"samplerate": samplerate, "channels": channels})
         return FakeRecorder(self)
 
-
 # ---- 假设备场景 ----
 
 def _make_speakers_scenario():
@@ -82,7 +78,6 @@ def _make_speakers_scenario():
     mics_normal = [microphone]
     return speaker, mics_loopback, mics_normal
 
-
 def _make_bluetooth_scenario():
     """蓝牙场景：蓝牙扬声器 + HFP loopback + 另一个扬声器的 loopback。"""
     speaker = FakeSpeaker("bt_0", "WH-1000XM4 Stereo", channels=2)
@@ -91,7 +86,6 @@ def _make_bluetooth_scenario():
     mics_loopback = [hfp_loopback, other_loopback]
     mics_normal = []
     return speaker, mics_loopback, mics_normal
-
 
 # ---- list_capture_devices 测试 ----
 
@@ -110,7 +104,6 @@ def test_list_capture_devices_detects_loopback_and_microphone(monkeypatch) -> No
     assert "system_loopback" in kinds
     assert "microphone" in kinds
 
-
 def test_list_capture_devices_marks_default_wasapi_loopback(monkeypatch) -> None:
     """默认扬声器对应的 loopback 应标记为 is_default。"""
     speaker = FakeSpeaker("bt_0", "蓝牙耳机", channels=2)
@@ -128,7 +121,43 @@ def test_list_capture_devices_marks_default_wasapi_loopback(monkeypatch) -> None
     default_loopback = next(d for d in loopbacks if d.is_default)
     assert default_loopback.id == "bt_0"
 
+def test_list_capture_devices_excludes_normal_microphones_from_system_loopback(monkeypatch) -> None:
+    """include_loopback=True 混入普通麦克风时，系统声音列表只保留 loopback。"""
+    speaker = FakeSpeaker("spk_0", "扬声器 (Realtek)", channels=2)
+    normal_mic = FakeMicrophone("mic_0", "默认麦克风", channels=1)
+    loopback = FakeMicrophone("lb_0", "扬声器 (Realtek) Loopback", channels=2)
 
+    monkeypatch.setattr(dm_module, "_get_default_speaker", lambda: speaker)
+    monkeypatch.setattr(
+        dm_module.sc,
+        "all_microphones",
+        lambda include_loopback: [normal_mic, loopback] if include_loopback else [normal_mic],
+    )
+    monkeypatch.setattr(dm_module, "default_microphone", lambda: normal_mic)
+
+    devices = list_capture_devices()
+
+    system_devices = [item for item in devices if item.kind == "system_loopback"]
+    mic_devices = [item for item in devices if item.kind == "microphone"]
+    assert [item.id for item in system_devices] == ["lb_0"]
+    assert [item.id for item in mic_devices] == ["mic_0"]
+
+def test_device_manager_matches_default_loopback_by_name_when_ids_differ(monkeypatch) -> None:
+    """端点 ID 不一致时，按名称回退匹配默认扬声器的 loopback。"""
+    speaker = FakeSpeaker("spk_0", "扬声器 (Realtek(R) Audio)", channels=2)
+    normal_mic = FakeMicrophone("mic_0", "默认麦克风", channels=1)
+    loopback = FakeMicrophone("lb_0", "扬声器 (Realtek(R) Audio) Loopback", channels=2)
+
+    monkeypatch.setattr(dm_module, "_get_default_speaker", lambda: speaker)
+    monkeypatch.setattr(
+        dm_module.sc,
+        "all_microphones",
+        lambda include_loopback: [normal_mic, loopback] if include_loopback else [normal_mic],
+    )
+
+    manager = dm_module.DeviceManager()
+
+    assert manager.get_loopback_microphone() is loopback
 # ---- AudioRecorder 初始设备发现测试 ----
 
 def test_recorder_uses_default_wasapi_loopback(monkeypatch, tmp_path) -> None:
@@ -142,7 +171,6 @@ def test_recorder_uses_default_wasapi_loopback(monkeypatch, tmp_path) -> None:
     recorder = AudioRecorder(output_dir=tmp_path)
     assert "Realtek" in recorder.get_device_name()
 
-
 # ---- validate_capture_settings 测试 ----
 
 def test_validate_capture_settings_checks_required_devices() -> None:
@@ -153,12 +181,10 @@ def test_validate_capture_settings_checks_required_devices() -> None:
     validate_capture_settings(CaptureSettings(mode=CaptureMode.SYSTEM), devices)
     validate_capture_settings(CaptureSettings(mode=CaptureMode.MICROPHONE), devices)
 
-
 def test_validate_capture_settings_rejects_missing_microphone() -> None:
     devices = [CaptureDeviceInfo("system", "系统声音", "system_loopback")]
     with pytest.raises(CaptureDeviceUnavailable, match="麦克风"):
         validate_capture_settings(CaptureSettings(mode=CaptureMode.MICROPHONE), devices)
-
 
 # ---- AudioRecorder 录音异常恢复测试 ----
 
@@ -183,7 +209,6 @@ def test_recorder_retries_on_read_error_and_stops_cleanly(
     assert result is None
     assert recorder.get_recording_error() is None
 
-
 def test_recorder_retries_on_open_error(
     monkeypatch, tmp_path,
 ) -> None:
@@ -203,7 +228,6 @@ def test_recorder_retries_on_open_error(
 
     result = recorder.stop_recording()
     assert result is None
-
 
 def test_recorder_uses_selected_loopback_device_and_channels(monkeypatch, tmp_path) -> None:
     speaker = FakeSpeaker("default", "默认扬声器", channels=2)
@@ -230,7 +254,6 @@ def test_recorder_uses_selected_loopback_device_and_channels(monkeypatch, tmp_pa
     assert selected_loopback.recorder_calls
     assert selected_loopback.recorder_calls[0]["channels"] == 2
 
-
 # ---- DeviceManager 测试 ----
 
 def test_device_manager_start_no_output_device_raises(monkeypatch) -> None:
@@ -240,11 +263,11 @@ def test_device_manager_start_no_output_device_raises(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="未找到音频输出设备"):
         dm.start()
 
-
 def test_device_manager_start_discovers_default_speaker(monkeypatch) -> None:
     """DeviceManager.start() 发现默认 WASAPI 扬声器设备。"""
     speaker = FakeSpeaker("spk_0", "扬声器 (Realtek)", channels=2)
     monkeypatch.setattr(dm_module, "_get_default_speaker", lambda: speaker)
+    monkeypatch.setattr(dm_module.sc, "all_microphones", lambda include_loopback: [])
     dm = dm_module.DeviceManager()
     try:
         dm.start()
@@ -252,7 +275,6 @@ def test_device_manager_start_discovers_default_speaker(monkeypatch) -> None:
         assert "Realtek" in dm.current_device_name
     finally:
         dm.stop()
-
 
 def test_device_manager_get_loopback_uses_fresh_query(monkeypatch) -> None:
     """get_loopback_microphone() 每次实时查询当前默认设备。"""
@@ -273,7 +295,6 @@ def test_device_manager_get_loopback_uses_fresh_query(monkeypatch) -> None:
     finally:
         dm.stop()
 
-
 def test_device_manager_list_devices(monkeypatch) -> None:
     """DeviceManager 列出 loopback 设备。"""
     speaker = FakeSpeaker("spk_0", "扬声器 (Realtek)", channels=2)
@@ -286,7 +307,6 @@ def test_device_manager_list_devices(monkeypatch) -> None:
     loopbacks = dm.list_loopback_devices()
     assert len(loopbacks) == 1
     assert loopbacks[0].kind == "system_loopback"
-
 
 # ---- 麦克风录音测试 ----
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import wave
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def test_notebook_normalization_preserves_user_notebook(tmp_path: Path) -> None:
     from src.app.config import normalize_notebooks
 
     custom_dir = tmp_path / "work"
+    custom_dir.mkdir()
     config = {
         "data_root": str(tmp_path / "root"),
         "notebooks": [
@@ -57,6 +59,76 @@ def test_notebook_normalization_preserves_user_notebook(tmp_path: Path) -> None:
         "path": str(custom_dir),
         "is_default": False,
     }
+
+
+def test_notebook_normalization_removes_missing_user_notebook(tmp_path: Path) -> None:
+    from src.app.config import normalize_notebooks
+
+    missing_dir = tmp_path / "missing"
+    config = {
+        "data_root": str(tmp_path / "root"),
+        "active_notebook_id": "missing",
+        "last_selected_record_key": "missing:old-record",
+        "notebooks": [
+            {
+                "id": "missing",
+                "name": "Missing",
+                "path": str(missing_dir),
+                "is_default": False,
+            }
+        ],
+    }
+
+    notebooks, changed = normalize_notebooks(config)
+
+    assert changed is True
+    assert [item["id"] for item in notebooks] == ["default"]
+    assert config["notebooks"] == notebooks
+    assert config["active_notebook_id"] == "default"
+    assert config["last_selected_record_key"] == ""
+    assert not missing_dir.exists()
+
+
+def test_notebook_normalization_removes_file_backed_user_notebook(tmp_path: Path) -> None:
+    from src.app.config import normalize_notebooks
+
+    file_path = tmp_path / "not-a-dir"
+    file_path.write_text("", encoding="utf-8")
+    config = {
+        "data_root": str(tmp_path / "root"),
+        "notebooks": [
+            {"id": "bad", "name": "Bad", "path": str(file_path), "is_default": False}
+        ],
+    }
+
+    notebooks, changed = normalize_notebooks(config)
+
+    assert changed is True
+    assert [item["id"] for item in notebooks] == ["default"]
+    assert file_path.is_file()
+
+
+def test_notebook_normalization_preserves_default_notebook_name(tmp_path: Path) -> None:
+    from src.app.config import get_output_dir, normalize_notebooks
+
+    config = {
+        "data_root": str(tmp_path),
+        "last_selected_record_keys": {},
+        "notebooks": [
+            {
+                "id": "default",
+                "name": "主笔记本",
+                "path": str(get_output_dir({"data_root": str(tmp_path)})),
+                "is_default": True,
+            }
+        ],
+    }
+
+    notebooks, changed = normalize_notebooks(config)
+
+    assert notebooks[0]["id"] == "default"
+    assert notebooks[0]["name"] == "主笔记本"
+    assert changed is False
 
 
 def test_notebook_normalization_dedupes_equivalent_paths(tmp_path: Path) -> None:
@@ -86,6 +158,37 @@ def test_notebook_normalization_dedupes_equivalent_paths(tmp_path: Path) -> None
         }
     ]
     assert config["notebooks"] == notebooks
+
+
+def test_ensure_dirs_does_not_create_user_notebook_paths(monkeypatch, tmp_path: Path) -> None:
+    from src.app import config as config_module
+
+    data_root = tmp_path / "root"
+    custom_dir = tmp_path / "external" / "work"
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path / "config")
+
+    config_module.ensure_dirs(
+        {
+            "data_root": str(data_root),
+            "notebooks": [
+                {
+                    "id": "default",
+                    "name": "默认笔记本",
+                    "path": str(data_root / "data"),
+                    "is_default": True,
+                },
+                {
+                    "id": "work",
+                    "name": "工作",
+                    "path": str(custom_dir),
+                    "is_default": False,
+                },
+            ],
+        }
+    )
+
+    assert (data_root / "data").is_dir()
+    assert not custom_dir.exists()
 
 
 def test_scan_multiple_notebooks_preserves_default_layout(tmp_path: Path) -> None:
@@ -259,6 +362,71 @@ def test_move_record_to_notebook_moves_whole_folder(tmp_path: Path) -> None:
         ]
     ).scan()[0]
     assert moved.notebook_id == "work"
+
+
+def test_move_record_to_notebook_uses_temporary_copy_before_source_delete(monkeypatch, tmp_path: Path) -> None:
+    source_root = tmp_path / "default"
+    target_root = tmp_path / "work"
+    write_wav(source_root / "meeting" / "audio.wav")
+    service = HistoryService.from_notebooks(
+        [
+            {"id": "default", "name": "默认笔记本", "path": str(source_root), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(target_root), "is_default": False},
+        ]
+    )
+    record = service.scan()[0]
+    copied: list[tuple[Path, Path]] = []
+    deleted: list[Path] = []
+    real_copytree = shutil.copytree
+    real_rmtree = shutil.rmtree
+
+    def spy_copytree(source, target, *args, **kwargs):
+        copied.append((Path(source), Path(target)))
+        return real_copytree(source, target, *args, **kwargs)
+
+    def spy_rmtree(path, *args, **kwargs):
+        deleted.append(Path(path))
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("src.history.service.shutil.copytree", spy_copytree)
+    monkeypatch.setattr("src.history.service.shutil.rmtree", spy_rmtree)
+
+    result = service.move_record_to_notebook(record, "work")
+
+    assert result.success is True
+    assert copied[0][0] == source_root / "meeting"
+    assert copied[0][1].name.startswith(".move-meeting-")
+    assert source_root / "meeting" in deleted
+    assert (target_root / "meeting" / "audio.wav").exists()
+
+
+def test_move_record_to_notebook_rolls_back_when_source_delete_fails(monkeypatch, tmp_path: Path) -> None:
+    source_root = tmp_path / "default"
+    target_root = tmp_path / "work"
+    write_wav(source_root / "meeting" / "audio.wav")
+    service = HistoryService.from_notebooks(
+        [
+            {"id": "default", "name": "默认笔记本", "path": str(source_root), "is_default": True},
+            {"id": "work", "name": "工作", "path": str(target_root), "is_default": False},
+        ]
+    )
+    record = service.scan()[0]
+    real_rmtree = shutil.rmtree
+
+    def fail_source_delete(path, *args, **kwargs):
+        if Path(path) == source_root / "meeting":
+            raise OSError("source locked")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("src.history.service.shutil.rmtree", fail_source_delete)
+
+    result = service.move_record_to_notebook(record, "work")
+
+    assert result.success is False
+    assert "source locked" in result.message
+    assert (source_root / "meeting" / "audio.wav").exists()
+    assert not (target_root / "meeting").exists()
+    assert not list(target_root.glob(".move-*"))
 
 
 def test_move_record_to_nested_notebook_rejects_without_side_effects(tmp_path: Path) -> None:

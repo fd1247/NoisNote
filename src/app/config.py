@@ -207,6 +207,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "demo_audio_imported": False,
     "data_root": str(DEFAULT_DATA_ROOT),
     "notebooks": [],
+    "last_selected_record_key": "",
+    "last_selected_record_keys": {},
     "hotword_sets": [],  # 热词表列表
     "active_hotword_set_ids": [],  # 激活的热词表ID列表
     "selected_asr": {
@@ -272,6 +274,13 @@ def _notebook_path_key(path_text: str) -> str:
     return os.path.normcase(os.path.abspath(os.path.expanduser(path_text)))
 
 
+def _notebook_dir_exists(path_text: str) -> bool:
+    try:
+        return Path(path_text).expanduser().is_dir()
+    except OSError:
+        return False
+
+
 def default_notebooks(config: dict | None = None) -> list[dict[str, Any]]:
     """返回默认笔记本配置，默认笔记本兼容现有 data 目录。"""
     cfg = config or {}
@@ -294,6 +303,12 @@ def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
         changed = True
 
     default = default_notebooks(config)[0]
+    for item in raw_items:
+        if isinstance(item, dict) and str(item.get("id") or "").strip() == "default":
+            default_name = str(item.get("name") or "").strip()
+            if default_name:
+                default["name"] = default_name
+            break
     normalized: list[dict[str, Any]] = [default]
     seen_ids = {"default"}
     seen_paths = {_notebook_path_key(str(default["path"]))}
@@ -305,11 +320,16 @@ def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
         notebook_id = str(item.get("id") or "").strip()
         name = str(item.get("name") or "").strip()
         path_text = str(item.get("path") or "").strip()
-        if not notebook_id or notebook_id == "default" or not path_text:
+        if notebook_id == "default":
+            continue
+        if not notebook_id or not path_text:
             changed = True
             continue
         path_key = _notebook_path_key(path_text)
         if notebook_id in seen_ids or path_key in seen_paths:
+            changed = True
+            continue
+        if not _notebook_dir_exists(path_text):
             changed = True
             continue
         normalized.append(
@@ -322,6 +342,38 @@ def normalize_notebooks(config: dict) -> tuple[list[dict[str, Any]], bool]:
         )
         seen_ids.add(notebook_id)
         seen_paths.add(path_key)
+
+    active_id = str(config.get("active_notebook_id") or "").strip()
+    if active_id and active_id not in seen_ids:
+        config["active_notebook_id"] = "default"
+        changed = True
+
+    last_selected_record_key = str(config.get("last_selected_record_key") or "")
+    if ":" in last_selected_record_key:
+        last_selected_notebook_id = last_selected_record_key.split(":", 1)[0]
+        if last_selected_notebook_id and last_selected_notebook_id not in seen_ids:
+            config["last_selected_record_key"] = ""
+            changed = True
+
+    raw_selected_keys = config.get("last_selected_record_keys")
+    normalized_selected_keys: dict[str, str] = {}
+    if isinstance(raw_selected_keys, dict):
+        for notebook_id, record_key in raw_selected_keys.items():
+            notebook_id_text = str(notebook_id or "").strip()
+            record_key_text = str(record_key or "").strip()
+            if (
+                notebook_id_text
+                and notebook_id_text in seen_ids
+                and record_key_text.startswith(f"{notebook_id_text}:")
+            ):
+                normalized_selected_keys[notebook_id_text] = record_key_text
+            else:
+                changed = True
+    else:
+        changed = True
+    if config.get("last_selected_record_keys") != normalized_selected_keys:
+        config["last_selected_record_keys"] = normalized_selected_keys
+        changed = True
 
     if config.get("notebooks") != normalized:
         config["notebooks"] = normalized
@@ -354,9 +406,6 @@ def ensure_dirs(config: dict | None = None) -> None:
     (data_root / "data").mkdir(parents=True, exist_ok=True)
     (data_root / "models").mkdir(parents=True, exist_ok=True)
     (data_root / "logs").mkdir(parents=True, exist_ok=True)
-    notebooks, _changed = normalize_notebooks(config or {})
-    for notebook in notebooks:
-        Path(str(notebook["path"])).expanduser().mkdir(parents=True, exist_ok=True)
 
 
 def get_config() -> dict:
