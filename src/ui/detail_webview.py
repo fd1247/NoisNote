@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 _ASSET_DIR = Path(__file__).resolve().parent / "assets" / "detail_viewer"
 _INDEX_HTML = _ASSET_DIR / "index.html"
+_VNOTE_READ_MODE_ZOOM_FACTOR = 1.5
 
 
 class DetailWebBridge(QObject):
@@ -136,6 +137,7 @@ class DetailWebView(QWidget):
         channel.registerObject("detailBridge", self._bridge)
         page.setWebChannel(channel)
         self._web_view.setPage(page)
+        self._web_view.setZoomFactor(_VNOTE_READ_MODE_ZOOM_FACTOR)
         self._web_view.loadFinished.connect(self._handle_load_finished)
         self._web_view.load(QUrl.fromLocalFile(str(_INDEX_HTML)))
         layout.addWidget(self._web_view)

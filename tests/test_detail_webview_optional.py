@@ -19,6 +19,13 @@ def test_import_detail_webview_module_succeeds() -> None:
     assert hasattr(detail_webview, "DetailWebView")
 
 
+def test_detail_webview_uses_vnote_read_mode_zoom_factor() -> None:
+    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail_webview.py").read_text(encoding="utf-8")
+
+    assert "_VNOTE_READ_MODE_ZOOM_FACTOR = 1.5" in source
+    assert "setZoomFactor(_VNOTE_READ_MODE_ZOOM_FACTOR)" in source
+
+
 def test_bridge_post_message_emits_dict_and_json_string() -> None:
     from src.ui.detail_webview import DetailWebBridge
 
@@ -215,17 +222,22 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     css_text = css.read_text(encoding="utf-8")
     assert "timeline-row" in css_text
     assert 'font-family: "YaHei Consolas Hybrid", "Noto Sans", "Helvetica Neue"' in css_text
-    assert "color: #222222;" in css_text
-    assert "padding: 16px;" in css_text
-    assert "color: #8e24aa;" in css_text
-    assert "color: #e96900;" not in css_text
-    assert "color: #34495e;" not in css_text
+    assert "color: #34495E;" in css_text
+    assert "font-size: 2.2rem;" in css_text
+    assert "#vx-content" in css_text
+    assert "padding: 30px 30px 40px;" in css_text
+    assert "width:100%;" in css_text
+    assert "background-color: #f2f2f2;" in css_text
+    assert "color: #e96900;" in css_text
     script = js.read_text(encoding="utf-8")
     assert "NoisNoteDetail" in script
     assert "setContent" in script
     assert "updatePlayback" in script
     assert 'html: true' in script
+    assert 'breaks: false' in script
     assert 'langPrefix: "lang-"' in script
+    assert "markdownItAnchor" in script
+    assert "markdownItTocDoneRight" in script
     assert "$(\"vx-content\")" in script
     markdown_text = markdown.read_text(encoding="utf-8")
     assert "markdown-it 14.1.0" in markdown_text
@@ -242,6 +254,13 @@ def test_detail_viewer_loads_vnote_markdown_plugins() -> None:
         "markdown-it-sup.min.js",
         "markdown-it-emoji.min.js",
         "markdown-it-footnote.min.js",
+        "markdown-it-container.min.js",
+        "markdown-it-front-matter.js",
+        "markdown-it-imsize.min.js",
+        "markdown-it-inject-linenumbers.js",
+        "markdownItAnchor.umd.js",
+        "markdownItTocDoneRight.umd.js",
+        "markdown-it-implicit-figure.js",
         "markdown-it-mark.min.js",
     ]
 

@@ -10,26 +10,104 @@
     timelineRenderGeneration: 0
   };
 
+  var headerIds = [new Set(), new Set()];
   var renderer = window.markdownit ? window.markdownit({
     html: true,
-    breaks: true,
+    breaks: false,
     linkify: true,
     typographer: false,
-    langPrefix: "lang-"
+    langPrefix: "lang-",
+    quotes: ""
   }) : null;
 
-  function useMarkdownPlugin(plugin) {
+  if (renderer) {
+    var defaultValidateLink = renderer.validateLink;
+    renderer.validateLink = function (url) {
+      var normalized = String(url || "").trim().toLowerCase();
+      return /^file:/.test(normalized) ? true : defaultValidateLink.call(renderer, url);
+    };
+  }
+
+  function useMarkdownPlugin(plugin, options) {
     if (renderer && plugin) {
-      renderer.use(plugin);
+      renderer.use(plugin, options);
     }
   }
 
+  function resetHeaderIds() {
+    headerIds[0].clear();
+    headerIds[1].clear();
+  }
+
+  function headingSequenceRegExp() {
+    return /^(\s*\d+(\.\d+)*\.?\s+)/;
+  }
+
+  function generateHeaderId(index, value) {
+    var text = String(value || "")
+      .replace(headingSequenceRegExp(), "")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\u002D\u0020]/gu, "")
+      .replace(/ /g, "-");
+    var ids = headerIds[index];
+    var id = text || "section";
+    var next = 1;
+    while (ids.has(id)) {
+      id = text + "-" + next;
+      next += 1;
+    }
+    ids.add(id);
+    return id;
+  }
+
+  useMarkdownPlugin(window.markdownitContainer, "alert", {
+    validate: function (params) {
+      return params.trim().match(/^alert-\S+$/);
+    },
+    render: function (tokens, index) {
+      var type = tokens[index].info.trim().match(/^(alert-\S+)$/);
+      if (tokens[index].nesting === 1) {
+        return "<div class=\"vx-alert " + type[1] + "\" role=\"alert\">";
+      }
+      return "</div>\n";
+    }
+  });
   useMarkdownPlugin(window.markdownitTaskLists);
   useMarkdownPlugin(window.markdownitSub);
   useMarkdownPlugin(window.markdownitSup);
   useMarkdownPlugin(window.markdownitEmoji);
+  if (renderer && renderer.renderer && renderer.renderer.rules) {
+    renderer.renderer.rules.emoji = function (tokens, index) {
+      return "<span class=\"emoji emoji_" + tokens[index].markup + "\">" + tokens[index].content + "</span>";
+    };
+  }
   useMarkdownPlugin(window.markdownitFootnote);
+  useMarkdownPlugin(window["markdown-it-imsize.js"]);
+  useMarkdownPlugin(window.markdownitInjectLinenumbers);
+  useMarkdownPlugin(window.markdownItAnchor, {
+    slugify: function (value) {
+      return generateHeaderId(0, value);
+    },
+    permalink: true,
+    permalinkBefore: false,
+    permalinkClass: "vx-header-anchor",
+    permalinkSpace: false,
+    permalinkSymbol: "",
+    permalinkAttrs: function () {
+      return { "vx-data-anchor-icon": "¶" };
+    }
+  });
+  useMarkdownPlugin(window.markdownItTocDoneRight, {
+    slugify: function (value) {
+      return generateHeaderId(1, value);
+    },
+    containerClass: "vx-table-of-contents"
+  });
+  useMarkdownPlugin(window.markdownitImplicitFigure, { figcaption: true });
   useMarkdownPlugin(window.markdownitMark);
+  useMarkdownPlugin(window.markdownitFrontMatter, function (metadata) {
+    state.frontMatter = metadata || "";
+  });
 
   function $(id) {
     return document.getElementById(id);
@@ -50,7 +128,15 @@
       return "<p class=\"muted\">暂无内容。</p>";
     }
     if (renderer && typeof renderer.render === "function") {
-      return renderer.render(text);
+      resetHeaderIds();
+      state.frontMatter = "";
+      var html = renderer.render(text);
+      if (state.frontMatter) {
+        html = "<details class=\"vx-frontmatter\"><summary>Metadata</summary><pre>"
+          + escapeHtml(state.frontMatter)
+          + "</pre></details>" + html;
+      }
+      return html;
     }
     return text.split(/\n{2,}/).map(function (part) {
       return "<p>" + escapeHtml(part).replace(/\n/g, "<br>") + "</p>";
