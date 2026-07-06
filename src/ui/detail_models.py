@@ -56,7 +56,7 @@ def normalize_timeline_items(items: list[dict[str, Any]] | None) -> list[dict[st
     if not isinstance(items, list):
         return []
 
-    normalized: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -69,16 +69,22 @@ def normalize_timeline_items(items: list[dict[str, Any]] | None) -> list[dict[st
             end = start
 
         row: dict[str, Any] = {
-            "id": len(normalized),
+            "id": 0,
             "start": start,
             "end": end,
             "text": text,
         }
         tokens = item.get("tokens")
-        if isinstance(tokens, list) and all(isinstance(token, dict) for token in tokens):
-            row["tokens"] = [_normalize_token(token) for token in tokens]
-        normalized.append(row)
-    return normalized
+        if isinstance(tokens, list):
+            clean_tokens = [_normalize_token(token) for token in tokens if isinstance(token, dict)]
+            if clean_tokens:
+                row["tokens"] = clean_tokens
+        rows.append(row)
+
+    rows.sort(key=lambda row: (row["start"], row["end"]))
+    for index, row in enumerate(rows):
+        row["id"] = index
+    return rows
 
 
 def build_metadata_fields(record: Any) -> list[dict[str, str]]:
@@ -213,11 +219,31 @@ def _normalize_token(token: dict[str, Any]) -> dict[str, Any]:
 
 
 def _local_media_path(record: Any) -> str:
+    source_kind = str(getattr(record, "source_kind", "") or "")
+    if source_kind in {"remote_url", "remote_subtitle", "remote_audio"}:
+        for name in ("normalized_audio_path", "audio_path"):
+            value = getattr(record, name, None)
+            if value and _path_exists(value):
+                return str(value)
+        return _MISSING
+
     for name in ("normalized_audio_path", "original_file_path", "audio_path"):
         value = getattr(record, name, None)
-        if value:
+        if value and not _is_url_like_path(value):
             return str(value)
     return _MISSING
+
+
+def _path_exists(value: Any) -> bool:
+    try:
+        return Path(value).exists()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _is_url_like_path(value: Any) -> bool:
+    text = str(value).strip().lower().replace("\\", "/")
+    return text.startswith(("http:/", "https:/"))
 
 
 def _remote_url(record: Any, metadata: dict[str, Any]) -> str:

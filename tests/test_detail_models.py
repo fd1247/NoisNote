@@ -134,6 +134,31 @@ def test_metadata_fields_maps_remote_audio_to_video_link(tmp_path: Path) -> None
     assert fields["来源"] == "视频链接"
 
 
+def test_metadata_fields_hide_remote_url_as_local_path_and_use_remote_audio_file(tmp_path: Path) -> None:
+    remote_url_record = _record(
+        tmp_path,
+        source_kind="remote_url",
+        original_file_path=Path("https://example.com/watch"),
+    )
+    remote_audio_dir = tmp_path / "remote-audio"
+    remote_audio_path = remote_audio_dir / "audio.wav"
+    remote_audio_path.parent.mkdir(parents=True)
+    remote_audio_path.write_bytes(b"audio")
+    remote_audio_record = _record(
+        tmp_path,
+        source_kind="remote_audio",
+        record_dir=remote_audio_dir,
+        audio_path=remote_audio_path,
+        original_file_path=Path("https://example.com/watch"),
+    )
+
+    remote_url_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_url_record)}
+    remote_audio_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_audio_record)}
+
+    assert remote_url_fields["本地音视频所在路径"] == "--"
+    assert remote_audio_fields["本地音视频所在路径"] == str(remote_audio_path)
+
+
 def test_metadata_fields_use_local_and_recording_labels_and_local_path_fallback(tmp_path: Path) -> None:
     local_record = _record(
         tmp_path,
@@ -164,6 +189,26 @@ def test_timeline_active_segment_and_display_text() -> None:
     assert find_active_timeline_segment(items, 2.5) == 1
     assert find_active_timeline_segment(items, 9) == 1
     assert timeline_display_text(items) == "00:00.000 - 00:01.000  hello\n00:02.000 - 00:03.000  world"
+
+
+def test_timeline_items_normalize_in_chronological_order() -> None:
+    items = [
+        {"start": 4, "end": 5, "text": "third"},
+        {"start": 0, "end": 1, "text": "first"},
+        {"start": 2, "end": 3, "text": "second"},
+    ]
+
+    normalized = normalize_timeline_items(items)
+
+    assert [item["text"] for item in normalized] == ["first", "second", "third"]
+    assert [item["id"] for item in normalized] == [0, 1, 2]
+    assert timeline_display_text(items) == (
+        "00:00.000 - 00:01.000  first\n"
+        "00:02.000 - 00:03.000  second\n"
+        "00:04.000 - 00:05.000  third"
+    )
+    assert find_active_timeline_segment(items, 1.5) == 0
+    assert find_active_timeline_segment(items, 2.5) == 1
 
 
 def test_timeline_non_finite_values_normalize_to_displayable_text() -> None:
@@ -202,6 +247,28 @@ def test_timeline_token_times_normalize_to_finite_values() -> None:
     assert all(math.isfinite(token["start"]) and math.isfinite(token["end"]) for token in tokens)
     assert tokens[0] == {"start": 0.0, "end": 0.0, "text": "bad"}
     assert tokens[1] == {"start": 1.5, "end": 1.5, "text": "reversed", "confidence": 0.8}
+
+
+def test_timeline_mixed_token_list_skips_invalid_entries() -> None:
+    normalized = normalize_timeline_items(
+        [
+            {
+                "start": 0,
+                "end": 1,
+                "text": "with mixed tokens",
+                "tokens": [
+                    {"start": 0.1, "end": 0.2, "text": "valid"},
+                    "invalid",
+                    {"start": float("inf"), "end": 0.3, "text": "normalized"},
+                ],
+            }
+        ]
+    )
+
+    assert normalized[0]["tokens"] == [
+        {"start": 0.1, "end": 0.2, "text": "valid"},
+        {"start": 0.0, "end": 0.3, "text": "normalized"},
+    ]
 
 
 def test_parse_detail_command_rejects_stale_and_malformed_input() -> None:
