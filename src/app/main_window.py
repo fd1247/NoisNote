@@ -227,6 +227,8 @@ class MainWindow(
     def _set_playback_panel_visible(self, visible: bool) -> None:
         if hasattr(self, "playback_widget"):
             self.playback_widget.setVisible(visible)
+        if hasattr(self, "playback_separator"):
+            self.playback_separator.setVisible(visible)
 
     def _set_task_panel_visible(self, visible: bool) -> None:
         self.task_panel.setVisible(visible)
@@ -352,6 +354,7 @@ class MainWindow(
         self.summary_copy_button = controls.summary_copy_button
         self.manual_summary_button = controls.manual_summary_button
         self.playback_widget = controls.playback_widget
+        self.playback_separator = controls.playback_separator
         self.playback_back_button = controls.playback_back_button
         self.playback_play_button = controls.playback_play_button
         self.playback_forward_button = controls.playback_forward_button

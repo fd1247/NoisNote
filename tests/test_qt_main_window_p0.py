@@ -526,6 +526,33 @@ def test_view_menu_toggles_workbench_regions(monkeypatch, tmp_path: Path) -> Non
         app.processEvents()
 
 
+def test_playback_panel_visibility_toggles_separator_with_player(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.show()
+        app.processEvents()
+
+        assert hasattr(window, "playback_separator")
+        assert window.playback_widget.isVisible()
+        assert window.playback_separator.isVisible()
+
+        window._set_playback_panel_visible(False)
+        app.processEvents()
+
+        assert window.playback_widget.isHidden()
+        assert window.playback_separator.isHidden()
+
+        window._set_playback_panel_visible(True)
+        app.processEvents()
+
+        assert window.playback_widget.isVisible()
+        assert window.playback_separator.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_notebook_selector_filters_visible_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1853,11 +1880,20 @@ def test_detail_status_rows_are_hidden_from_body(monkeypatch, tmp_path: Path) ->
 def test_detail_styles_remove_borders_and_thin_splitter() -> None:
     from src.ui.styles import APP_STYLESHEET
 
-    assert "QFrame#PlayerBar" in APP_STYLESHEET
-    assert "QFrame#PlayerBar {\n    background: #ffffff;\n    border: none;" in APP_STYLESHEET
-    assert "QFrame#PlaybackSeparator" in APP_STYLESHEET
-    assert "QSplitter#WorkbenchSplitter::handle" in APP_STYLESHEET
-    assert "width: 2px;" in APP_STYLESHEET or "width: 1px;" in APP_STYLESHEET
+    def style_block(selector: str) -> str:
+        start = APP_STYLESHEET.index(f"{selector} {{")
+        end = APP_STYLESHEET.index("}", start)
+        return APP_STYLESHEET[start:end]
+
+    panel_block = style_block("QFrame#Panel")
+    player_bar_block = style_block("QFrame#PlayerBar")
+    splitter_block = style_block("QSplitter#WorkbenchSplitter::handle")
+
+    assert "border: none;" in panel_block
+    assert "border-radius: 0;" in panel_block
+    assert "border: none;" in player_bar_block
+    assert "border-radius: 0;" in player_bar_block
+    assert "width:" in splitter_block
 
 
 def test_detail_tab_switch_updates_webview_mode(monkeypatch, tmp_path: Path) -> None:

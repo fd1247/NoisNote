@@ -141,6 +141,7 @@ class ContentTabsControls:
     summary_copy_button: QPushButton
     manual_summary_button: QPushButton
     playback_widget: QFrame
+    playback_separator: QFrame
     playback_back_button: QPushButton
     playback_play_button: QPushButton
     playback_forward_button: QPushButton
@@ -339,6 +340,7 @@ def build_history_page(
         summary_copy_button=summary_controls.copy_button,
         manual_summary_button=summary_controls.action_button,
         playback_widget=playback_widget,
+        playback_separator=playback_separator,
         playback_back_button=playback_back_button,
         playback_play_button=playback_play_button,
         playback_forward_button=playback_forward_button,
