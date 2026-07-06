@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 from src.asr.timestamps import format_display_time
 from src.history.types import format_size
@@ -75,7 +76,7 @@ def normalize_timeline_items(items: list[dict[str, Any]] | None) -> list[dict[st
         }
         tokens = item.get("tokens")
         if isinstance(tokens, list) and all(isinstance(token, dict) for token in tokens):
-            row["tokens"] = [dict(token) for token in tokens]
+            row["tokens"] = [_normalize_token(token) for token in tokens]
         normalized.append(row)
     return normalized
 
@@ -145,10 +146,13 @@ def parse_detail_command(value: Any, current_record_key: str, current_revision: 
     if command == "copy":
         if not _is_current_message(value, current_record_key, current_revision):
             return None
+        mode = str(value.get("mode") or "transcript")
+        if mode not in _VALID_MODES:
+            return None
         return DetailCommand(
             command="copy",
             payload={
-                "mode": str(value.get("mode") or "transcript"),
+                "mode": mode,
                 "text": str(value.get("text") or ""),
             },
         )
@@ -157,9 +161,10 @@ def parse_detail_command(value: Any, current_record_key: str, current_revision: 
         if not _is_current_message(value, current_record_key, current_revision):
             return None
         url = value.get("url")
-        if not isinstance(url, str) or not url:
+        safe_url = _safe_external_url(url)
+        if safe_url is None:
             return None
-        return DetailCommand(command="openExternalUrl", payload={"url": url})
+        return DetailCommand(command="openExternalUrl", payload={"url": safe_url})
 
     if command == "renderError":
         message = value.get("message")
@@ -194,6 +199,17 @@ def _source_label(source_kind: str) -> str:
         "remote_subtitle": "视频链接",
     }
     return labels.get(source_kind, _MISSING)
+
+
+def _normalize_token(token: dict[str, Any]) -> dict[str, Any]:
+    row = dict(token)
+    start = _non_negative_float(row.get("start"))
+    end = _coerce_float(row.get("end"), start)
+    if end < start:
+        end = start
+    row["start"] = start
+    row["end"] = end
+    return row
 
 
 def _local_media_path(record: Any) -> str:
@@ -236,6 +252,18 @@ def _is_current_message(value: Mapping[str, Any], current_record_key: str, curre
     return value.get("recordKey") == current_record_key and revision == current_revision
 
 
+def _safe_external_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    return url
+
+
 def _maybe_float(value: Any) -> float | None:
     try:
         parsed = float(value)
@@ -245,10 +273,21 @@ def _maybe_float(value: Any) -> float | None:
 
 
 def _maybe_int(value: Any) -> int | None:
-    if isinstance(value, float) and not math.isfinite(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
         return None
     try:
-        return int(value)
+        return int(text)
     except (OverflowError, TypeError, ValueError):
         return None
 

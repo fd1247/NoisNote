@@ -182,6 +182,28 @@ def test_timeline_non_finite_values_normalize_to_displayable_text() -> None:
     assert timeline_display_text(items) == "00:00.000 - 00:00.000  bad start\n00:02.000 - 00:02.000  bad end"
 
 
+def test_timeline_token_times_normalize_to_finite_values() -> None:
+    normalized = normalize_timeline_items(
+        [
+            {
+                "start": 1,
+                "end": 2,
+                "text": "with tokens",
+                "tokens": [
+                    {"start": float("inf"), "end": float("nan"), "text": "bad"},
+                    {"start": 1.5, "end": 1.0, "text": "reversed", "confidence": 0.8},
+                ],
+            }
+        ]
+    )
+
+    tokens = normalized[0]["tokens"]
+
+    assert all(math.isfinite(token["start"]) and math.isfinite(token["end"]) for token in tokens)
+    assert tokens[0] == {"start": 0.0, "end": 0.0, "text": "bad"}
+    assert tokens[1] == {"start": 1.5, "end": 1.5, "text": "reversed", "confidence": 0.8}
+
+
 def test_parse_detail_command_rejects_stale_and_malformed_input() -> None:
     assert parse_detail_command(None, "record:1", 2) is None
     assert parse_detail_command({"command": "unknown"}, "record:1", 2) is None
@@ -202,6 +224,7 @@ def test_parse_detail_command_rejects_stale_and_malformed_input() -> None:
         is None
     )
     assert parse_detail_command({"command": "seek", "recordKey": "record:1", "revision": "bad"}, "record:1", 2) is None
+    assert parse_detail_command({"command": "seek", "recordKey": "record:1", "revision": 2.9, "seconds": 1}, "record:1", 2) is None
     assert (
         parse_detail_command(
             {"command": "seek", "recordKey": "record:1", "revision": float("inf"), "seconds": 1},
@@ -243,6 +266,27 @@ def test_parse_detail_command_accepts_current_seek() -> None:
     assert command.payload == {"seconds": 3.5, "segmentId": 7}
 
 
+def test_parse_detail_command_rejects_unknown_copy_mode_and_accepts_known_mode() -> None:
+    assert (
+        parse_detail_command(
+            {"command": "copy", "recordKey": "record:1", "revision": 2, "mode": "unknown", "text": "x"},
+            "record:1",
+            2,
+        )
+        is None
+    )
+
+    command = parse_detail_command(
+        {"command": "copy", "recordKey": "record:1", "revision": 2, "mode": "summary", "text": "x"},
+        "record:1",
+        2,
+    )
+
+    assert command is not None
+    assert command.command == "copy"
+    assert command.payload == {"mode": "summary", "text": "x"}
+
+
 def test_parse_detail_command_checks_open_external_url_freshness() -> None:
     assert (
         parse_detail_command(
@@ -260,6 +304,15 @@ def test_parse_detail_command_checks_open_external_url_freshness() -> None:
         )
         is None
     )
+    for url in ("file:///C:/temp/a.txt", "javascript:alert(1)", "", "   ", "https:///missing-host", "not a url"):
+        assert (
+            parse_detail_command(
+                {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": url},
+                "record:1",
+                2,
+            )
+            is None
+        )
 
     command = parse_detail_command(
         {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": "https://example.com"},
