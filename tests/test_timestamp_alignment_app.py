@@ -266,7 +266,11 @@ def test_main_window_shows_timeline_tab_only_when_record_has_timeline(monkeypatc
         assert window.timeline_text.toPlainText() == ""
 
         window._set_result_tab("timeline")
-        assert "00:00.000 - 00:01.000" in window.timeline_text.toPlainText()
+        timeline_payload = window.detail_webview.current_payload["timeline"]
+        assert timeline_payload[0]["start"] == 0.0
+        assert timeline_payload[0]["end"] == 1.0
+        assert timeline_payload[0]["text"] == "hello"
+        assert "00:00.000 - 00:01.000" in window.detail_webview.current_payload["content"]
 
         service.clear_generated_results(record)
         record = service.scan()[0]

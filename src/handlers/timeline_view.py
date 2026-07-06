@@ -1,7 +1,7 @@
 """主窗口逐句时间轴视图逻辑。"""
 from __future__ import annotations
 
-from ..asr.timestamps import format_display_time, timeline_from_dicts, timeline_to_html
+from ..asr.timestamps import format_display_time
 from ..history.service import HistoryRecord
 
 
@@ -25,6 +25,8 @@ class TimelineViewHandlers:
         self._last_timeline_highlight_key = (None, None)
         self.timeline_text.clear()
         self.timeline_copy_button.hide()
+        if self.active_result_tab == "timeline":
+            self._sync_timeline_detail_webview([])
 
     def _timeline_display_text(self, record: HistoryRecord) -> str:
         """把结构化时间轴格式化为详情页可读文本。"""
@@ -42,6 +44,9 @@ class TimelineViewHandlers:
     def _set_timeline_items(self, items: list[dict]) -> None:
         self.timeline_items = items
         self._last_timeline_highlight_key = (None, None)
+        display_text = _timeline_items_display_text(items)
+        self.timeline_text.setPlainText(display_text)
+        self.timeline_copy_button.setVisible(bool(display_text.strip()) and self.active_result_tab == "timeline")
         if self.active_result_tab == "timeline":
             self._sync_timeline_detail_webview(items)
         if not items:
@@ -71,22 +76,9 @@ class TimelineViewHandlers:
         detail_webview.set_content(payload)
 
     def _refresh_timeline_highlight(self, position_seconds: float | None = None, force: bool = False) -> None:
-        if self.active_result_tab != "timeline" or not self.timeline_items:
-            return
-        key = self._timeline_highlight_key(position_seconds)
-        if not force and key == self._last_timeline_highlight_key:
-            return
-        previous_key = self._last_timeline_highlight_key
-        previous_scroll = self.timeline_text.verticalScrollBar().value()
-        self._last_timeline_highlight_key = key
-        timeline = timeline_from_dicts(self.timeline_items)
-        self.timeline_text.setHtml(timeline_to_html(timeline, position_seconds))
-        sentence_changed = force or key[0] != previous_key[0]
-        if key[0] is not None and sentence_changed:
-            self.timeline_text.scrollToAnchor("timeline-current")
-        elif key[0] is not None:
-            scroll_bar = self.timeline_text.verticalScrollBar()
-            scroll_bar.setValue(min(previous_scroll, scroll_bar.maximum()))
+        update_detail_playback = getattr(self, "_update_detail_playback", None)
+        if callable(update_detail_playback):
+            update_detail_playback(position_seconds)
 
     def _timeline_highlight_key(self, position_seconds: float | None) -> tuple[int | None, int | None]:
         if position_seconds is None:

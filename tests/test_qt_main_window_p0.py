@@ -1863,11 +1863,28 @@ def test_playback_position_updates_visible_detail_webview(monkeypatch, tmp_path:
 
         window.detail_webview.update_playback = capture_playback
         window.media_player = FakeMediaPlayer()
+        window.media_player.play()
 
         window._on_playback_position_changed(2500)
 
         assert payloads[-1]["positionSeconds"] == 2.5
-        assert "isPlaying" in payloads[-1]
+        assert payloads[-1]["isPlaying"] is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_playback_bridge_uses_current_player_position(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        payloads = []
+        window.detail_webview.update_playback = payloads.append
+        window.media_player = FakeMediaPlayer()
+
+        window._update_detail_playback()
+
+        assert payloads[-1] == {"positionSeconds": 30.0, "isPlaying": False}
     finally:
         window.close()
         app.processEvents()
@@ -1941,6 +1958,10 @@ def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(m
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
+        def fail_timeline_render(*_args, **_kwargs) -> str:
+            raise AssertionError("playback highlight should not render hidden HTML")
+
+        monkeypatch.setattr("src.asr.timestamps.timeline_to_html", fail_timeline_render)
         items = [
             {
                 "start": float(index),
@@ -1963,10 +1984,13 @@ def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(m
         window.timeline_text.setFixedHeight(120)
         app.processEvents()
 
+        payloads = []
+        window.detail_webview.update_playback = payloads.append
         window._refresh_timeline_highlight(10.1)
         app.processEvents()
         scroll_bar = window.timeline_text.verticalScrollBar()
         assert scroll_bar.maximum() > 0
+        assert payloads[-1]["positionSeconds"] == 10.1
 
         manual_scroll = min(scroll_bar.maximum(), max(1, scroll_bar.maximum() // 2))
         scroll_bar.setValue(manual_scroll)
@@ -1976,6 +2000,7 @@ def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(m
         app.processEvents()
 
         assert scroll_bar.value() == manual_scroll
+        assert payloads[-1]["positionSeconds"] == 10.6
     finally:
         window.close()
         app.processEvents()
@@ -2010,12 +2035,17 @@ def test_hidden_timeline_is_not_refreshed_by_playback_stop(monkeypatch, tmp_path
         def fail_timeline_render(*_args, **_kwargs) -> str:
             raise AssertionError("hidden timeline should not render")
 
-        monkeypatch.setattr("src.handlers.timeline_view.timeline_to_html", fail_timeline_render)
+        monkeypatch.setattr("src.asr.timestamps.timeline_to_html", fail_timeline_render)
         window.active_result_tab = "transcript"
         window.timeline_items = [{"start": 0.0, "end": 1.0, "text": "hidden"}]
         window.media_player = FakeMediaPlayer()
+        payloads = []
+        window.detail_webview.update_playback = payloads.append
 
         window.stop_playback()
+
+        assert payloads[-1]["positionSeconds"] == 0.0
+        assert payloads[-1]["isPlaying"] is False
     finally:
         window.close()
         app.processEvents()

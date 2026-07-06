@@ -52,6 +52,25 @@ class DetailViewHandlers:
         )
         detail_webview.set_content(payload)
 
+    def _update_detail_playback(self, position_seconds: float | None = None) -> None:
+        """通过 WebView 协议同步播放位置和播放状态。"""
+        detail_webview = getattr(self, "detail_webview", None)
+        update_playback = getattr(detail_webview, "update_playback", None)
+        if not callable(update_playback):
+            return
+        if position_seconds is None:
+            position_seconds = self._detail_playback_position_seconds()
+        try:
+            safe_position = max(0.0, float(position_seconds))
+        except (TypeError, ValueError):
+            safe_position = 0.0
+        update_playback(
+            {
+                "positionSeconds": safe_position,
+                "isPlaying": self._detail_is_playing(),
+            }
+        )
+
     def _on_detail_web_command(self, value: dict) -> None:
         """处理详情 WebView 发回的命令。"""
         current_record_key = self.current_record.record_key if self.current_record else ""

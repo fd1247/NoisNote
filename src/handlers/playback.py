@@ -70,7 +70,7 @@ class PlaybackHandlers:
             self.playback_slider.setValue(0)
             self.playback_position_label.setText("00:00")
             self.playback_play_button.setIcon(make_action_icon("play"))
-        self._refresh_timeline_highlight(force=True)
+        self._update_detail_playback(0.0)
 
     def toggle_playback(self) -> None:
         if not self.media_player or not self.current_record:
@@ -127,8 +127,7 @@ class PlaybackHandlers:
         finally:
             self._updating_playback_slider = False
         self.playback_position_label.setText(_format_playback_ms(position_ms))
-        self._refresh_timeline_highlight(position_ms / 1000.0)
-        self._update_detail_webview_playback(position_ms)
+        self._update_detail_playback(position_ms / 1000.0)
 
     def _on_playback_duration_changed(self, duration_ms: int) -> None:
         self.playback_duration_ms = max(0, int(duration_ms))
@@ -140,21 +139,7 @@ class PlaybackHandlers:
             self.playback_play_button.setIcon(make_action_icon("pause"))
         else:
             self.playback_play_button.setIcon(make_action_icon("play"))
-        self._update_detail_webview_playback()
-
-    def _update_detail_webview_playback(self, position_ms: int | None = None) -> None:
-        detail_webview = getattr(self, "detail_webview", None)
-        update_playback = getattr(detail_webview, "update_playback", None)
-        if not callable(update_playback):
-            return
-        media_player = getattr(self, "media_player", None)
-        if position_ms is None:
-            position_ms = media_player.position() if media_player else 0
-        is_playing = (
-            media_player is not None
-            and media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        )
-        update_playback({"positionSeconds": position_ms / 1000.0, "isPlaying": is_playing})
+        self._update_detail_playback()
 
     def _init_playback_shortcuts(self) -> None:
         """注册播放快捷键，避免焦点落在子控件时主窗口收不到按键。"""
