@@ -2079,6 +2079,55 @@ def test_copy_transcript_uses_detail_cache_not_hidden_widget(monkeypatch, tmp_pa
         app.processEvents()
 
 
+def test_copy_timeline_uses_detail_timeline_text(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_timeline(record, [{"start": 1.25, "end": 3.5, "text": "timeline sentence"}])
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        QApplication.clipboard().clear()
+
+        window.copy_panel_text("timeline")
+
+        assert "00:01.250 - 00:03.500" in QApplication.clipboard().text()
+        assert "timeline sentence" in QApplication.clipboard().text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_copy_summary_refreshes_cache_for_current_record(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "a" / "audio.wav")
+        write_wav(tmp_path / "records" / "b" / "audio.wav")
+        records = {record.record_id: record for record in service.scan()}
+        service.save_summary(records["a"], "summary A")
+        service.save_summary(records["b"], "summary B")
+        records = {record.record_id: record for record in service.scan()}
+        window.history_service = service
+
+        window._load_history_record(records["a"])
+        window._set_result_tab("summary")
+        assert window.summary_markdown_text == "summary A"
+        window._load_history_record(records["b"])
+        QApplication.clipboard().clear()
+
+        window.copy_panel_text("summary")
+
+        assert QApplication.clipboard().text() == "summary B"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_empty_result_copy_buttons_are_hidden(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

@@ -612,10 +612,10 @@ class MainWindow(
             text = self.transcript_plain_text or self.history_service.read_transcript(self.current_record)
             label = "转录文字"
         elif kind == "timeline":
-            text = self._detail_timeline_copy_text(self.current_record)
+            text = self._timeline_display_text(self.current_record)
             label = "逐句时间轴"
         else:
-            text = self.summary_markdown_text or self.history_service.read_summary(self.current_record)
+            text = self._detail_summary_content(self.current_record)
             label = "总结内容"
 
         if not text.strip():
