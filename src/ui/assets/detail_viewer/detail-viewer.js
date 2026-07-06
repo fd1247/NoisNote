@@ -10,7 +10,26 @@
     timelineRenderGeneration: 0
   };
 
-  var renderer = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: true }) : null;
+  var renderer = window.markdownit ? window.markdownit({
+    html: true,
+    breaks: true,
+    linkify: true,
+    typographer: false,
+    langPrefix: "lang-"
+  }) : null;
+
+  function useMarkdownPlugin(plugin) {
+    if (renderer && plugin) {
+      renderer.use(plugin);
+    }
+  }
+
+  useMarkdownPlugin(window.markdownitTaskLists);
+  useMarkdownPlugin(window.markdownitSub);
+  useMarkdownPlugin(window.markdownitSup);
+  useMarkdownPlugin(window.markdownitEmoji);
+  useMarkdownPlugin(window.markdownitFootnote);
+  useMarkdownPlugin(window.markdownitMark);
 
   function $(id) {
     return document.getElementById(id);
@@ -68,8 +87,7 @@
 
   function setMode(mode) {
     var selected = mode === "timeline" || mode === "summary" ? mode : "transcript";
-    $("transcriptPanel").hidden = selected !== "transcript";
-    $("summaryPanel").hidden = selected !== "summary";
+    $("body-container").hidden = selected === "timeline";
     $("timelinePanel").hidden = selected !== "timeline";
   }
 
@@ -162,8 +180,7 @@
       $("errorState").hidden = true;
       $("emptyState").hidden = true;
       $("contentPanel").hidden = false;
-      $("transcriptPanel").innerHTML = renderMarkdown(state.payload.mode === "transcript" ? state.payload.content : "");
-      $("summaryPanel").innerHTML = renderMarkdown(state.payload.mode === "summary" ? state.payload.content : "");
+      $("vx-content").innerHTML = state.payload.mode === "timeline" ? "" : renderMarkdown(state.payload.content || "");
       renderTimeline(state.payload.timeline || []);
       setMode(state.payload.mode);
       bindLinks();
@@ -217,7 +234,7 @@
   }
 
   function bindLinks() {
-    document.querySelectorAll(".markdown-body a[href]").forEach(function (link) {
+    document.querySelectorAll("#vx-content a[href]").forEach(function (link) {
       link.addEventListener("click", function (event) {
         event.preventDefault();
         sendCommand({ command: "openExternalUrl", url: link.href });

@@ -207,17 +207,47 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
 
     index_text = index.read_text(encoding="utf-8")
     assert "detail-viewer.js" in index_text
+    assert 'id="body-container"' in index_text
+    assert 'id="vx-content"' in index_text
     assert "detailTitle" not in index_text
     assert "modeLabel" not in index_text
     assert "copyButton" not in index_text
-    assert "timeline-row" in css.read_text(encoding="utf-8")
+    css_text = css.read_text(encoding="utf-8")
+    assert "timeline-row" in css_text
+    assert 'font-family: "YaHei Consolas Hybrid", "Noto Sans", "Helvetica Neue"' in css_text
+    assert "color: #222222;" in css_text
+    assert "padding: 16px;" in css_text
+    assert "color: #8e24aa;" in css_text
+    assert "color: #e96900;" not in css_text
+    assert "color: #34495e;" not in css_text
     script = js.read_text(encoding="utf-8")
     assert "NoisNoteDetail" in script
     assert "setContent" in script
     assert "updatePlayback" in script
+    assert 'html: true' in script
+    assert 'langPrefix: "lang-"' in script
+    assert "$(\"vx-content\")" in script
     markdown_text = markdown.read_text(encoding="utf-8")
     assert "markdown-it 14.1.0" in markdown_text
     assert "compatibility" not in markdown_text.lower()
+
+
+def test_detail_viewer_loads_vnote_markdown_plugins() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    index_text = (root / "index.html").read_text(encoding="utf-8")
+
+    plugin_files = [
+        "markdown-it-task-lists.js",
+        "markdown-it-sub.min.js",
+        "markdown-it-sup.min.js",
+        "markdown-it-emoji.min.js",
+        "markdown-it-footnote.min.js",
+        "markdown-it-mark.min.js",
+    ]
+
+    for filename in plugin_files:
+        assert f"./vendor/{filename}" in index_text
+        assert (root / "vendor" / filename).exists()
 
 
 def test_detail_viewer_timeline_rendering_uses_generation_token() -> None:

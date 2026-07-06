@@ -6,19 +6,27 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' qrc:; script-src 'self' qrc:; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>NoisNote Detail Viewer</title>
     <link rel="stylesheet" href="./detail-viewer.css">
+    <link rel="stylesheet" href="./vendor/markdownit.css">
   </head>
   <body>
     <main class="detail-shell">
       <section id="emptyState" class="state-panel">选择一条历史记录后查看内容。</section>
       <section id="errorState" class="state-panel error" hidden></section>
       <section id="contentPanel" class="content-panel" hidden>
-        <article id="transcriptPanel" class="markdown-body"></article>
-        <article id="summaryPanel" class="markdown-body" hidden></article>
+        <div id="body-container">
+          <div id="vx-content"></div>
+        </div>
         <ol id="timelinePanel" class="timeline-list" hidden></ol>
       </section>
     </main>
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <script src="./vendor/markdown-it.min.js"></script>
+    <script src="./vendor/markdown-it-task-lists.js"></script>
+    <script src="./vendor/markdown-it-sub.min.js"></script>
+    <script src="./vendor/markdown-it-sup.min.js"></script>
+    <script src="./vendor/markdown-it-emoji.min.js"></script>
+    <script src="./vendor/markdown-it-footnote.min.js"></script>
+    <script src="./vendor/markdown-it-mark.min.js"></script>
     <script src="./detail-viewer.js"></script>
   </body>
 </html>
