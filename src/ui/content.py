@@ -90,6 +90,10 @@ class HistoryPageCallbacks:
     set_result_tab: Callable[[str], None]
     manual_summarize: Callable[[], None]
     retry_transcription: Callable[[], None]
+    show_metadata_details: Callable[[], None]
+    show_detail_action_menu: Callable[[], None]
+    open_current_record_folder: Callable[[], None]
+    delete_current_record: Callable[[], None]
     copy_panel_text: Callable[[str], None]
     export_result: Callable[[str], None]
     seek_backward: Callable[[], None]
@@ -114,6 +118,13 @@ class ContentTabsControls:
     detail_status_label: QLabel
     detail_time_label: QLabel
     detail_processing_status_label: QLabel
+    detail_metadata_button: QPushButton
+    detail_more_button: QPushButton
+    detail_action_menu: QMenu
+    detail_transcribe_action: QAction
+    detail_summary_action: QAction
+    detail_open_folder_action: QAction
+    detail_delete_action: QAction
     transcript_status: QLabel
     transcript_text: QPlainTextEdit
     transcript_copy_button: QPushButton
@@ -170,6 +181,11 @@ def build_history_page(
     detail_processing_status_label.setObjectName("DetailProcessingStatus")
     detail_processing_status_label.setTextFormat(Qt.RichText)
     detail_processing_status_label.hide()
+    detail_metadata_button = QPushButton("详细信息")
+    detail_metadata_button.setObjectName("SmallButton")
+    detail_metadata_button.setCursor(Qt.CursorShape.PointingHandCursor)
+    detail_metadata_button.setEnabled(False)
+    detail_metadata_button.clicked.connect(callbacks.show_metadata_details)
     meta_row.addWidget(detail_duration_label)
     meta_row.addWidget(_build_meta_separator())
     meta_row.addWidget(detail_size_label)
@@ -178,10 +194,29 @@ def build_history_page(
     meta_row.addWidget(detail_status_label)
     meta_row.addStretch(1)
     meta_row.addWidget(detail_processing_status_label)
+    meta_row.addWidget(detail_metadata_button)
 
     title_meta.addWidget(detail_title_label)
     title_meta.addLayout(meta_row)
     detail_header_layout.addLayout(title_meta, stretch=1)
+
+    detail_action_menu = QMenu(detail_header)
+    detail_transcribe_action = detail_action_menu.addAction("转录")
+    detail_summary_action = detail_action_menu.addAction("生成总结")
+    detail_open_folder_action = detail_action_menu.addAction("打开文件位置")
+    detail_delete_action = detail_action_menu.addAction("删除记录")
+    detail_transcribe_action.triggered.connect(callbacks.retry_transcription)
+    detail_summary_action.triggered.connect(callbacks.manual_summarize)
+    detail_open_folder_action.triggered.connect(callbacks.open_current_record_folder)
+    detail_delete_action.triggered.connect(callbacks.delete_current_record)
+
+    detail_more_button = QPushButton("...")
+    detail_more_button.setObjectName("DetailMoreButton")
+    detail_more_button.setToolTip("记录操作")
+    detail_more_button.setCursor(Qt.CursorShape.PointingHandCursor)
+    detail_more_button.setFixedSize(32, 28)
+    detail_more_button.clicked.connect(callbacks.show_detail_action_menu)
+    detail_header_layout.addWidget(detail_more_button, alignment=Qt.AlignmentFlag.AlignTop)
 
     panel = QFrame()
     panel.setObjectName("Panel")
@@ -271,6 +306,13 @@ def build_history_page(
         detail_status_label=detail_status_label,
         detail_time_label=detail_time_label,
         detail_processing_status_label=detail_processing_status_label,
+        detail_metadata_button=detail_metadata_button,
+        detail_more_button=detail_more_button,
+        detail_action_menu=detail_action_menu,
+        detail_transcribe_action=detail_transcribe_action,
+        detail_summary_action=detail_summary_action,
+        detail_open_folder_action=detail_open_folder_action,
+        detail_delete_action=detail_delete_action,
         transcript_status=transcript_controls.status_label,
         transcript_text=cast(QPlainTextEdit, transcript_controls.text_edit),
         transcript_copy_button=transcript_controls.copy_button,

@@ -21,6 +21,7 @@ from src.history.service import HistoryService, HistoryStatus
 from src.history.types import format_size
 from src.app.main_window import MainWindow
 from src.ui.content import PlaybackRateCombo, SeekSlider
+from src.ui.detail_models import build_metadata_fields
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -245,6 +246,97 @@ def test_workbench_shell_has_menu_toolbar_and_task_panel(monkeypatch, tmp_path: 
         assert not hasattr(window, "settings_button")
         assert "enterEvent" not in window.record_toolbar_button.__dict__
         assert "leaveEvent" not in window.record_toolbar_button.__dict__
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_header_has_action_menu_and_metadata_button(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.detail_more_button.toolTip() == "记录操作"
+        assert window.detail_metadata_button.text() == "详细信息"
+        assert [action.text() for action in window.detail_action_menu.actions()] == [
+            "转录",
+            "生成总结",
+            "打开文件位置",
+            "删除记录",
+        ]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_action_menu_enable_rules(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+
+        assert window.detail_transcribe_action.isEnabled()
+        assert not window.detail_summary_action.isEnabled()
+        assert window.detail_open_folder_action.isEnabled()
+        assert window.detail_delete_action.isEnabled()
+        assert window.detail_metadata_button.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_action_menu_summary_enabled_for_transcript_without_summary(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "会议转录内容")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+
+        assert window.detail_summary_action.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_show_metadata_details_uses_current_record_fields(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    captured: dict[str, object] = {}
+
+    class FakeMetadataDialog:
+        def __init__(self, parent, fields):
+            captured["parent"] = parent
+            captured["fields"] = fields
+
+        def exec(self):
+            captured["exec_called"] = True
+            return QDialog.DialogCode.Accepted
+
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        monkeypatch.setattr("src.app.main_window.DetailMetadataDialog", FakeMetadataDialog)
+
+        window.show_metadata_details()
+
+        expected_labels = [field["label"] for field in build_metadata_fields(window.current_record)]
+        actual_labels = [field["label"] for field in captured["fields"]]
+        assert captured["parent"] == window
+        assert captured["exec_called"] is True
+        assert actual_labels == expected_labels
     finally:
         window.close()
         app.processEvents()

@@ -42,6 +42,8 @@ from ..history.service import HistoryRecord, HistoryService
 from ..model_registry.downloader import ModelDownloadManager
 from ..ui.settings import SettingsPanel
 from ..ui.content import HistoryPageCallbacks, build_history_page
+from ..ui.detail_metadata import DetailMetadataDialog
+from ..ui.detail_models import build_metadata_fields
 from ..ui.sidebar import build_history_sidebar
 from ..ui.icons import make_action_icon, make_app_icon
 from ..ui.recording import build_recording_page
@@ -301,6 +303,10 @@ class MainWindow(
                 set_result_tab=self._set_result_tab,
                 manual_summarize=self.manual_summarize,
                 retry_transcription=self.retry_transcription,
+                show_metadata_details=self.show_metadata_details,
+                show_detail_action_menu=self.show_detail_action_menu,
+                open_current_record_folder=self.open_current_record_folder,
+                delete_current_record=self.delete_current_record,
                 copy_panel_text=self.copy_panel_text,
                 export_result=self._export_result_with_format,
                 seek_backward=self.seek_playback_backward,
@@ -321,6 +327,13 @@ class MainWindow(
         self.detail_status_label = controls.detail_status_label
         self.detail_time_label = controls.detail_time_label
         self.detail_processing_status_label = controls.detail_processing_status_label
+        self.detail_metadata_button = controls.detail_metadata_button
+        self.detail_more_button = controls.detail_more_button
+        self.detail_action_menu = controls.detail_action_menu
+        self.detail_transcribe_action = controls.detail_transcribe_action
+        self.detail_summary_action = controls.detail_summary_action
+        self.detail_open_folder_action = controls.detail_open_folder_action
+        self.detail_delete_action = controls.detail_delete_action
         self.transcript_status = controls.transcript_status
         self.transcript_text = controls.transcript_text
         self.transcript_copy_button = controls.transcript_copy_button
@@ -342,6 +355,7 @@ class MainWindow(
         self.playback_rate_combo = controls.playback_rate_combo
         self.playback_cc_button = controls.playback_cc_button
         self._set_result_tab("transcript")
+        self._sync_detail_action_menu()
         return page
 
     def _set_transcript_text(self, text: str) -> None:
@@ -359,6 +373,57 @@ class MainWindow(
     def _set_summary_text(self, summary: str) -> None:
         """以 Markdown 方式展示总结，同时保留原文用于复制和导出。"""
         set_summary_text(self, summary)
+
+    def _sync_detail_action_menu(self) -> None:
+        """同步详情页头部菜单和详细信息入口的可用状态。"""
+        if not hasattr(self, "detail_action_menu"):
+            return
+        record = self.current_record
+        has_record = record is not None
+        self.detail_metadata_button.setEnabled(has_record)
+        self.detail_transcribe_action.setEnabled(has_record)
+        self.detail_summary_action.setEnabled(
+            bool(has_record and record.has_transcript and not record.has_summary and not self.is_processing)
+        )
+        self.detail_open_folder_action.setEnabled(has_record)
+        self.detail_delete_action.setEnabled(has_record)
+
+    def show_metadata_details(self) -> None:
+        """打开当前历史记录的只读元数据弹窗。"""
+        if not self.current_record:
+            self._set_status("请先选择一条历史记录")
+            return
+        dialog = DetailMetadataDialog(self, build_metadata_fields(self.current_record))
+        dialog.exec()
+
+    def show_detail_action_menu(self) -> None:
+        """在详情页更多按钮下方弹出记录操作菜单。"""
+        self._sync_detail_action_menu()
+        pos = self.detail_more_button.mapToGlobal(self.detail_more_button.rect().bottomLeft())
+        self.detail_action_menu.popup(pos)
+
+    def _update_detail_header(self, record: HistoryRecord) -> None:
+        """刷新详情头部内容后同步头部操作状态。"""
+        HistoryViewHandlers._update_detail_header(self, record)
+        self._sync_detail_action_menu()
+
+    def _clear_missing_current_record(self, *, clear_persisted_selection: bool = True) -> None:
+        """清空详情视图后同步头部操作状态。"""
+        HistoryViewHandlers._clear_missing_current_record(
+            self,
+            clear_persisted_selection=clear_persisted_selection,
+        )
+        self._sync_detail_action_menu()
+
+    def _set_processing_ui(self, processing: bool) -> None:
+        """处理状态变化时同步详情头部菜单。"""
+        ProcessingHandlers._set_processing_ui(self, processing)
+        self._sync_detail_action_menu()
+
+    def new_recording(self) -> None:
+        """创建新录音入口清空当前记录后同步详情头部菜单。"""
+        RecordingHandlers.new_recording(self)
+        self._sync_detail_action_menu()
 
     def _new_task_id(self, prefix: str) -> str:
         """生成一次后台任务的轻量追踪 ID。"""
@@ -478,6 +543,20 @@ class MainWindow(
             return
         record = self.current_items[index]
         folder = record.record_dir
+        if not folder.exists():
+            self._show_error(f"记录文件夹不存在：{folder}")
+            return
+        try:
+            os.startfile(str(folder))
+        except OSError as exc:
+            self._show_error(f"无法打开记录文件夹：{exc}")
+
+    def open_current_record_folder(self) -> None:
+        """在系统文件管理器中打开当前历史记录文件夹。"""
+        if not self.current_record:
+            self._set_status("请先选择一条历史记录")
+            return
+        folder = self.current_record.record_dir
         if not folder.exists():
             self._show_error(f"记录文件夹不存在：{folder}")
             return
