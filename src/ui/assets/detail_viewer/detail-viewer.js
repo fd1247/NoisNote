@@ -87,6 +87,7 @@
 
   function clearTimeline() {
     var list = $("timelinePanel");
+    state.activeId = null;
     while (list.firstChild) {
       list.removeChild(list.firstChild);
     }

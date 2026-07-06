@@ -137,3 +137,14 @@ def test_detail_viewer_timeline_rendering_uses_generation_token() -> None:
     assert "state.timelineRenderGeneration += 1" in script
     assert "renderTimelineChunk(items, 0, generation)" in script
     assert "generation !== state.timelineRenderGeneration" in script
+
+
+def test_detail_viewer_resets_active_timeline_cache_when_clearing_rows() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    script = (root / "detail-viewer.js").read_text(encoding="utf-8")
+
+    clear_start = script.index("function clearTimeline()")
+    clear_end = script.index("function renderTimelineChunk", clear_start)
+    clear_timeline_source = script[clear_start:clear_end]
+
+    assert "state.activeId = null" in clear_timeline_source
