@@ -59,6 +59,10 @@ class HistoryViewHandlers:
         self.summary_status.setText("等待内容")
         self.manual_summary_button.hide()
         self.retry_transcription_button.hide()
+        if hasattr(self, "_bump_detail_revision"):
+            self._bump_detail_revision()
+        if hasattr(self, "_refresh_detail_payload"):
+            self._refresh_detail_payload()
 
     def _last_selected_record_key_for_notebook(self, notebook_id: str) -> str:
         selected_keys = self.config.get("last_selected_record_keys")
@@ -280,6 +284,8 @@ class HistoryViewHandlers:
         self._update_detail_header(recording)
         self.timeline_tab_button.setVisible(recording.has_timeline)
         self.playback_cc_button.setVisible(True)
+        if hasattr(self, "_bump_detail_revision"):
+            self._bump_detail_revision()
         if recording.input_error:
             detail = recording.input_error.get("details") or recording.input_error.get("message") or recording.error_message
             self.transcript_status.setText(f"音频处理失败：{detail}")
@@ -297,6 +303,10 @@ class HistoryViewHandlers:
         self._update_retry_transcription_button(recording)
         self._set_playback_source(recording)
         self._sync_detail_processing_view()
+        if hasattr(self, "_refresh_detail_payload"):
+            self._refresh_detail_payload()
+        if hasattr(self, "_sync_detail_action_menu"):
+            self._sync_detail_action_menu()
         self._set_status("")
 
     def _persist_last_selected_record(self, record: HistoryRecord) -> None:

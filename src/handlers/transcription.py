@@ -120,6 +120,9 @@ class TranscriptionHandlers:
                 self.history_service.save_timeline(record, timeline_items)
                 record = self.history_service.refresh_metadata(record)
                 self.processing_record = record
+                if self.current_record and self.current_record.record_key == record.record_key:
+                    self.timeline_items = timeline_items
+                    self.timeline_loaded_record_id = record.record_key
         if record:
             record = self.history_service.mark_processing_completed(
                 record,
@@ -132,6 +135,8 @@ class TranscriptionHandlers:
             self.processing_record = record
             if self.current_record and self.current_record.record_key == record.record_key:
                 self.current_record = record
+                if hasattr(self, "_refresh_detail_payload"):
+                    self._refresh_detail_payload()
         log_event(
             "asr.transcribe.completed",
             module="asr",
@@ -183,6 +188,8 @@ class TranscriptionHandlers:
         self.latest_transcription_percent = None
         if was_selected:
             self.transcript_status.setText(f"转录失败：{error}")
+            if hasattr(self, "_refresh_detail_payload"):
+                self._refresh_detail_payload()
         self.record_button.setText("开始录音")
         self.recording_hint_label.setText("转录失败，可重新创建录音")
         self._set_processing_ui(False)

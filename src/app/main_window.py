@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from ..audio import AudioRecorder
 from ..audio.preprocess import AudioInputError, probe_media
 from .config import ensure_dirs, get_config, get_notebooks, save_config
+from ..handlers.detail_view import DetailViewHandlers
 from ..handlers.export import ExportHandlers
 from ..handlers.history_view import HistoryViewHandlers
 from ..handlers.media_import import ImportHandlers
@@ -65,6 +66,7 @@ class MainWindow(
     SummaryHandlers,
     SettingsHandlers,
     HistoryViewHandlers,
+    DetailViewHandlers,
     TimelineViewHandlers,
     PlaybackHandlers,
     ExportHandlers,
@@ -98,6 +100,8 @@ class MainWindow(
         self.dismissed_history_notice_ids: set[str] = set()
         self.silence_started_at: float | None = None
         self.active_result_tab = "transcript"
+        self.detail_revision = 0
+        self.transcript_plain_text = ""
         self.summary_markdown_text = ""
         self.active_task_ids: dict[str, str] = {}
         self.timeline_items: list[dict] = []
@@ -361,12 +365,16 @@ class MainWindow(
         return page
 
     def _on_detail_web_command(self, value: dict) -> None:
-        """接收详情 WebView 命令；完整处理逻辑由后续任务接管。"""
-        _ = value
+        """接收详情 WebView 命令并交给详情处理器分发。"""
+        DetailViewHandlers._on_detail_web_command(self, value)
 
     def _set_transcript_text(self, text: str) -> None:
         """写入转录文本，并同步当前页复制按钮。"""
         set_transcript_text(self, text)
+        if self.current_record:
+            self.transcript_loaded_record_id = self.current_record.record_key
+        if self.active_result_tab == "transcript":
+            self._refresh_detail_payload()
 
     def _set_result_tab(self, kind: str) -> None:
         """切换详情结果区标签，并保留用户的当前选择。"""
@@ -375,10 +383,17 @@ class MainWindow(
         if previous_tab == "timeline" and self.active_result_tab != "timeline":
             self._release_timeline_resources()
         self._ensure_active_result_loaded()
+        if previous_tab != self.active_result_tab:
+            self._bump_detail_revision()
+        self._refresh_detail_payload()
 
     def _set_summary_text(self, summary: str) -> None:
         """以 Markdown 方式展示总结，同时保留原文用于复制和导出。"""
         set_summary_text(self, summary)
+        if self.current_record:
+            self.summary_loaded_record_id = self.current_record.record_key
+        if self.active_result_tab == "summary":
+            self._refresh_detail_payload()
 
     def _sync_detail_action_menu(self) -> None:
         """同步详情页头部菜单和详细信息入口的可用状态。"""
@@ -421,6 +436,8 @@ class MainWindow(
             self,
             clear_persisted_selection=clear_persisted_selection,
         )
+        self._bump_detail_revision()
+        self._refresh_detail_payload()
         self._sync_detail_action_menu()
 
     def _set_processing_ui(self, processing: bool) -> None:

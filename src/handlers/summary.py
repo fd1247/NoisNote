@@ -131,7 +131,7 @@ class SummaryHandlers:
         self.recording_hint_label.setText("总结失败，可稍后手动总结")
         self._set_processing_ui(False)
         if was_selected:
-            self.manual_summary_button.setVisible(bool(self.transcript_text.toPlainText().strip()))
+            self.manual_summary_button.setVisible(bool(str(getattr(self, "transcript_plain_text", "")).strip()))
         self._update_recording_entry()
         if record:
             record = self.history_service.mark_error(
@@ -146,4 +146,11 @@ class SummaryHandlers:
         self._show_error(f"总结失败：{error}")
 
     def manual_summarize(self) -> None:
-        self.start_summarization(self.transcript_text.toPlainText(), self.current_record)
+        text = str(getattr(self, "transcript_plain_text", "") or "")
+        if not text.strip() and self.current_record:
+            text = self.history_service.read_transcript(self.current_record)
+            self.transcript_plain_text = text
+            self.transcript_loaded_record_id = self.current_record.record_key
+            if hasattr(self, "_sync_legacy_transcript_widgets"):
+                self._sync_legacy_transcript_widgets(text)
+        self.start_summarization(text, self.current_record)

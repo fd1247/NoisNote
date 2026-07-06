@@ -1513,6 +1513,214 @@ def test_detail_webview_exists_in_history_page(monkeypatch, tmp_path: Path) -> N
         app.processEvents()
 
 
+def test_detail_webview_receives_transcript_payload_on_record_load(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "transcript from disk")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+
+        payload = window.detail_webview.current_payload
+        assert payload["recordKey"] == record.record_key
+        assert payload["mode"] == "transcript"
+        assert "transcript from disk" in payload["content"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_webview_receives_summary_payload_when_tab_selected(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "transcript")
+        service.save_summary(record, "# summary\n\n- item")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+        window._set_result_tab("summary")
+
+        payload = window.detail_webview.current_payload
+        assert payload["mode"] == "summary"
+        assert "# summary" in payload["content"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_webview_receives_timeline_payload_when_tab_selected(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_timeline(record, [{"start": 1.0, "end": 2.0, "text": "timeline text"}])
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+        window._set_result_tab("timeline")
+
+        payload = window.detail_webview.current_payload
+        assert payload["mode"] == "timeline"
+        assert payload["timeline"][0]["text"] == "timeline text"
+        assert "timeline text" in payload["content"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_seek_command_calls_playback_seek(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        calls: list[int] = []
+        window.seek_playback = calls.append
+
+        window._on_detail_web_command(
+            {
+                "command": "seek",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "seconds": 12.6,
+            }
+        )
+
+        assert calls == [12600]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_copy_command_updates_clipboard(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+
+        window._on_detail_web_command(
+            {
+                "command": "copy",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "mode": "transcript",
+                "text": "copy me",
+            }
+        )
+
+        assert QApplication.clipboard().text() == "copy me"
+        assert "copy" in window.status_label.text().lower() or "复制" in window.status_label.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_open_external_url_command_uses_desktop_services(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    opened: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        monkeypatch.setattr(
+            "src.handlers.detail_view.QDesktopServices.openUrl",
+            lambda url: opened.append(url.toString()) or True,
+        )
+
+        window._on_detail_web_command(
+            {
+                "command": "openExternalUrl",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "url": "https://example.com/video",
+            }
+        )
+
+        assert opened == ["https://example.com/video"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_stale_detail_command_is_ignored(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.seek_playback = lambda _ms: (_ for _ in ()).throw(AssertionError("stale command should be ignored"))
+
+        window._on_detail_web_command(
+            {
+                "command": "seek",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision - 1,
+                "seconds": 1,
+            }
+        )
+        window._on_detail_web_command(
+            {
+                "command": "seek",
+                "recordKey": "default:other",
+                "revision": window.detail_revision,
+                "seconds": 1,
+            }
+        )
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_manual_summary_uses_cached_or_record_transcript(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    started: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "record transcript")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.transcript_text.clear()
+        window.transcript_plain_text = ""
+        window.start_summarization = lambda text, _record=None: started.append(text)
+
+        window.manual_summarize()
+
+        assert started == ["record transcript"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_detail_status_rows_are_hidden_from_body(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

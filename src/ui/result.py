@@ -18,6 +18,8 @@ _VALID_RESULT_TABS = {"transcript", "timeline", "summary"}
 
 def set_transcript_text(owner: ResultStateOwner, text: str) -> None:
     """写入转录文本，并同步当前页复制按钮。"""
+    if hasattr(owner, "transcript_plain_text"):
+        owner.transcript_plain_text = text  # type: ignore[attr-defined]
     owner.transcript_text.setPlainText(text)  # type: ignore[attr-defined]
     if hasattr(owner, "transcript_copy_button"):
         owner.transcript_copy_button.setVisible(bool(text.strip()))  # type: ignore[attr-defined]
@@ -59,6 +61,8 @@ def set_summary_text(owner: ResultStateOwner, summary: str) -> None:
 
 def _sync_detail_webview(owner: ResultStateOwner, kind: str, content: str | None = None) -> None:
     """同步详情 WebView 的最小兼容 payload，完整数据绑定由后续任务接管。"""
+    if hasattr(owner, "_refresh_detail_payload"):
+        return
     detail_webview = getattr(owner, "detail_webview", None)
     if detail_webview is None or not hasattr(detail_webview, "set_content"):
         return
