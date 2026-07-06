@@ -1697,6 +1697,84 @@ def test_stale_detail_command_is_ignored(monkeypatch, tmp_path: Path) -> None:
         app.processEvents()
 
 
+def test_transcript_content_update_rejects_previous_detail_revision(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        old_revision = window.detail_revision
+
+        window._set_transcript_text("new transcript")
+
+        payload = window.detail_webview.current_payload
+        assert window.detail_revision > old_revision
+        assert payload["revision"] == window.detail_revision
+        assert payload["mode"] == "transcript"
+        assert payload["content"] == "new transcript"
+
+        QApplication.clipboard().clear()
+        window._on_detail_web_command(
+            {
+                "command": "copy",
+                "recordKey": record.record_key,
+                "revision": old_revision,
+                "mode": "transcript",
+                "text": "stale transcript copy",
+            }
+        )
+
+        assert QApplication.clipboard().text() == ""
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_summary_content_update_rejects_previous_detail_revision(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    opened: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_summary(record, "old summary")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window._set_result_tab("summary")
+        old_revision = window.detail_revision
+        monkeypatch.setattr(
+            "src.handlers.detail_view.QDesktopServices.openUrl",
+            lambda url: opened.append(url.toString()) or True,
+        )
+
+        window._set_summary_text("new summary")
+
+        payload = window.detail_webview.current_payload
+        assert window.detail_revision > old_revision
+        assert payload["revision"] == window.detail_revision
+        assert payload["mode"] == "summary"
+        assert payload["content"] == "new summary"
+
+        window._on_detail_web_command(
+            {
+                "command": "openExternalUrl",
+                "recordKey": record.record_key,
+                "revision": old_revision,
+                "url": "https://example.com/stale",
+            }
+        )
+
+        assert opened == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_manual_summary_uses_cached_or_record_transcript(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

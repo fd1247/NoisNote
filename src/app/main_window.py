@@ -374,6 +374,7 @@ class MainWindow(
         if self.current_record:
             self.transcript_loaded_record_id = self.current_record.record_key
         if self.active_result_tab == "transcript":
+            self._bump_detail_revision()
             self._refresh_detail_payload()
 
     def _set_result_tab(self, kind: str) -> None:
@@ -393,6 +394,7 @@ class MainWindow(
         if self.current_record:
             self.summary_loaded_record_id = self.current_record.record_key
         if self.active_result_tab == "summary":
+            self._bump_detail_revision()
             self._refresh_detail_payload()
 
     def _sync_detail_action_menu(self) -> None:
