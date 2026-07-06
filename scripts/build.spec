@@ -55,7 +55,6 @@ soundfile_datas, soundfile_binaries, soundfile_hiddenimports = collect_all("soun
 
 # 需要排除的 PySide6 目录前缀（相对于 PySide6 包目录）
 _PYSIDE6_EXCLUDE_DIRS = {
-    "resources",      # QML 资源（字体、样式、控件库）
     "qml",            # QML 模块
     "translations",   # 多语言翻译（下面单独保留中文）
 }
@@ -67,9 +66,12 @@ _PYSIDE6_EXCLUDE_BINARIES = {
 
 # 需要排除的翻译文件（保留 zh_CN）
 def _should_keep_translation(path_str: str) -> bool:
-    if "/translations/" not in path_str and "\\translations\\" not in path_str:
+    path_lower = path_str.lower().replace("\\", "/")
+    if "/translations/" not in path_lower:
         return True  # 不是翻译文件，保留
-    return "zh_CN" in path_str  # 只保留中文翻译
+    if "/translations/qtwebengine_locales/" in path_lower:
+        return True
+    return "zh_cn" in path_lower or "zh-cn" in path_lower  # 只保留中文翻译
 
 def _filter_pyside6_datas(datas):
     """过滤 PySide6 数据文件，排除不需要的目录和翻译。"""
@@ -371,7 +373,6 @@ a = Analysis(
 
 # 需要排除的 PySide6 目录（相对于 PySide6 包）
 _PYSIDE6_EXCLUDE_DATS = {
-    "resources",
     "qml",
     "opengl32sw.dll",
 }
@@ -385,7 +386,9 @@ def _should_keep_pyside6_dat(dst: str) -> bool:
             return False
     # 翻译文件只保留中文
     if "/translations/" in dst_lower:
-        return "zh_cn" in dst_lower
+        if "/translations/qtwebengine_locales/" in dst_lower:
+            return True
+        return "zh_cn" in dst_lower or "zh-cn" in dst_lower
     return True
 
 # 需要排除的二进制包

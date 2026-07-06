@@ -159,7 +159,7 @@ def cleanup_build_output() -> None:
     pyside6 = internal / "PySide6"
     if pyside6.exists():
         # 删除 QML 相关（应用不用 QML）
-        for name in ["resources", "qml"]:
+        for name in ["qml"]:
             target = pyside6 / name
             if target.exists():
                 removed_size += sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
@@ -177,7 +177,21 @@ def cleanup_build_output() -> None:
         translations = pyside6 / "translations"
         if translations.exists():
             for f in translations.iterdir():
-                if f.is_file() and "zh_cn" not in f.name.lower():
+                name_lower = f.name.lower()
+                if f.is_dir():
+                    if name_lower == "qtwebengine_locales":
+                        continue
+                    removed_size += sum(child.stat().st_size for child in f.rglob("*") if child.is_file())
+                    shutil.rmtree(f, ignore_errors=True)
+                    continue
+                keep_translation = "zh_cn" in name_lower or "zh-cn" in name_lower
+                keep_webengine_pak = f.suffix.lower() == ".pak" and (
+                    "zh_cn" in name_lower
+                    or "zh-cn" in name_lower
+                    or "en_us" in name_lower
+                    or "en-us" in name_lower
+                )
+                if f.is_file() and not (keep_translation or keep_webengine_pak):
                     removed_size += f.stat().st_size
                     f.unlink(missing_ok=True)
             # 如果目录空了就删除
