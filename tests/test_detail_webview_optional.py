@@ -56,6 +56,29 @@ def test_bridge_post_message_handles_malformed_input_without_raising() -> None:
     assert all(item.get("command") == "renderError" for item in received)
 
 
+def test_local_webengine_page_allows_initial_file_navigation_without_legacy_enum() -> None:
+    from src.ui.detail_webview import _LocalOnlyWebEnginePage
+
+    class FakePage:
+        pass
+
+    class FakeUrl:
+        def isLocalFile(self) -> bool:  # noqa: N802
+            return True
+
+        def scheme(self) -> str:
+            return "file"
+
+    allowed = _LocalOnlyWebEnginePage.acceptNavigationRequest(
+        FakePage(),
+        FakeUrl(),
+        object(),
+        True,
+    )
+
+    assert allowed is True
+
+
 def test_detail_webview_fallback_instantiates_and_renders_current_markdown_content() -> None:
     _app()
 
@@ -85,6 +108,25 @@ def test_detail_webview_fallback_instantiates_and_renders_current_markdown_conte
         assert "Meeting Note" not in rendered_text
         assert "first sentence" not in rendered_text
         assert "<span style=\" font-weight:700;\">summary</span>" in rendered_html
+
+
+def test_detail_webview_fallback_loads_vnote_stylesheet() -> None:
+    _app()
+
+    from src.ui.detail_webview import DetailWebView
+
+    view = DetailWebView(command_callback=lambda _command: None)
+
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
+        stylesheet = browser.document().defaultStyleSheet()
+
+        assert "font-family" in stylesheet
+        assert "YaHei Consolas Hybrid" in stylesheet
+        assert "font-size: 2.2rem;" in stylesheet
+        assert "width:100%;" in stylesheet
+        assert "#vx-content" in stylesheet
 
 
 def test_detail_webview_fallback_shows_only_markdown_body_without_debug_fields() -> None:
@@ -238,6 +280,7 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert 'langPrefix: "lang-"' in script
     assert "markdownItAnchor" in script
     assert "markdownItTocDoneRight" in script
+    assert '"vx-data-anchor-icon": "¶"' in script
     assert "$(\"vx-content\")" in script
     markdown_text = markdown.read_text(encoding="utf-8")
     assert "markdown-it 14.1.0" in markdown_text

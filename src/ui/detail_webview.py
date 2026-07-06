@@ -26,7 +26,25 @@ except ImportError:  # pragma: no cover
 
 _ASSET_DIR = Path(__file__).resolve().parent / "assets" / "detail_viewer"
 _INDEX_HTML = _ASSET_DIR / "index.html"
+_DETAIL_CSS = _ASSET_DIR / "detail-viewer.css"
 _VNOTE_READ_MODE_ZOOM_FACTOR = 1.5
+
+
+def _is_link_click_navigation(request_type: Any) -> bool:
+    if QWebEnginePage is None:
+        return False
+    navigation_type = getattr(QWebEnginePage, "NavigationType", None)
+    link_clicked = getattr(navigation_type, "NavigationTypeLinkClicked", None) if navigation_type is not None else None
+    if link_clicked is None:
+        link_clicked = getattr(QWebEnginePage, "NavigationTypeLinkClicked", None)
+    return link_clicked is not None and request_type == link_clicked
+
+
+def _fallback_stylesheet() -> str:
+    try:
+        return _DETAIL_CSS.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 class DetailWebBridge(QObject):
@@ -66,7 +84,7 @@ class _LocalOnlyWebEnginePage(QWebEnginePage if QWebEnginePage is not None else 
     def acceptNavigationRequest(self, url: QUrl, request_type: Any, is_main_frame: bool) -> bool:  # noqa: N802
         if not is_main_frame:
             return True
-        if request_type == self.NavigationTypeLinkClicked:
+        if _is_link_click_navigation(request_type):
             return False
         return url.isLocalFile() or url.scheme() in {"", "qrc"}
 
@@ -146,6 +164,7 @@ class DetailWebView(QWidget):
         browser = QTextBrowser(self)
         browser.setOpenExternalLinks(False)
         browser.setReadOnly(True)
+        browser.document().setDefaultStyleSheet(_fallback_stylesheet())
         layout.addWidget(browser)
         self._fallback = browser
         self._render_fallback()
