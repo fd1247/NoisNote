@@ -155,12 +155,24 @@ def test_metadata_fields_hide_remote_url_as_local_path_and_use_remote_audio_file
         audio_path=remote_audio_path,
         original_file_path=Path("https://example.com/watch"),
     )
+    remote_subtitle_dir = tmp_path / "remote-subtitle"
+    remote_subtitle_path = remote_subtitle_dir / "audio.wav"
+    remote_subtitle_path.parent.mkdir(parents=True)
+    remote_subtitle_path.write_bytes(b"audio")
+    remote_subtitle_record = _record(
+        tmp_path,
+        source_kind="remote_subtitle",
+        record_dir=remote_subtitle_dir,
+        audio_path=remote_subtitle_path,
+    )
 
     remote_url_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_url_record)}
     remote_audio_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_audio_record)}
+    remote_subtitle_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_subtitle_record)}
 
     assert remote_url_fields["本地音视频所在路径"] == "--"
     assert remote_audio_fields["本地音视频所在路径"] == str(remote_audio_path)
+    assert remote_subtitle_fields["本地音视频所在路径"] == "--"
 
 
 def test_metadata_fields_hide_local_source_path_as_remote_url(tmp_path: Path) -> None:
@@ -223,6 +235,8 @@ def test_timeline_items_normalize_in_chronological_order() -> None:
     )
     assert find_active_timeline_segment(items, 1.5) == 0
     assert find_active_timeline_segment(items, 2.5) == 1
+    assert find_active_timeline_segment(items, float("nan")) is None
+    assert find_active_timeline_segment(items, float("inf")) is None
 
 
 def test_timeline_non_finite_values_normalize_to_displayable_text() -> None:
@@ -334,6 +348,14 @@ def test_parse_detail_command_rejects_non_finite_seek() -> None:
         )
         is None
     )
+    assert (
+        parse_detail_command(
+            {"command": "seek", "recordKey": "record:1", "revision": 2, "seconds": True},
+            "record:1",
+            2,
+        )
+        is None
+    )
 
 
 def test_parse_detail_command_accepts_current_seek() -> None:
@@ -399,6 +421,7 @@ def test_parse_detail_command_checks_open_external_url_freshness() -> None:
         "https://example.com\\@evil.com/path",
         "https://example.com/has space",
         "https://example.com/\x1f",
+        "https://example.com:bad/path",
         "not a url",
     ):
         assert (
@@ -419,3 +442,13 @@ def test_parse_detail_command_checks_open_external_url_freshness() -> None:
     assert command is not None
     assert command.command == "openExternalUrl"
     assert command.payload == {"url": "https://example.com/path"}
+
+    http_command = parse_detail_command(
+        {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": "http://example.com/path"},
+        "record:1",
+        2,
+    )
+
+    assert http_command is not None
+    assert http_command.command == "openExternalUrl"
+    assert http_command.payload == {"url": "http://example.com/path"}

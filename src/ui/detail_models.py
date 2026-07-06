@@ -126,7 +126,10 @@ def find_active_timeline_segment(items: list[dict[str, Any]] | None, position_se
     if not timeline or position_seconds is None:
         return None
 
-    position = _non_negative_float(position_seconds)
+    parsed_position = _maybe_float(position_seconds)
+    if parsed_position is None:
+        return None
+    position = max(0.0, parsed_position)
     for index, item in enumerate(timeline):
         if item["start"] <= position <= item["end"]:
             return index
@@ -314,6 +317,7 @@ def _safe_external_url(value: Any) -> str | None:
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
+        parsed.port
     except ValueError:
         return None
     if parsed.scheme.lower() not in {"http", "https"} or not hostname:
@@ -322,6 +326,8 @@ def _safe_external_url(value: Any) -> str | None:
 
 
 def _maybe_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         parsed = float(value)
     except (TypeError, ValueError):
