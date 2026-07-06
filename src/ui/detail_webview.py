@@ -9,6 +9,8 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
 from PySide6.QtWidgets import QPlainTextEdit, QTextBrowser, QVBoxLayout, QWidget
 
+from .detail_models import timeline_display_text
+
 try:  # pragma: no cover - 可选依赖在 CI 和精简环境里经常不存在
     from PySide6.QtWebChannel import QWebChannel
 except ImportError:  # pragma: no cover
@@ -119,7 +121,6 @@ class DetailWebView(QWidget):
             self._pending_playback = self.current_playback
             self._flush_pending_js()
             return
-        self._render_fallback()
 
     def _can_create_webengine(self) -> bool:
         if QWebEngineView is None or QWebChannel is None or QWebEnginePage is None:
@@ -196,23 +197,11 @@ class DetailWebView(QWidget):
         if self._fallback is None:
             return
         payload = self.current_payload or {}
-        title = str(payload.get("title") or "详情")
         mode = str(payload.get("mode") or "transcript")
         content = str(payload.get("content") or "")
         timeline = payload.get("timeline")
-        lines = [title, "", f"模式：{mode}", ""]
-        if content:
-            lines.extend([content, ""])
-        if isinstance(timeline, list) and timeline:
-            lines.append("时间轴")
-            for item in timeline:
-                if not isinstance(item, dict):
-                    continue
-                start = item.get("start", "")
-                end = item.get("end", "")
-                text = str(item.get("text") or "").strip()
-                if text:
-                    lines.append(f"{start} - {end}  {text}")
-        if self.current_playback:
-            lines.extend(["", f"播放位置：{self.current_playback.get('positionSeconds', 0)}"])
-        self._fallback.setPlainText("\n".join(lines).strip())
+        if mode == "timeline":
+            lines = timeline_display_text(timeline if isinstance(timeline, list) else [])
+            self._fallback.setPlainText(lines or "暂无时间轴。")
+            return
+        self._fallback.setMarkdown(content or "暂无内容。")

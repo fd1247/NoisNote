@@ -49,7 +49,7 @@ def test_bridge_post_message_handles_malformed_input_without_raising() -> None:
     assert all(item.get("command") == "renderError" for item in received)
 
 
-def test_detail_webview_fallback_instantiates_and_renders_readable_content() -> None:
+def test_detail_webview_fallback_instantiates_and_renders_current_markdown_content() -> None:
     _app()
 
     from src.ui.detail_webview import DetailWebView
@@ -57,9 +57,9 @@ def test_detail_webview_fallback_instantiates_and_renders_readable_content() -> 
     view = DetailWebView(command_callback=lambda _command: None)
     payload = {
         "mode": "summary",
-        "title": "会议记录",
-        "content": "# 摘要\n\n这是总结。",
-        "timeline": [{"start": 1.0, "end": 2.0, "text": "第一句"}],
+        "title": "Meeting Note",
+        "content": "# Summary\n\nThis is **summary**.",
+        "timeline": [{"start": 1.0, "end": 2.0, "text": "first sentence"}],
         "playback": {"positionSeconds": 1.2, "isPlaying": True},
     }
 
@@ -71,11 +71,96 @@ def test_detail_webview_fallback_instantiates_and_renders_readable_content() -> 
     if not view.is_webengine_available():
         browser = view.findChild(QTextBrowser)
         assert browser is not None
+        rendered_text = browser.toPlainText()
+        rendered_html = browser.toHtml()
+        assert "Summary" in rendered_text
+        assert "This is summary." in rendered_text
+        assert "Meeting Note" not in rendered_text
+        assert "first sentence" not in rendered_text
+        assert "<span style=\" font-weight:700;\">summary</span>" in rendered_html
+
+
+def test_detail_webview_fallback_shows_only_markdown_body_without_debug_fields() -> None:
+    _app()
+
+    from src.ui.detail_webview import DetailWebView
+
+    view = DetailWebView(command_callback=lambda _command: None)
+    payload = {
+        "mode": "summary",
+        "title": "Debug Title",
+        "content": "# Summary\n\n**Topic**: Markdown rendering\n\n1. **First**: ordered item",
+        "timeline": [{"start": 1.0, "end": 2.0, "text": "timeline text"}],
+        "playback": {"positionSeconds": 12.5, "isPlaying": True},
+    }
+
+    view.set_content(payload)
+    view.update_playback({"positionSeconds": 13.5, "isPlaying": False})
+
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
+        rendered_text = browser.toPlainText()
+        rendered_html = browser.toHtml()
+
+        assert "Debug Title" not in rendered_text
+        assert "mode:" not in rendered_text.lower()
+        assert "position" not in rendered_text.lower()
+        assert "Summary" in rendered_text
+        assert "ordered item" in rendered_text
+        assert "<span style=\" font-weight:700;\">Topic</span>" in rendered_html
+        assert "<ol" in rendered_html
+
+
+def test_detail_webview_fallback_playback_update_does_not_rerender_body() -> None:
+    _app()
+
+    from src.ui.detail_webview import DetailWebView
+
+    view = DetailWebView(command_callback=lambda _command: None)
+    payload = {
+        "mode": "summary",
+        "title": "Playback Check",
+        "content": "# Summary\n\nKeep the reader scroll and selection stable.",
+        "timeline": [{"start": 1.0, "end": 2.0, "text": "timeline text"}],
+        "playback": {"positionSeconds": 0.0, "isPlaying": False},
+    }
+
+    view.set_content(payload)
+
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
+        revision_before = browser.document().revision()
+
+        view.update_playback({"positionSeconds": 42.0, "isPlaying": True})
+
+        assert browser.document().revision() == revision_before
+        assert view.current_playback == {"positionSeconds": 42.0, "isPlaying": True}
+
+
+def test_detail_webview_fallback_renders_timeline_only_in_timeline_mode() -> None:
+    _app()
+
+    from src.ui.detail_webview import DetailWebView
+
+    view = DetailWebView()
+    payload = {
+        "mode": "timeline",
+        "title": "Timeline Title",
+        "content": "# Transcript",
+        "timeline": [{"start": 0, "end": 1, "text": "readable timeline"}],
+    }
+
+    view.set_content(payload)
+
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
         rendered = browser.toPlainText()
-        assert "会议记录" in rendered
-        assert "摘要" in rendered
-        assert "这是总结。" in rendered
-        assert "第一句" in rendered
+        assert "readable timeline" in rendered
+        assert "Transcript" not in rendered
+        assert "Timeline Title" not in rendered
 
 
 def test_detail_webview_falls_back_when_webengine_setup_raises(monkeypatch) -> None:
@@ -93,9 +178,9 @@ def test_detail_webview_falls_back_when_webengine_setup_raises(monkeypatch) -> N
     view = DetailWebView()
     payload = {
         "mode": "transcript",
-        "title": "降级检查",
-        "content": "WebEngine 失败后仍应显示文本。",
-        "timeline": [{"start": 0, "end": 1, "text": "可读时间轴"}],
+        "title": "Fallback Check",
+        "content": "WebEngine failed, but body text remains readable.",
+        "timeline": [{"start": 0, "end": 1, "text": "readable timeline"}],
     }
 
     view.set_content(payload)
@@ -104,9 +189,9 @@ def test_detail_webview_falls_back_when_webengine_setup_raises(monkeypatch) -> N
     browser = view.findChild(QTextBrowser)
     assert browser is not None
     rendered = browser.toPlainText()
-    assert "降级检查" in rendered
-    assert "WebEngine 失败后仍应显示文本。" in rendered
-    assert "可读时间轴" in rendered
+    assert "WebEngine failed, but body text remains readable." in rendered
+    assert "Fallback Check" not in rendered
+    assert "readable timeline" not in rendered
 
 
 def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
@@ -120,13 +205,19 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     for path in (index, css, js, markdown):
         assert path.exists(), path
 
-    assert "detail-viewer.js" in index.read_text(encoding="utf-8")
+    index_text = index.read_text(encoding="utf-8")
+    assert "detail-viewer.js" in index_text
+    assert "detailTitle" not in index_text
+    assert "modeLabel" not in index_text
+    assert "copyButton" not in index_text
     assert "timeline-row" in css.read_text(encoding="utf-8")
     script = js.read_text(encoding="utf-8")
     assert "NoisNoteDetail" in script
     assert "setContent" in script
     assert "updatePlayback" in script
-    assert "markdownit" in markdown.read_text(encoding="utf-8")
+    markdown_text = markdown.read_text(encoding="utf-8")
+    assert "markdown-it 14.1.0" in markdown_text
+    assert "compatibility" not in markdown_text.lower()
 
 
 def test_detail_viewer_timeline_rendering_uses_generation_token() -> None:

@@ -68,7 +68,6 @@
 
   function setMode(mode) {
     var selected = mode === "timeline" || mode === "summary" ? mode : "transcript";
-    $("modeLabel").textContent = selected === "summary" ? "总结" : selected === "timeline" ? "时间轴" : "转录";
     $("transcriptPanel").hidden = selected !== "transcript";
     $("summaryPanel").hidden = selected !== "summary";
     $("timelinePanel").hidden = selected !== "timeline";
@@ -163,7 +162,6 @@
       $("errorState").hidden = true;
       $("emptyState").hidden = true;
       $("contentPanel").hidden = false;
-      $("detailTitle").textContent = String(state.payload.title || "详情");
       $("transcriptPanel").innerHTML = renderMarkdown(state.payload.mode === "transcript" ? state.payload.content : "");
       $("summaryPanel").innerHTML = renderMarkdown(state.payload.mode === "summary" ? state.payload.content : "");
       renderTimeline(state.payload.timeline || []);
@@ -227,14 +225,7 @@
     });
   }
 
-  function copyCurrent() {
-    var mode = state.payload.mode || "transcript";
-    var text = String(state.payload.content || "");
-    sendCommand({ command: "copy", mode: mode, text: text });
-  }
-
   function initBridge() {
-    $("copyButton").addEventListener("click", copyCurrent);
     if (window.qt && window.qt.webChannelTransport && window.QWebChannel) {
       new window.QWebChannel(window.qt.webChannelTransport, function (channel) {
         state.bridge = channel.objects.detailBridge;
