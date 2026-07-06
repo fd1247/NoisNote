@@ -121,7 +121,7 @@ class TranscriptionHandlers:
                 record = self.history_service.refresh_metadata(record)
                 self.processing_record = record
                 if self.current_record and self.current_record.record_key == record.record_key:
-                    self.timeline_items = timeline_items
+                    self._set_timeline_items(timeline_items)
                     self.timeline_loaded_record_id = record.record_key
         if record:
             record = self.history_service.mark_processing_completed(

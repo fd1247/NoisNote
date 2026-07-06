@@ -1325,6 +1325,41 @@ def test_transcription_empty_result_becomes_no_valid_speech_error(monkeypatch, t
         app.processEvents()
 
 
+def test_transcription_completion_syncs_generated_timeline_text(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.current_items = [record]
+        window.is_processing = True
+        window.processing_started_at["transcription"] = 1.0
+        window.active_task_ids["transcription"] = "asr-test"
+        started_summaries: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            window,
+            "start_summarization",
+            lambda text, record=None: started_summaries.append((text, record.record_key if record else "")),
+        )
+        timeline_items = [{"start": 1.25, "end": 3.5, "text": "Generated timeline sentence."}]
+
+        window._on_transcription_completed("Generated transcript.", {"timeline": timeline_items})
+
+        assert started_summaries == [("Generated transcript.", record.record_key)]
+        assert window.timeline_items == timeline_items
+        assert window.timeline_loaded_record_id == record.record_key
+        timeline_text = window.timeline_text.toPlainText()
+        assert "00:01.250 - 00:03.500" in timeline_text
+        assert "Generated timeline sentence." in timeline_text
+    finally:
+        window.close()
+        app.processEvents()
+
+
 
 
 

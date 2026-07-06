@@ -196,14 +196,18 @@
       state.playback = payload && typeof payload === "object" ? payload : {};
       var position = Number(state.playback.positionSeconds || 0);
       var row = findActiveRow(Number.isFinite(position) ? position : 0);
+      var nextActiveId = row ? row.dataset.segmentId : null;
+      if (nextActiveId === state.activeId) {
+        return;
+      }
       document.querySelectorAll(".timeline-row.active").forEach(function (node) {
         node.classList.remove("active");
       });
+      state.activeId = nextActiveId;
       if (!row) {
         return;
       }
       row.classList.add("active");
-      state.activeId = row.dataset.segmentId;
       window.clearTimeout(state.scrollTimer);
       state.scrollTimer = window.setTimeout(function () {
         row.scrollIntoView({ block: "center", behavior: "smooth" });
