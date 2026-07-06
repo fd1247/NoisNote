@@ -13,16 +13,21 @@ class ResultStateOwner(Protocol):
     summary_markdown_text: str
 
 
+_VALID_RESULT_TABS = {"transcript", "timeline", "summary"}
+
+
 def set_transcript_text(owner: ResultStateOwner, text: str) -> None:
     """写入转录文本，并同步当前页复制按钮。"""
     owner.transcript_text.setPlainText(text)  # type: ignore[attr-defined]
     if hasattr(owner, "transcript_copy_button"):
         owner.transcript_copy_button.setVisible(bool(text.strip()))  # type: ignore[attr-defined]
+    if getattr(owner, "active_result_tab", "transcript") == "transcript":
+        _sync_detail_webview(owner, "transcript", text)
 
 
 def set_result_tab(owner: ResultStateOwner, kind: str) -> None:
     """切换详情结果区标签，并保留用户的当前选择。"""
-    if kind not in {"transcript", "timeline", "summary"}:
+    if kind not in _VALID_RESULT_TABS:
         kind = "transcript"
     owner.active_result_tab = kind
     if hasattr(owner, "result_stack"):
@@ -34,6 +39,7 @@ def set_result_tab(owner: ResultStateOwner, kind: str) -> None:
         owner.timeline_tab_button.setChecked(kind == "timeline")  # type: ignore[attr-defined]
     if hasattr(owner, "summary_tab_button"):
         owner.summary_tab_button.setChecked(kind == "summary")  # type: ignore[attr-defined]
+    _sync_detail_webview(owner, kind)
 
 
 def set_summary_text(owner: ResultStateOwner, summary: str) -> None:
@@ -43,8 +49,46 @@ def set_summary_text(owner: ResultStateOwner, summary: str) -> None:
         owner.summary_copy_button.setVisible(bool(summary.strip()))  # type: ignore[attr-defined]
     if not summary.strip():
         owner.summary_text.clear()  # type: ignore[attr-defined]
+        if getattr(owner, "active_result_tab", "transcript") == "summary":
+            _sync_detail_webview(owner, "summary", "")
         return
     owner.summary_text.setMarkdown(summary)  # type: ignore[attr-defined]
+    if getattr(owner, "active_result_tab", "transcript") == "summary":
+        _sync_detail_webview(owner, "summary", summary)
+
+
+def _sync_detail_webview(owner: ResultStateOwner, kind: str, content: str | None = None) -> None:
+    """同步详情 WebView 的最小兼容 payload，完整数据绑定由后续任务接管。"""
+    detail_webview = getattr(owner, "detail_webview", None)
+    if detail_webview is None or not hasattr(detail_webview, "set_content"):
+        return
+    if kind not in _VALID_RESULT_TABS:
+        kind = "transcript"
+    payload = dict(getattr(detail_webview, "current_payload", None) or {})
+    if content is None:
+        content = _current_mode_text(owner, kind)
+    title_label = getattr(owner, "detail_title_label", None)
+    title = title_label.text() if title_label is not None and hasattr(title_label, "text") else "详情"
+    payload.update(
+        {
+            "mode": kind,
+            "title": title,
+            "content": content,
+            "timeline": payload.get("timeline") or [],
+        }
+    )
+    detail_webview.set_content(payload)
+
+
+def _current_mode_text(owner: ResultStateOwner, kind: str) -> str:
+    """读取当前模式的兼容控件文本，避免 Task 4 引入完整历史 payload 依赖。"""
+    if kind == "summary":
+        return str(getattr(owner, "summary_markdown_text", ""))
+    if kind == "timeline" and hasattr(owner, "timeline_text"):
+        return owner.timeline_text.toPlainText()  # type: ignore[attr-defined]
+    if hasattr(owner, "transcript_text"):
+        return owner.transcript_text.toPlainText()  # type: ignore[attr-defined]
+    return ""
 
 
 def set_button_object_name(button: QPushButton, object_name: str) -> None:

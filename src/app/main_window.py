@@ -315,8 +315,10 @@ class MainWindow(
                 seek_playback=self.seek_playback,
                 set_playback_rate=self.set_playback_rate,
                 switch_to_timeline=self._switch_to_timeline_tab,
+                detail_web_command=self._on_detail_web_command,
             ),
         )
+        self.detail_webview = controls.detail_webview
         self.result_stack = controls.result_stack
         self.transcript_tab_button = controls.transcript_tab_button
         self.timeline_tab_button = controls.timeline_tab_button
@@ -357,6 +359,11 @@ class MainWindow(
         self._set_result_tab("transcript")
         self._sync_detail_action_menu()
         return page
+
+    def _on_detail_web_command(self, value: dict) -> None:
+        """接收详情 WebView 命令；完整处理逻辑由后续任务接管。"""
+        if value.get("command") == "renderError":
+            self._set_status(str(value.get("message") or ""))
 
     def _set_transcript_text(self, text: str) -> None:
         """写入转录文本，并同步当前页复制按钮。"""

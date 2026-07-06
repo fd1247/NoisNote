@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .detail_webview import DetailWebView
+
 
 _SVG_DIR = Path(__file__).resolve().parents[1] / "assets" / "svg"
 
@@ -102,12 +104,14 @@ class HistoryPageCallbacks:
     seek_playback: Callable[[int], None]
     set_playback_rate: Callable[[str], None]
     switch_to_timeline: Callable[[], None]
+    detail_web_command: Callable[[dict], None] | None = None
 
 
 @dataclass(frozen=True)
 class ContentTabsControls:
     """详情区标签页控件引用。"""
 
+    detail_webview: DetailWebView
     result_stack: QStackedWidget
     transcript_tab_button: QPushButton
     timeline_tab_button: QPushButton
@@ -262,6 +266,9 @@ def build_history_page(
     result_stack.addWidget(transcript_page)
     result_stack.addWidget(timeline_page)
     result_stack.addWidget(summary_page)
+    result_stack.hide()
+
+    detail_webview = DetailWebView(panel, command_callback=callbacks.detail_web_command)
 
     tab_section = QWidget()
     tab_section_layout = QVBoxLayout(tab_section)
@@ -271,7 +278,8 @@ def build_history_page(
     tab_section_layout.addWidget(divider)
 
     panel_layout.addWidget(tab_section)
-    panel_layout.addWidget(result_stack, stretch=1)
+    panel_layout.addWidget(detail_webview, stretch=1)
+    panel_layout.addWidget(result_stack)
     playback_bar = _build_playback_bar(
         callbacks.seek_backward,
         callbacks.toggle_playback,
@@ -296,6 +304,7 @@ def build_history_page(
     layout.addWidget(playback_widget)
 
     controls = ContentTabsControls(
+        detail_webview=detail_webview,
         result_stack=result_stack,
         transcript_tab_button=transcript_tab_button,
         timeline_tab_button=timeline_tab_button,

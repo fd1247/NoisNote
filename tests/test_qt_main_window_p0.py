@@ -1501,6 +1501,54 @@ def test_result_tabs_reset_to_transcript_when_switching_records(monkeypatch, tmp
         app.processEvents()
 
 
+def test_detail_webview_exists_in_history_page(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.detail_webview is not None
+        assert callable(window.detail_webview.set_content)
+        assert window.detail_webview.current_payload["mode"] == "transcript"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_status_rows_are_hidden_from_body(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.show()
+        app.processEvents()
+
+        assert window.detail_webview.isVisible()
+        assert not window.transcript_status.isVisible()
+        assert not window.timeline_status.isVisible()
+        assert not window.summary_status.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_tab_switch_updates_webview_mode(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.summary_tab_button.click()
+        app.processEvents()
+
+        assert window.active_result_tab == "summary"
+        assert window.detail_webview.current_payload["mode"] == "summary"
+
+        window.timeline_tab_button.click()
+        app.processEvents()
+
+        assert window.active_result_tab == "timeline"
+        assert window.detail_webview.current_payload["mode"] == "timeline"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_summary_page_renders_markdown_but_copies_source(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1564,6 +1612,8 @@ def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(m
         window.resize(800, 420)
         window.show()
         window.content_stack.setCurrentWidget(window.history_page)
+        window.detail_webview.hide()
+        window.result_stack.show()
         window._set_result_tab("timeline")
         window._set_timeline_items(items)
         window.timeline_text.setFixedHeight(120)
