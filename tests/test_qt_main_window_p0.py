@@ -788,6 +788,47 @@ def test_multi_select_records_and_move_to_notebook(monkeypatch, tmp_path: Path) 
         app.processEvents()
 
 
+def test_record_selected_signal_loads_detail_without_collapsing_multi_selection(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    default_dir = tmp_path / "default"
+    try:
+        write_wav(default_dir / "a" / "audio.wav")
+        write_wav(default_dir / "b" / "audio.wav")
+        write_wav(default_dir / "c" / "audio.wav")
+        window.config["notebooks"] = [
+            {"id": "default", "name": "默认笔记本", "path": str(default_dir), "is_default": True},
+        ]
+        window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
+        window.load_recordings()
+
+        history_record_item_at(window, 0).setSelected(True)
+        history_record_item_at(window, 2).setSelected(True)
+        expected_keys = [
+            str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1))
+            for row in (0, 2)
+        ]
+        window.history_tree.setCurrentItem(
+            history_record_item_at(window, 2),
+            0,
+            QItemSelectionModel.SelectionFlag.NoUpdate,
+        )
+
+        unselected_key = next(
+            str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1))
+            for row in range(history_tree_record_count(window))
+            if str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1)) not in expected_keys
+        )
+
+        window.history_tree.record_selected.emit(unselected_key)
+
+        assert window.current_record.record_key == unselected_key
+        assert window.history_tree.selected_record_keys() == expected_keys
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_settings_dialog_save_refreshes_history_after_external_delete(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

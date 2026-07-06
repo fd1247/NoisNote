@@ -253,11 +253,22 @@ class HistoryViewHandlers:
 
     def _select_history_item(self, item) -> None:
         if isinstance(item, str):
-            self._select_record_by_key(item)
+            self._load_visible_record_by_key(item)
             return
         record_key = item.data(0, Qt.ItemDataRole.UserRole + 1) if item is not None else ""
         if record_key:
-            self._select_record_by_key(str(record_key))
+            self._load_visible_record_by_key(str(record_key))
+
+    def _load_visible_record_by_key(self, record_key: str) -> bool:
+        """加载当前可见记录详情，保留树控件已经形成的多选状态。"""
+        for index, record in enumerate(self.current_items):
+            if record.record_key == record_key:
+                self._dismiss_history_notice(record)
+                self.history_tree.update_subtitles(self._history_subtitle_for_record)
+                self._load_history_record(record)
+                self._sync_history_selection(index)
+                return True
+        return self._select_record_by_key(record_key)
 
     def select_history_index(self, index: int) -> None:
         """按索引选中并加载历史记录。"""

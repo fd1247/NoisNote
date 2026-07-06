@@ -29,6 +29,7 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
 
 def make_config(root: Path) -> dict:
     return {
+        "data_root": str(root),
         "demo_audio_imported": True,
         "selected_asr": {"model": QWEN3_ASR_GGUF_06B_ID, "model_path": "", "device": "auto"},
         "qwen3_asr_gguf": {
@@ -58,6 +59,10 @@ def make_config(root: Path) -> dict:
                 "target_channels": 1,
             },
         },
+        "notebooks": [
+            {"id": "default", "name": "默认笔记本", "path": str(root / "recordings"), "is_default": True}
+        ],
+        "active_notebook_id": "default",
         "models": {
             "root_dir": str(root / "models"),
             "catalog": copy.deepcopy(DEFAULT_MODEL_CATALOG),
