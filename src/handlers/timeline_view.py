@@ -42,6 +42,8 @@ class TimelineViewHandlers:
     def _set_timeline_items(self, items: list[dict]) -> None:
         self.timeline_items = items
         self._last_timeline_highlight_key = (None, None)
+        if self.active_result_tab == "timeline":
+            self._sync_timeline_detail_webview(items)
         if not items:
             self._release_timeline_resources()
             return
@@ -50,6 +52,23 @@ class TimelineViewHandlers:
             return
         self._refresh_timeline_highlight(force=True)
         self.timeline_copy_button.show()
+
+    def _sync_timeline_detail_webview(self, items: list[dict]) -> None:
+        detail_webview = getattr(self, "detail_webview", None)
+        if detail_webview is None or not hasattr(detail_webview, "set_content"):
+            return
+        payload = dict(getattr(detail_webview, "current_payload", None) or {})
+        title_label = getattr(self, "detail_title_label", None)
+        title = title_label.text() if title_label is not None and hasattr(title_label, "text") else "详情"
+        payload.update(
+            {
+                "mode": "timeline",
+                "title": title,
+                "content": _timeline_items_display_text(items),
+                "timeline": items or [],
+            }
+        )
+        detail_webview.set_content(payload)
 
     def _refresh_timeline_highlight(self, position_seconds: float | None = None, force: bool = False) -> None:
         if self.active_result_tab != "timeline" or not self.timeline_items:
@@ -97,6 +116,18 @@ def _format_timeline_seconds(value: object) -> str:
     except (TypeError, ValueError):
         seconds = 0.0
     return format_display_time(seconds)
+
+
+def _timeline_items_display_text(items: list[dict]) -> str:
+    lines: list[str] = []
+    for item in items:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        start = _format_timeline_seconds(item.get("start", 0.0))
+        end = _format_timeline_seconds(item.get("end", 0.0))
+        lines.append(f"{start} - {end}  {text}")
+    return "\n".join(lines)
 
 
 def _safe_float(value: object) -> float:

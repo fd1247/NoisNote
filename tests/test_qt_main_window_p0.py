@@ -1549,6 +1549,23 @@ def test_detail_tab_switch_updates_webview_mode(monkeypatch, tmp_path: Path) -> 
         app.processEvents()
 
 
+def test_timeline_items_sync_to_visible_detail_webview(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        items = [{"start": 0.0, "end": 1.0, "text": "hello"}]
+
+        window._set_result_tab("timeline")
+        window._set_timeline_items(items)
+        app.processEvents()
+
+        assert window.detail_webview.current_payload["mode"] == "timeline"
+        assert window.detail_webview.current_payload["timeline"][0]["text"] == "hello"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_detail_web_command_placeholder_does_not_change_status_or_state(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
