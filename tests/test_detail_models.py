@@ -304,7 +304,17 @@ def test_parse_detail_command_checks_open_external_url_freshness() -> None:
         )
         is None
     )
-    for url in ("file:///C:/temp/a.txt", "javascript:alert(1)", "", "   ", "https:///missing-host", "not a url"):
+    for url in (
+        "file:///C:/temp/a.txt",
+        "javascript:alert(1)",
+        "",
+        "   ",
+        "https:///missing-host",
+        "https://[",
+        "https://@",
+        "https://:443",
+        "not a url",
+    ):
         assert (
             parse_detail_command(
                 {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": url},
@@ -315,11 +325,11 @@ def test_parse_detail_command_checks_open_external_url_freshness() -> None:
         )
 
     command = parse_detail_command(
-        {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": "https://example.com"},
+        {"command": "openExternalUrl", "recordKey": "record:1", "revision": 2, "url": "https://example.com/path"},
         "record:1",
         2,
     )
 
     assert command is not None
     assert command.command == "openExternalUrl"
-    assert command.payload == {"url": "https://example.com"}
+    assert command.payload == {"url": "https://example.com/path"}

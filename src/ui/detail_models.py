@@ -258,8 +258,12 @@ def _safe_external_url(value: Any) -> str | None:
     url = value.strip()
     if not url:
         return None
-    parsed = urlparse(url)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
         return None
     return url
 
