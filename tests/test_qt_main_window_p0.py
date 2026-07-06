@@ -1549,6 +1549,26 @@ def test_detail_tab_switch_updates_webview_mode(monkeypatch, tmp_path: Path) -> 
         app.processEvents()
 
 
+def test_detail_web_command_placeholder_does_not_change_status_or_state(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window._set_status("keep existing status")
+        window.is_processing = True
+        window.processing_source = "sentinel"
+        window.active_result_tab = "summary"
+
+        window._on_detail_web_command({"command": "renderError", "message": "x"})
+
+        assert window.status_label.text() == "keep existing status"
+        assert window.is_processing is True
+        assert window.processing_source == "sentinel"
+        assert window.active_result_tab == "summary"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_summary_page_renders_markdown_but_copies_source(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

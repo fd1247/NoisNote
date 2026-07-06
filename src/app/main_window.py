@@ -362,8 +362,7 @@ class MainWindow(
 
     def _on_detail_web_command(self, value: dict) -> None:
         """接收详情 WebView 命令；完整处理逻辑由后续任务接管。"""
-        if value.get("command") == "renderError":
-            self._set_status(str(value.get("message") or ""))
+        _ = value
 
     def _set_transcript_text(self, text: str) -> None:
         """写入转录文本，并同步当前页复制按钮。"""
