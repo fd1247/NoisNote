@@ -181,6 +181,7 @@ for dll_path in _openssl_dlls:
 app_datas = [
     # 应用资源文件
     (str(ROOT / "src" / "assets"), "src/assets"),
+    (str(ROOT / "src" / "ui" / "assets" / "detail_viewer"), "src/ui/assets/detail_viewer"),
 ]
 
 # 添加 ffmpeg（只包含 exe 文件）
@@ -227,6 +228,9 @@ hidden_imports = [
         "PySide6.QtSvg",
         "PySide6.QtSvgWidgets",
         "PySide6.QtNetwork",
+        "PySide6.QtWebEngineWidgets",
+        "PySide6.QtWebEngineCore",
+        "PySide6.QtWebChannel",
         # 音频处理
         "soundcard",
         "pydub",
@@ -306,9 +310,6 @@ excludes = [
     "ast_serialize",
 
     # PySide6 不需要的子模块
-    "PySide6.QtWebEngine",
-    "PySide6.QtWebEngineCore",
-    "PySide6.QtWebEngineWidgets",
     "PySide6.QtQuick",
     "PySide6.QtQuickWidgets",
     "PySide6.QtQml",
@@ -330,7 +331,6 @@ excludes = [
     "PySide6.QtSerialBus",
     "PySide6.QtSerialPort",
     "PySide6.QtTextToSpeech",
-    "PySide6.QtWebChannel",
     "PySide6.QtWebSockets",
     "PySide6.QtCharts",
     "PySide6.QtDataVisualization",

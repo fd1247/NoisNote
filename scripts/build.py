@@ -192,22 +192,6 @@ def cleanup_build_output() -> None:
         shutil.rmtree(vendor_logs, ignore_errors=True)
         logger.info("已删除: vendor/qwen3-asr-gguf 日志目录")
 
-    # 删除 PySide6 未使用的大型模块
-    pyside6_dir = internal / "PySide6"
-    if pyside6_dir.exists():
-        # Qt6WebEngineCore.dll — Chromium 引擎（195 MB），本应用无 Web 功能
-        webengine_core = pyside6_dir / "Qt6WebEngineCore.dll"
-        if webengine_core.exists():
-            removed_size += webengine_core.stat().st_size
-            webengine_core.unlink(missing_ok=True)
-            logger.info("已删除: PySide6/Qt6WebEngineCore.dll（WebEngine 引擎）")
-        # QtWebEngineProcess.exe — WebEngine 子进程
-        webengine_proc = pyside6_dir / "QtWebEngineProcess.exe"
-        if webengine_proc.exists():
-            removed_size += webengine_proc.stat().st_size
-            webengine_proc.unlink(missing_ok=True)
-            logger.info("已删除: PySide6/QtWebEngineProcess.exe")
-
     # 删除 OpenSSL 1.1 的 DLL（与主应用的 OpenSSL 3 冲突）
     # Python 3.12 使用 OpenSSL 3，残留的 OpenSSL 1.1 DLL 会导致 _ssl 模块加载失败
     openssl11_files = [
