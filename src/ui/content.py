@@ -299,8 +299,13 @@ def build_history_page(
         playback_rate_combo,
         playback_cc_button,
     ) = playback_bar
+    playback_separator = QFrame()
+    playback_separator.setObjectName("PlaybackSeparator")
+    playback_separator.setFrameShape(QFrame.Shape.HLine)
+    playback_separator.setFixedHeight(1)
     layout.addWidget(detail_header)
     layout.addWidget(panel, stretch=1)
+    layout.addWidget(playback_separator)
     layout.addWidget(playback_widget)
 
     controls = ContentTabsControls(

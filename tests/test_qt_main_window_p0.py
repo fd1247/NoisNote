@@ -1850,6 +1850,16 @@ def test_detail_status_rows_are_hidden_from_body(monkeypatch, tmp_path: Path) ->
         app.processEvents()
 
 
+def test_detail_styles_remove_borders_and_thin_splitter() -> None:
+    from src.ui.styles import APP_STYLESHEET
+
+    assert "QFrame#PlayerBar" in APP_STYLESHEET
+    assert "QFrame#PlayerBar {\n    background: #ffffff;\n    border: none;" in APP_STYLESHEET
+    assert "QFrame#PlaybackSeparator" in APP_STYLESHEET
+    assert "QSplitter#WorkbenchSplitter::handle" in APP_STYLESHEET
+    assert "width: 2px;" in APP_STYLESHEET or "width: 1px;" in APP_STYLESHEET
+
+
 def test_detail_tab_switch_updates_webview_mode(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

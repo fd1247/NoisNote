@@ -44,16 +44,22 @@ QStackedWidget {
 }
 QFrame#Panel {
     background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: none;
+    border-radius: 0;
 }
 QFrame#DetailHeader {
     background: #ffffff;
 }
 QFrame#PlayerBar {
     background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: none;
+    border-radius: 0;
+}
+QFrame#PlaybackSeparator {
+    background: #e5e7eb;
+    border: none;
+    min-height: 1px;
+    max-height: 1px;
 }
 QFrame#ModelListPanel {
     background: #ffffff;
@@ -817,6 +823,7 @@ QToolButton#ToolbarRecordingButton {
 }
 QSplitter#WorkbenchSplitter::handle {
     background: #e5e7eb;
+    width: 2px;
 }
 QFrame#TaskPanel {
     background: #f8fafc;
