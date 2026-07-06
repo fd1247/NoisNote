@@ -380,8 +380,10 @@ class MainWindow(
             return
         record = self.current_record
         has_record = record is not None
+        can_transcribe = bool(record and record.audio_path.exists() and not self.is_processing)
+        self.detail_more_button.setEnabled(has_record)
         self.detail_metadata_button.setEnabled(has_record)
-        self.detail_transcribe_action.setEnabled(has_record)
+        self.detail_transcribe_action.setEnabled(can_transcribe)
         self.detail_summary_action.setEnabled(
             bool(has_record and record.has_transcript and not record.has_summary and not self.is_processing)
         )

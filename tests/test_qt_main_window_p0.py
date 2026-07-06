@@ -289,6 +289,71 @@ def test_detail_action_menu_enable_rules(monkeypatch, tmp_path: Path) -> None:
         app.processEvents()
 
 
+def test_detail_action_menu_transcribe_disabled_for_missing_audio(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+        record.audio_path.unlink()
+        window._sync_detail_action_menu()
+
+        assert not window.detail_transcribe_action.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_action_menu_transcribe_disabled_while_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+        window.is_processing = True
+        window._sync_detail_action_menu()
+
+        assert not window.detail_transcribe_action.isEnabled()
+
+        window.is_processing = False
+        window._sync_detail_action_menu()
+
+        assert window.detail_transcribe_action.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_more_button_disabled_without_current_record(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.current_record = None
+        window._sync_detail_action_menu()
+
+        assert not window.detail_more_button.isEnabled()
+
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+
+        assert window.detail_more_button.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_detail_action_menu_summary_enabled_for_transcript_without_summary(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
