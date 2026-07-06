@@ -202,6 +202,14 @@ def test_parse_detail_command_rejects_stale_and_malformed_input() -> None:
         is None
     )
     assert parse_detail_command({"command": "seek", "recordKey": "record:1", "revision": "bad"}, "record:1", 2) is None
+    assert (
+        parse_detail_command(
+            {"command": "seek", "recordKey": "record:1", "revision": float("inf"), "seconds": 1},
+            "record:1",
+            2,
+        )
+        is None
+    )
 
 
 def test_parse_detail_command_rejects_non_finite_seek() -> None:

@@ -245,9 +245,11 @@ def _maybe_float(value: Any) -> float | None:
 
 
 def _maybe_int(value: Any) -> int | None:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return None
 
 
