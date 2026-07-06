@@ -76,7 +76,13 @@ def normalize_timeline_items(items: list[dict[str, Any]] | None) -> list[dict[st
         }
         tokens = item.get("tokens")
         if isinstance(tokens, list):
-            clean_tokens = [_normalize_token(token) for token in tokens if isinstance(token, dict)]
+            clean_tokens = [
+                normalized_token
+                for token in tokens
+                if isinstance(token, dict)
+                for normalized_token in [_normalize_token(token)]
+                if normalized_token is not None
+            ]
             if clean_tokens:
                 row["tokens"] = clean_tokens
         rows.append(row)
@@ -207,7 +213,10 @@ def _source_label(source_kind: str) -> str:
     return labels.get(source_kind, _MISSING)
 
 
-def _normalize_token(token: dict[str, Any]) -> dict[str, Any]:
+def _normalize_token(token: dict[str, Any]) -> dict[str, Any] | None:
+    text = str(token.get("text") or "").strip()
+    if not text:
+        return None
     row = dict(token)
     start = _non_negative_float(row.get("start"))
     end = _coerce_float(row.get("end"), start)
@@ -215,12 +224,15 @@ def _normalize_token(token: dict[str, Any]) -> dict[str, Any]:
         end = start
     row["start"] = start
     row["end"] = end
+    row["text"] = text
     return row
 
 
 def _local_media_path(record: Any) -> str:
     source_kind = str(getattr(record, "source_kind", "") or "")
-    if source_kind in {"remote_url", "remote_subtitle", "remote_audio"}:
+    if source_kind in {"remote_url", "remote_subtitle"}:
+        return _MISSING
+    if source_kind == "remote_audio":
         for name in ("normalized_audio_path", "audio_path"):
             value = getattr(record, name, None)
             if value and _path_exists(value):
@@ -247,24 +259,37 @@ def _is_url_like_path(value: Any) -> bool:
 
 
 def _remote_url(record: Any, metadata: dict[str, Any]) -> str:
-    value = _metadata_first(metadata, ("remote", "webpage_url"), ("remote", "url"), ("source_path",))
-    if value != _MISSING:
-        return value
-    source_path = getattr(record, "source_path", None)
-    return str(source_path) if source_path else _MISSING
+    source_kind = str(getattr(record, "source_kind", "") or "")
+    if source_kind not in {"remote_url", "remote_audio", "remote_subtitle"}:
+        return _MISSING
+
+    for value in (
+        _metadata_value(metadata, ("remote", "webpage_url")),
+        _metadata_value(metadata, ("remote", "url")),
+        _metadata_value(metadata, ("source_path",)),
+        getattr(record, "source_path", None),
+    ):
+        url = _safe_external_url(value)
+        if url is not None:
+            return url
+    return _MISSING
 
 
 def _metadata_first(metadata: dict[str, Any], *paths: tuple[str, ...]) -> str:
     for path in paths:
-        value: Any = metadata
-        for key in path:
-            if not isinstance(value, dict) or key not in value:
-                value = None
-                break
-            value = value[key]
+        value = _metadata_value(metadata, path)
         if value:
             return str(value)
     return _MISSING
+
+
+def _metadata_value(metadata: dict[str, Any], path: tuple[str, ...]) -> Any:
+    value: Any = metadata
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value
 
 
 def _format_created_at(value: Any) -> str:
@@ -280,6 +305,8 @@ def _is_current_message(value: Mapping[str, Any], current_record_key: str, curre
 
 def _safe_external_url(value: Any) -> str | None:
     if not isinstance(value, str):
+        return None
+    if any(char.isspace() or ord(char) < 32 or char == "\\" for char in value):
         return None
     url = value.strip()
     if not url:

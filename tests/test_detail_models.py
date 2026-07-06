@@ -135,9 +135,13 @@ def test_metadata_fields_maps_remote_audio_to_video_link(tmp_path: Path) -> None
 
 
 def test_metadata_fields_hide_remote_url_as_local_path_and_use_remote_audio_file(tmp_path: Path) -> None:
+    remote_url_audio_path = tmp_path / "remote-url" / "audio.wav"
+    remote_url_audio_path.parent.mkdir(parents=True)
+    remote_url_audio_path.write_bytes(b"audio")
     remote_url_record = _record(
         tmp_path,
         source_kind="remote_url",
+        audio_path=remote_url_audio_path,
         original_file_path=Path("https://example.com/watch"),
     )
     remote_audio_dir = tmp_path / "remote-audio"
@@ -157,6 +161,16 @@ def test_metadata_fields_hide_remote_url_as_local_path_and_use_remote_audio_file
 
     assert remote_url_fields["本地音视频所在路径"] == "--"
     assert remote_audio_fields["本地音视频所在路径"] == str(remote_audio_path)
+
+
+def test_metadata_fields_hide_local_source_path_as_remote_url(tmp_path: Path) -> None:
+    record = _record(tmp_path, source_kind="imported_file")
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(json.dumps({"source_path": "D:/media/source.wav"}), encoding="utf-8")
+
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
+
+    assert fields["视频链接"] == "--"
 
 
 def test_metadata_fields_use_local_and_recording_labels_and_local_path_fallback(tmp_path: Path) -> None:
@@ -259,6 +273,7 @@ def test_timeline_mixed_token_list_skips_invalid_entries() -> None:
                 "tokens": [
                     {"start": 0.1, "end": 0.2, "text": "valid"},
                     "invalid",
+                    {"start": 0.2, "end": 0.3, "text": "   "},
                     {"start": float("inf"), "end": 0.3, "text": "normalized"},
                 ],
             }
@@ -380,6 +395,10 @@ def test_parse_detail_command_checks_open_external_url_freshness() -> None:
         "https://[",
         "https://@",
         "https://:443",
+        "https://exa mple.com/path",
+        "https://example.com\\@evil.com/path",
+        "https://example.com/has space",
+        "https://example.com/\x1f",
         "not a url",
     ):
         assert (
