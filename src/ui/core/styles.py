@@ -3,7 +3,7 @@
 from pathlib import Path
 
 
-_ASSET_DIR = Path(__file__).resolve().parents[1] / "assets"
+_ASSET_DIR = Path(__file__).resolve().parents[2] / "assets"
 _COMBO_ARROW_PATH = (_ASSET_DIR / "svg" / "下拉.svg").as_posix()
 _CHECK_MARK_PATH = (_ASSET_DIR / "svg" / "check-white.svg").as_posix()
 
@@ -49,6 +49,13 @@ QFrame#Panel {
 }
 QFrame#DetailHeader {
     background: #ffffff;
+}
+QFrame#DetailMetadataPanel {
+    background: #ffffff;
+    border-top: 1px solid #e5e7eb;
+    border-bottom: 1px solid #e5e7eb;
+    margin-top: 10px;
+    padding-bottom: 12px;
 }
 QFrame#PlayerBar {
     background: #ffffff;
@@ -159,6 +166,15 @@ QLabel#DetailProcessingStatus {
     color: #6b7280;
     font-size: 12px;
     font-weight: 600;
+}
+QLabel#DetailMetadataLabel {
+    color: #6b7280;
+    font-size: 13px;
+    min-width: 88px;
+}
+QLabel#DetailMetadataValue {
+    color: #111827;
+    font-size: 13px;
 }
 QLabel#PlayerTime {
     color: #6b7280;
@@ -449,6 +465,63 @@ QPushButton#SuccessButton {
 QPushButton#SmallButton {
     padding: 5px 10px;
     min-width: 52px;
+}
+QToolButton#DetailMetadataToggle {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: #6b7280;
+    padding: 3px 6px;
+    font-size: 13px;
+}
+QToolButton#DetailMetadataToggle:hover {
+    background: #f3f4f6;
+    color: #111827;
+}
+QToolButton#DetailMetadataToggle:checked {
+    color: #111827;
+}
+QToolButton#DetailMoreButton {
+    background: #ffffff;
+    border: 1px solid #d8dee8;
+    border-radius: 6px;
+    padding: 0;
+}
+QToolButton#DetailMoreButton:hover {
+    background: #f3f4f6;
+}
+QToolButton#DetailTabToolButton,
+QToolButton#DetailSearchPrevButton,
+QToolButton#DetailSearchNextButton,
+QToolButton#DetailSearchClearButton {
+    background: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+}
+QToolButton#DetailTabToolButton:hover,
+QToolButton#DetailSearchPrevButton:hover,
+QToolButton#DetailSearchNextButton:hover,
+QToolButton#DetailSearchClearButton:hover {
+    background: #f3f4f6;
+}
+QFrame#DetailSearchBar {
+    background: #ffffff;
+    border: 1px solid #d8dee8;
+    border-radius: 9px;
+    margin-top: 12px;
+    margin-bottom: 10px;
+}
+QLineEdit#DetailSearchInput {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 14px;
+}
+QLabel#DetailSearchCount {
+    color: #6b7280;
+    font-size: 13px;
+    min-width: 42px;
 }
 QPushButton#PlayerIconButton,
 QPushButton#PlayerPlayButton {
@@ -844,11 +917,6 @@ QTreeWidget#HistoryTree::item:hover {
 QTreeWidget#HistoryTree::item:selected {
     background: #dbeafe;
     color: #111827;
-}
-QFrame#RecordingStatusPopup {
-    background: #111827;
-    color: #ffffff;
-    border-radius: 6px;
 }
 QLabel#RecordingWave {
     color: #2563eb;

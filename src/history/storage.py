@@ -43,7 +43,7 @@ class HistoryStorageMixin:
             "duration_seconds": record.duration_seconds,
             "audio_file": existing.get("audio_file") or record.audio_path.name,
             "transcript_file": existing.get("transcript_file") or record.transcript_path.name,
-            "summary_file": existing.get("summary_file") or record.summary_path.name,
+            "summary_file": record.summary_path.name,
             "markdown_file": existing.get("markdown_file") or record.markdown_path.name,
             "status": record.status.value,
             "processing": self._default_processing_metadata(existing.get("processing")),
@@ -213,10 +213,6 @@ class HistoryStorageMixin:
         file_map = (
             (audio_path, record_dir / self.FOLDER_AUDIO),
             (audio_path.with_suffix(".txt"), record_dir / self.FOLDER_TRANSCRIPT),
-            (
-                audio_path.with_name(f"{audio_path.stem}_summary.txt"),
-                record_dir / self.FOLDER_SUMMARY,
-            ),
             (audio_path.with_suffix(".md"), record_dir / self.FOLDER_MARKDOWN),
         )
 

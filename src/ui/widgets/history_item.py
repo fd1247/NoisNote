@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...history.service import HistoryRecord
-from ..icons import make_action_icon, make_history_icon
+from ..core.icons import make_action_icon, make_history_icon
 
 
 class ElidedLabel(QLabel):

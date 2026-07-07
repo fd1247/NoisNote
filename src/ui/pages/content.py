@@ -11,8 +11,10 @@ from PySide6.QtGui import QAction, QIcon, QPainter
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QPlainTextEdit,
     QPushButton,
@@ -23,14 +25,15 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyleOptionComboBox,
     QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from .detail_webview import DetailWebView
+from ..detail.webview import DetailWebView
 
 
-_SVG_DIR = Path(__file__).resolve().parents[1] / "assets" / "svg"
+_SVG_DIR = Path(__file__).resolve().parents[2] / "assets" / "svg"
 
 
 class SeekSlider(QSlider):
@@ -98,6 +101,12 @@ class HistoryPageCallbacks:
     delete_current_record: Callable[[], None]
     copy_panel_text: Callable[[str], None]
     export_result: Callable[[str], None]
+    toggle_detail_search: Callable[[], None]
+    update_detail_search: Callable[[str], None]
+    find_detail_previous: Callable[[], None]
+    find_detail_next: Callable[[], None]
+    clear_detail_search: Callable[[], None]
+    toggle_detail_edit_mode: Callable[[], None]
     seek_backward: Callable[[], None]
     toggle_playback: Callable[[], None]
     seek_forward: Callable[[], None]
@@ -113,6 +122,7 @@ class ContentTabsControls:
 
     detail_webview: DetailWebView
     result_stack: QStackedWidget
+    detail_header: QFrame
     transcript_tab_button: QPushButton
     timeline_tab_button: QPushButton
     summary_tab_button: QPushButton
@@ -122,8 +132,18 @@ class ContentTabsControls:
     detail_status_label: QLabel
     detail_time_label: QLabel
     detail_processing_status_label: QLabel
-    detail_metadata_button: QPushButton
-    detail_more_button: QPushButton
+    detail_metadata_button: QToolButton
+    detail_metadata_panel: QFrame
+    detail_more_button: QToolButton
+    detail_copy_button: QToolButton
+    detail_search_button: QToolButton
+    detail_edit_toggle_button: QToolButton
+    detail_search_bar: QFrame
+    detail_search_input: QLineEdit
+    detail_search_count_label: QLabel
+    detail_search_prev_button: QToolButton
+    detail_search_next_button: QToolButton
+    detail_search_clear_button: QToolButton
     detail_action_menu: QMenu
     detail_transcribe_action: QAction
     detail_summary_action: QAction
@@ -186,23 +206,41 @@ def build_history_page(
     detail_processing_status_label.setObjectName("DetailProcessingStatus")
     detail_processing_status_label.setTextFormat(Qt.RichText)
     detail_processing_status_label.hide()
-    detail_metadata_button = QPushButton("详细信息")
-    detail_metadata_button.setObjectName("SmallButton")
+    detail_metadata_button = QToolButton()
+    detail_metadata_button.setObjectName("DetailMetadataToggle")
+    detail_metadata_button.setText("详细信息")
+    detail_metadata_button.setIcon(_asset_icon("下拉.svg"))
+    detail_metadata_button.setIconSize(QSize(12, 12))
+    detail_metadata_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    detail_metadata_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    detail_metadata_button.setCheckable(True)
     detail_metadata_button.setCursor(Qt.CursorShape.PointingHandCursor)
     detail_metadata_button.setEnabled(False)
-    detail_metadata_button.clicked.connect(callbacks.show_metadata_details)
+    detail_metadata_button.clicked.connect(lambda checked=False: callbacks.show_metadata_details())
     meta_row.addWidget(detail_duration_label)
     meta_row.addWidget(_build_meta_separator())
     meta_row.addWidget(detail_size_label)
     meta_row.addWidget(_build_meta_separator())
     meta_row.addWidget(detail_time_label)
     meta_row.addWidget(detail_status_label)
+    meta_row.addWidget(detail_metadata_button)
     meta_row.addStretch(1)
     meta_row.addWidget(detail_processing_status_label)
-    meta_row.addWidget(detail_metadata_button)
 
     title_meta.addWidget(detail_title_label)
     title_meta.addLayout(meta_row)
+    detail_metadata_panel = QFrame()
+    detail_metadata_panel.setObjectName("DetailMetadataPanel")
+    detail_metadata_layout = QGridLayout(detail_metadata_panel)
+    detail_metadata_layout.setContentsMargins(0, 12, 0, 0)
+    detail_metadata_layout.setHorizontalSpacing(18)
+    detail_metadata_layout.setVerticalSpacing(10)
+    detail_metadata_layout.setColumnStretch(0, 0)
+    detail_metadata_layout.setColumnStretch(1, 1)
+    detail_metadata_layout.setColumnStretch(2, 0)
+    detail_metadata_layout.setColumnStretch(3, 2)
+    detail_metadata_panel.hide()
+    title_meta.addWidget(detail_metadata_panel)
     detail_header_layout.addLayout(title_meta, stretch=1)
 
     detail_action_menu = QMenu(detail_header)
@@ -215,19 +253,22 @@ def build_history_page(
     detail_open_folder_action.triggered.connect(callbacks.open_current_record_folder)
     detail_delete_action.triggered.connect(callbacks.delete_current_record)
 
-    detail_more_button = QPushButton("...")
+    detail_more_button = QToolButton()
     detail_more_button.setObjectName("DetailMoreButton")
+    detail_more_button.setIcon(_asset_icon("更多.svg"))
+    detail_more_button.setIconSize(QSize(16, 16))
+    detail_more_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     detail_more_button.setToolTip("记录操作")
     detail_more_button.setCursor(Qt.CursorShape.PointingHandCursor)
     detail_more_button.setFixedSize(32, 28)
-    detail_more_button.clicked.connect(callbacks.show_detail_action_menu)
+    detail_more_button.clicked.connect(lambda checked=False: callbacks.show_detail_action_menu())
     detail_header_layout.addWidget(detail_more_button, alignment=Qt.AlignmentFlag.AlignTop)
 
     panel = QFrame()
     panel.setObjectName("Panel")
     panel_layout = QVBoxLayout(panel)
     panel_layout.setContentsMargins(16, 12, 16, 16)
-    panel_layout.setSpacing(10)
+    panel_layout.setSpacing(0)
 
     tab_row = QHBoxLayout()
     tab_row.setContentsMargins(0, 0, 0, 0)
@@ -239,6 +280,47 @@ def build_history_page(
     tab_row.addWidget(timeline_tab_button)
     tab_row.addWidget(summary_tab_button)
     tab_row.addStretch(1)
+    detail_copy_button = _build_detail_tool_button("复制.svg", "复制")
+    detail_copy_button.clicked.connect(lambda checked=False: callbacks.copy_panel_text("active"))
+    detail_search_button = _build_detail_tool_button("查找.svg", "查找")
+    detail_search_button.clicked.connect(lambda checked=False: callbacks.toggle_detail_search())
+    detail_edit_toggle_button = _build_detail_tool_button("编辑.svg", "编辑")
+    detail_edit_toggle_button.clicked.connect(lambda checked=False: callbacks.toggle_detail_edit_mode())
+    tab_row.addWidget(detail_copy_button)
+    tab_row.addWidget(detail_search_button)
+    tab_row.addWidget(detail_edit_toggle_button)
+
+    detail_search_bar = QFrame()
+    detail_search_bar.setObjectName("DetailSearchBar")
+    detail_search_layout = QHBoxLayout(detail_search_bar)
+    detail_search_layout.setContentsMargins(12, 8, 10, 8)
+    detail_search_layout.setSpacing(8)
+    detail_search_icon = QLabel()
+    detail_search_icon.setObjectName("DetailSearchIcon")
+    detail_search_icon.setPixmap(_asset_icon("查找.svg").pixmap(QSize(16, 16)))
+    detail_search_input = QLineEdit()
+    detail_search_input.setObjectName("DetailSearchInput")
+    detail_search_input.setPlaceholderText("搜索")
+    detail_search_input.textChanged.connect(callbacks.update_detail_search)
+    detail_search_count_label = QLabel("0 / 0")
+    detail_search_count_label.setObjectName("DetailSearchCount")
+    detail_search_prev_button = _build_detail_tool_button("向上.svg", "上一个")
+    detail_search_prev_button.setObjectName("DetailSearchPrevButton")
+    detail_search_prev_button.clicked.connect(lambda checked=False: callbacks.find_detail_previous())
+    detail_search_next_button = _build_detail_tool_button("下拉.svg", "下一个")
+    detail_search_next_button.setObjectName("DetailSearchNextButton")
+    detail_search_next_button.clicked.connect(lambda checked=False: callbacks.find_detail_next())
+    detail_search_clear_button = _build_detail_tool_button("", "清空")
+    detail_search_clear_button.setObjectName("DetailSearchClearButton")
+    detail_search_clear_button.setText("×")
+    detail_search_clear_button.clicked.connect(lambda checked=False: callbacks.clear_detail_search())
+    detail_search_layout.addWidget(detail_search_icon)
+    detail_search_layout.addWidget(detail_search_input, stretch=1)
+    detail_search_layout.addWidget(detail_search_count_label)
+    detail_search_layout.addWidget(detail_search_prev_button)
+    detail_search_layout.addWidget(detail_search_next_button)
+    detail_search_layout.addWidget(detail_search_clear_button)
+    detail_search_bar.hide()
 
     divider = QFrame()
     divider.setObjectName("ResultTabDivider")
@@ -277,6 +359,7 @@ def build_history_page(
     tab_section_layout.setSpacing(0)
     tab_section_layout.addLayout(tab_row)
     tab_section_layout.addWidget(divider)
+    tab_section_layout.addWidget(detail_search_bar)
 
     panel_layout.addWidget(tab_section)
     panel_layout.addWidget(detail_webview, stretch=1)
@@ -312,6 +395,7 @@ def build_history_page(
     controls = ContentTabsControls(
         detail_webview=detail_webview,
         result_stack=result_stack,
+        detail_header=detail_header,
         transcript_tab_button=transcript_tab_button,
         timeline_tab_button=timeline_tab_button,
         summary_tab_button=summary_tab_button,
@@ -322,7 +406,17 @@ def build_history_page(
         detail_time_label=detail_time_label,
         detail_processing_status_label=detail_processing_status_label,
         detail_metadata_button=detail_metadata_button,
+        detail_metadata_panel=detail_metadata_panel,
         detail_more_button=detail_more_button,
+        detail_copy_button=detail_copy_button,
+        detail_search_button=detail_search_button,
+        detail_edit_toggle_button=detail_edit_toggle_button,
+        detail_search_bar=detail_search_bar,
+        detail_search_input=detail_search_input,
+        detail_search_count_label=detail_search_count_label,
+        detail_search_prev_button=detail_search_prev_button,
+        detail_search_next_button=detail_search_next_button,
+        detail_search_clear_button=detail_search_clear_button,
         detail_action_menu=detail_action_menu,
         detail_transcribe_action=detail_transcribe_action,
         detail_summary_action=detail_summary_action,
@@ -374,6 +468,19 @@ def _build_result_tab_button(
     button.setCheckable(True)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     button.clicked.connect(lambda checked=False, key=kind: set_result_tab(key))
+    return button
+
+
+def _build_detail_tool_button(icon_name: str, tooltip: str) -> QToolButton:
+    button = QToolButton()
+    button.setObjectName("DetailTabToolButton")
+    if icon_name:
+        button.setIcon(_asset_icon(icon_name))
+    button.setIconSize(QSize(17, 17))
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    button.setToolTip(tooltip)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.setFixedSize(30, 30)
     return button
 
 
@@ -462,9 +569,9 @@ def _build_playback_bar(
 ) -> tuple[QFrame, QPushButton, QPushButton, QPushButton, QLabel, QSlider, QLabel, QComboBox, QPushButton]:
     bar = QFrame()
     bar.setObjectName("PlayerBar")
-    bar.setFixedHeight(62)
+    bar.setFixedHeight(70)
     layout = QHBoxLayout(bar)
-    layout.setContentsMargins(14, 8, 14, 8)
+    layout.setContentsMargins(14, 14, 14, 8)
     layout.setSpacing(6)
 
     back_button = QPushButton()
@@ -510,7 +617,7 @@ def _build_playback_bar(
     rate_combo.setMinimumContentsLength(4)
     rate_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
     rate_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-    for value in ("0.5x", "1x", "1.5x", "2x"):
+    for value in ("0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x", "3x"):
         rate_combo.addItem(value)
     rate_combo.setCurrentText("1x")
     rate_combo.currentTextChanged.connect(set_playback_rate)

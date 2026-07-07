@@ -9,7 +9,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit
 
 from ..history.service import HistoryRecord
-from ..ui.icons import make_action_icon
+from ..ui.core.icons import make_action_icon
 
 
 class PlaybackHandlers:
@@ -114,7 +114,7 @@ class PlaybackHandlers:
             rate = float(value)
         except ValueError:
             rate = 1.0
-        self.playback_rate = rate if rate in {0.5, 1.0, 1.5, 2.0} else 1.0
+        self.playback_rate = rate if rate in {0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0} else 1.0
         if self.media_player:
             self.media_player.setPlaybackRate(self.playback_rate)
 

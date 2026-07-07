@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication
 from .main_window import MainWindow
 from .diagnostics import diagnose_asr_runtime
 from ..utils.logging import init_logging, install_exception_hooks, log_event
-from ..ui.styles import APP_STYLESHEET
+from ..ui.core.styles import APP_STYLESHEET
 from .version import get_version_string
 
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from .widgets.history_tree import HistoryTreeWidget
+from ..widgets.history_tree import HistoryTreeWidget
 
 
 @dataclass(frozen=True)

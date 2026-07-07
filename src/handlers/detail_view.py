@@ -9,7 +9,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
-from ..ui.detail_models import build_detail_payload, parse_detail_command, timeline_display_text
+from ..ui.detail.models import build_detail_payload, normalize_timeline_items, parse_detail_command, timeline_display_text
 from ..utils.logging import log_event, record_context
 
 
@@ -95,6 +95,14 @@ class DetailViewHandlers:
             self._set_status("已复制详情内容")
             return
 
+        if command.command == "contentChanged":
+            self._save_detail_edited_content(
+                str(command.payload.get("mode") or ""),
+                str(command.payload.get("text") or ""),
+                command.payload.get("timeline"),
+            )
+            return
+
         if command.command == "openExternalUrl":
             QDesktopServices.openUrl(QUrl(str(command.payload["url"])))
             return
@@ -113,8 +121,56 @@ class DetailViewHandlers:
             )
             return
 
+        if command.command == "scrollState":
+            sync_metadata = getattr(self, "_set_detail_metadata_scrolled_to_top", None)
+            if callable(sync_metadata):
+                sync_metadata(bool(command.payload.get("atTop")))
+            return
+
+        if command.command == "searchChanged":
+            sync_search = getattr(self, "_sync_detail_search_from_webview", None)
+            if callable(sync_search):
+                sync_search(
+                    int(command.payload.get("matchCount") or 0),
+                    int(command.payload.get("index") or 0),
+                )
+            return
+
         if command.command == "ready":
             self._refresh_detail_payload()
+
+    def _save_detail_edited_content(self, mode: str, text: str, timeline: Any = None) -> None:
+        """实时保存详情区编辑模式中的原始文本。"""
+        if not self.current_record or not bool(getattr(self, "detail_edit_mode", False)):
+            return
+        if mode == "summary":
+            self.history_service.save_summary(self.current_record, text)
+            self.summary_markdown_text = text
+            self.summary_loaded_record_id = self.current_record.record_key
+            self._sync_legacy_summary_widgets(text)
+        elif mode == "transcript":
+            self.history_service.save_transcript(self.current_record, text)
+            self.transcript_plain_text = text
+            self.transcript_loaded_record_id = self.current_record.record_key
+            self._sync_legacy_transcript_widgets(text)
+        elif mode == "timeline":
+            if not isinstance(timeline, list):
+                return
+            items = normalize_timeline_items(timeline)
+            self.history_service.save_timeline(self.current_record, items)
+            self.timeline_items = items
+            self.timeline_loaded_record_id = self.current_record.record_key
+            if hasattr(self, "timeline_copy_button"):
+                self.timeline_copy_button.setVisible(bool(items))
+        else:
+            return
+
+        detail_webview = getattr(self, "detail_webview", None)
+        payload = getattr(detail_webview, "current_payload", None)
+        if isinstance(payload, dict) and payload.get("mode") == mode:
+            payload["content"] = text
+            if mode == "timeline":
+                payload["timeline"] = list(getattr(self, "timeline_items", []) or [])
 
     def _detail_transcript_content(self, record) -> str:
         record_key = record.record_key
@@ -140,7 +196,6 @@ class DetailViewHandlers:
             items = self.history_service.read_timeline(record) if record.has_timeline else []
             self.timeline_items = items
             self.timeline_loaded_record_id = record_key
-            self._last_timeline_highlight_key = (None, None)
             if not items:
                 self.timeline_text.clear()
                 self.timeline_copy_button.hide()

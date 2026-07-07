@@ -468,22 +468,20 @@ def test_scan_organizes_flat_record_into_folder(tmp_path: Path) -> None:
     audio_path = tmp_path / "20260618_120000.wav"
     write_wav(audio_path, frames=8000)
     audio_path.with_suffix(".txt").write_text("转录", encoding="utf-8")
-    audio_path.with_name("20260618_120000_summary.txt").write_text("总结", encoding="utf-8")
 
     items = HistoryService(tmp_path).scan()
 
     assert len(items) == 1
     assert items[0].layout == "folder"
     assert items[0].record_id == "20260618_120000"
-    assert items[0].status == HistoryStatus.SUMMARIZED
+    assert items[0].status == HistoryStatus.TRANSCRIBED
     assert items[0].has_transcript
-    assert items[0].has_summary
+    assert not items[0].has_summary
     assert items[0].audio_path == tmp_path / "20260618_120000" / "audio.wav"
     assert items[0].transcript_path == tmp_path / "20260618_120000" / "transcript.txt"
-    assert items[0].summary_path == tmp_path / "20260618_120000" / "summary.txt"
+    assert items[0].summary_path == tmp_path / "20260618_120000" / "summary.md"
     assert not audio_path.exists()
     assert not audio_path.with_suffix(".txt").exists()
-    assert not audio_path.with_name("20260618_120000_summary.txt").exists()
 
 
 def test_save_text_for_folder_records(tmp_path: Path) -> None:
@@ -498,6 +496,8 @@ def test_save_text_for_folder_records(tmp_path: Path) -> None:
 
     assert service.read_transcript(folder_record) == "folder transcript"
     assert service.read_summary(folder_record) == "folder summary"
+    assert folder_record.summary_path == folder / "summary.md"
+    assert (folder / "summary.md").read_text(encoding="utf-8") == "folder summary"
     assert folder_record.status == HistoryStatus.SUMMARIZED
     assert (folder / "metadata.json").exists()
 
@@ -632,7 +632,7 @@ def test_clear_generated_results_keeps_audio_and_metadata(tmp_path: Path) -> Non
     record = service.scan()[0]
     service.save_transcript(record, "旧转录")
     service.save_summary(record, "旧总结")
-    service.save_markdown(record, "旧导出")
+    record.markdown_path.write_text("旧导出", encoding="utf-8")
     record = service.mark_error(service.scan()[0], "旧错误", step="summary")
 
     cleared = service.clear_generated_results(record)
@@ -657,7 +657,7 @@ def test_clear_generated_results_rejects_record_root(tmp_path: Path) -> None:
         record_dir=tmp_path,
         audio_path=tmp_path / "audio.wav",
         transcript_path=tmp_path / "transcript.txt",
-        summary_path=tmp_path / "summary.txt",
+        summary_path=tmp_path / "summary.md",
         markdown_path=tmp_path / "export.md",
         metadata_path=tmp_path / "metadata.json",
         created_at=datetime.now(),
@@ -835,7 +835,7 @@ def test_scans_existing_copied_import_records(tmp_path: Path) -> None:
         "duration_seconds": None,
         "audio_file": "audio.wav",
         "transcript_file": "transcript.txt",
-        "summary_file": "summary.txt",
+        "summary_file": "summary.md",
         "markdown_file": "export.md",
         "status": "audio_only",
         "source_type": "imported",
@@ -891,7 +891,6 @@ def test_delete_organized_flat_record_removes_record_folder_only(tmp_path: Path)
     audio_path = tmp_path / "20260618_120000.wav"
     write_wav(audio_path)
     audio_path.with_suffix(".txt").write_text("转录", encoding="utf-8")
-    audio_path.with_name("20260618_120000_summary.txt").write_text("总结", encoding="utf-8")
     audio_path.with_suffix(".md").write_text("导出", encoding="utf-8")
     sibling = tmp_path / "20260618_120000_extra.wav"
     write_wav(sibling)
@@ -902,7 +901,6 @@ def test_delete_organized_flat_record_removes_record_folder_only(tmp_path: Path)
     assert result.success
     assert not audio_path.exists()
     assert not audio_path.with_suffix(".txt").exists()
-    assert not audio_path.with_name("20260618_120000_summary.txt").exists()
     assert not audio_path.with_suffix(".md").exists()
     assert not (tmp_path / "20260618_120000").exists()
     assert not sibling.exists()
@@ -919,7 +917,7 @@ def test_delete_rejects_unsafe_paths(tmp_path: Path) -> None:
         record_dir=tmp_path,
         audio_path=outside,
         transcript_path=outside.with_suffix(".txt"),
-        summary_path=outside.with_name("outside_history_file_summary.txt"),
+        summary_path=outside.with_name("outside_history_file_summary.md"),
         markdown_path=outside.with_suffix(".md"),
         metadata_path=outside.with_suffix(".json"),
         created_at=datetime.now(),
@@ -941,7 +939,7 @@ def test_delete_rejects_unsafe_paths(tmp_path: Path) -> None:
         record_dir=tmp_path,
         audio_path=tmp_path / "audio.wav",
         transcript_path=tmp_path / "transcript.txt",
-        summary_path=tmp_path / "summary.txt",
+        summary_path=tmp_path / "summary.md",
         markdown_path=tmp_path / "export.md",
         metadata_path=tmp_path / "metadata.json",
         created_at=datetime.now(),

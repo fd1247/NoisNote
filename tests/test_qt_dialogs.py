@@ -8,7 +8,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QPushButton, QTableWidget, QWidget
 
 from src.app.update import UpdateInfo
-from src.ui.notebook_dialogs import ManageNotebooksDialog
+from src.ui.dialogs.notebook import ManageNotebooksDialog
 from src.ui.widgets.dialogs import (
     _ConfirmDialog,
     _add_confirm_buttons,
@@ -34,7 +34,7 @@ def test_manage_notebooks_dialog_uses_list_rows_instead_of_edit_table(monkeypatc
         assert dialog.ok_button.isEnabled() is False
 
         monkeypatch.setattr(
-            "src.ui.notebook_dialogs.QInputDialog.getText",
+            "src.ui.dialogs.notebook.QInputDialog.getText",
             lambda *args, **kwargs: ("项目", True),
         )
 

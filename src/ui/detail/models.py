@@ -97,17 +97,20 @@ def build_metadata_fields(record: Any) -> list[dict[str, str]]:
     """构建详情弹窗中展示的元数据字段。"""
 
     metadata = _read_metadata(record)
-    return [
+    fields = [
         {"label": "音频时长", "value": str(getattr(record, "duration_text", _MISSING) or _MISSING)},
         {"label": "文件大小", "value": format_size(int(getattr(record, "total_size_bytes", 0) or 0))},
         {"label": "创建日期", "value": _format_created_at(getattr(record, "created_at", None))},
         {"label": "状态", "value": str(getattr(record, "status_text", _MISSING) or _MISSING)},
         {"label": "来源", "value": _source_label(str(getattr(record, "source_kind", "") or ""))},
         {"label": "本地音视频所在路径", "value": _local_media_path(record)},
-        {"label": "视频链接", "value": _remote_url(record, metadata)},
         {"label": "转录模型", "value": _metadata_first(metadata, ("processing", "transcription", "model"), ("asr", "model"))},
         {"label": "总结模型", "value": _metadata_first(metadata, ("processing", "summary", "model"), ("llm", "model"))},
     ]
+    remote_url = _remote_url(record, metadata)
+    if remote_url != _MISSING:
+        fields.insert(6, {"label": "视频链接", "value": remote_url})
+    return fields
 
 
 def timeline_display_text(items: list[dict[str, Any]] | None) -> str:
@@ -117,26 +120,6 @@ def timeline_display_text(items: list[dict[str, Any]] | None) -> str:
         f"{format_display_time(item['start'])} - {format_display_time(item['end'])}  {item['text']}"
         for item in normalize_timeline_items(items)
     )
-
-
-def find_active_timeline_segment(items: list[dict[str, Any]] | None, position_seconds: float | None) -> int | None:
-    """根据播放位置查找当前时间轴片段索引。"""
-
-    timeline = normalize_timeline_items(items)
-    if not timeline or position_seconds is None:
-        return None
-
-    parsed_position = _maybe_float(position_seconds)
-    if parsed_position is None:
-        return None
-    position = max(0.0, parsed_position)
-    for index, item in enumerate(timeline):
-        if item["start"] <= position <= item["end"]:
-            return index
-    for index, item in enumerate(timeline):
-        if position < item["start"]:
-            return max(0, index - 1)
-    return len(timeline) - 1
 
 
 def parse_detail_command(value: Any, current_record_key: str, current_revision: int) -> DetailCommand | None:
@@ -172,6 +155,23 @@ def parse_detail_command(value: Any, current_record_key: str, current_revision: 
             },
         )
 
+    if command == "contentChanged":
+        if not _is_current_message(value, current_record_key, current_revision):
+            return None
+        mode = str(value.get("mode") or "transcript")
+        if mode not in _VALID_MODES:
+            return None
+        payload: dict[str, Any] = {
+            "mode": mode,
+            "text": str(value.get("text") or ""),
+        }
+        if mode == "timeline" and isinstance(value.get("timeline"), list):
+            payload["timeline"] = value.get("timeline")
+        return DetailCommand(
+            command="contentChanged",
+            payload=payload,
+        )
+
     if command == "openExternalUrl":
         if not _is_current_message(value, current_record_key, current_revision):
             return None
@@ -184,6 +184,22 @@ def parse_detail_command(value: Any, current_record_key: str, current_revision: 
     if command == "renderError":
         message = value.get("message")
         return DetailCommand(command="renderError", payload={"message": str(message or "")})
+
+    if command == "scrollState":
+        return DetailCommand(command="scrollState", payload={"atTop": bool(value.get("atTop"))})
+
+    if command == "searchChanged":
+        if not _is_current_message(value, current_record_key, current_revision):
+            return None
+        match_count = _maybe_int(value.get("matchCount"))
+        index = _maybe_int(value.get("index"))
+        return DetailCommand(
+            command="searchChanged",
+            payload={
+                "matchCount": max(0, match_count or 0),
+                "index": max(0, index or 0),
+            },
+        )
 
     if command == "ready":
         return DetailCommand(command="ready", payload={})
@@ -217,9 +233,11 @@ def _source_label(source_kind: str) -> str:
 
 
 def _normalize_token(token: dict[str, Any]) -> dict[str, Any] | None:
-    text = str(token.get("text") or "").strip()
-    if not text:
+    text = str(token.get("text") or "")
+    if text == "":
         return None
+    if not text.strip():
+        text = " "
     row = dict(token)
     start = _non_negative_float(row.get("start"))
     end = _coerce_float(row.get("end"), start)

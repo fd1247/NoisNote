@@ -26,17 +26,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..app.config import ANTHROPIC_DEFAULT_BASE_URL, ANTHROPIC_DEFAULT_MODEL
-from ..hotwords.service import HotwordService
-from ..hotwords.import_export import export_hotword_sets, import_hotword_sets
-from ..model_registry.downloader import ModelDownloadManager
-from ..model_registry.service import ModelService
-from .icons import make_eye_icon
-from .model_panel import ModelManagerWidget
-from .widgets.dialogs import alert_without_icon, confirm_without_icon
-from .widgets.update_dialog import UpdateDialog
-from ..app.version import APP_VERSION, get_version_string
-from ..app.update import check_for_update_async
+from ...app.config import ANTHROPIC_DEFAULT_BASE_URL, ANTHROPIC_DEFAULT_MODEL
+from ...hotwords.service import HotwordService
+from ...hotwords.import_export import export_hotword_sets, import_hotword_sets
+from ...model_registry.downloader import ModelDownloadManager
+from ...model_registry.service import ModelService
+from ..core.icons import make_eye_icon
+from ..panels.model import ModelManagerWidget
+from ..widgets.dialogs import alert_without_icon, confirm_without_icon
+from ..widgets.update_dialog import UpdateDialog
+from ...app.version import APP_VERSION, get_version_string
+from ...app.update import check_for_update_async
 
 # provider 下拉框的 data 值
 _PROVIDER_OPENAI = "openai"
@@ -45,7 +45,7 @@ _PROVIDER_ITEMS = [
     ("OpenAI 兼容", _PROVIDER_OPENAI),
     ("Anthropic", _PROVIDER_ANTHROPIC),
 ]
-_SVG_DIR = Path(__file__).resolve().parents[1] / "assets" / "svg"
+_SVG_DIR = Path(__file__).resolve().parents[2] / "assets" / "svg"
 
 
 def _asset_icon(svg_name: str) -> QIcon:
@@ -696,7 +696,7 @@ class SettingsPanel(QWidget):
             if item_data.get("id") in active_ids:
                 total_words += len(item_data.get("words", []))
 
-        from ..hotwords import MAX_ACTIVE_SETS, HARD_LIMIT_TOTAL_WORDS
+        from ...hotwords import MAX_ACTIVE_SETS, HARD_LIMIT_TOTAL_WORDS
 
         self.active_metric_value.setText(str(active_count))
         self.active_metric_suffix.setText(f"/{MAX_ACTIVE_SETS}")

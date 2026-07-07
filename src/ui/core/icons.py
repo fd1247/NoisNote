@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 
 
-_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
 _SVG_DIR = _ASSETS_DIR / "svg"
 _APP_ICON_PATH = _ASSETS_DIR / "icon.ico"
 
@@ -19,7 +19,7 @@ _ICON_MAP: dict[str, str] = {
     "hotwords": "热词管理.svg",
     "shortcuts": "快捷键.svg",
     "import": "导入.svg",
-    "link": "导入.svg",
+    "link": "链接.svg",
     "export": "导出.svg",
     "filter": "筛选.svg",
     "play": "播放.svg",

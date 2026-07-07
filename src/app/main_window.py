@@ -5,18 +5,23 @@ import os
 import sys
 import uuid
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QCloseEvent,
+    QDesktopServices,
+    QIcon,
 )
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QGridLayout,
     QLabel,
     QMainWindow,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -41,16 +46,15 @@ from ..handlers.transcription import TranscriptionHandlers
 from ..ui.widgets.dialogs import alert_without_icon, confirm_without_icon, prompt_text_without_icon
 from ..history.service import HistoryRecord, HistoryService
 from ..model_registry.downloader import ModelDownloadManager
-from ..ui.settings import SettingsPanel
-from ..ui.content import HistoryPageCallbacks, build_history_page
-from ..ui.detail_metadata import DetailMetadataDialog
-from ..ui.detail_models import build_metadata_fields
-from ..ui.sidebar import build_history_sidebar
-from ..ui.icons import make_action_icon, make_app_icon
-from ..ui.recording import build_recording_page
-from ..ui.result import set_result_tab, set_summary_text, set_transcript_text
-from ..ui.settings_dialog import SettingsDialog
-from ..ui.workbench import build_quick_toolbar, build_task_panel, install_workbench_menus
+from ..ui.pages.settings import SettingsPanel
+from ..ui.pages.content import HistoryPageCallbacks, build_history_page
+from ..ui.detail.models import build_metadata_fields
+from ..ui.pages.sidebar import build_history_sidebar
+from ..ui.core.icons import make_action_icon, make_app_icon
+from ..ui.pages.recording import build_recording_page
+from ..ui.pages.result import set_result_tab, set_summary_text, set_transcript_text
+from ..ui.dialogs.settings import SettingsDialog
+from ..ui.pages.workbench import build_quick_toolbar, build_task_panel, install_workbench_menus
 from ..utils.logging import log_event, record_context
 
 if TYPE_CHECKING:
@@ -101,6 +105,10 @@ class MainWindow(
         self.silence_started_at: float | None = None
         self.active_result_tab = "transcript"
         self.detail_revision = 0
+        self.detail_edit_mode = False
+        self.detail_search_query = ""
+        self.detail_search_index = 0
+        self.detail_search_match_count_from_webview: int | None = None
         self.transcript_plain_text = ""
         self.summary_markdown_text = ""
         self.active_task_ids: dict[str, str] = {}
@@ -108,7 +116,6 @@ class MainWindow(
         self.transcript_loaded_record_id = ""
         self.summary_loaded_record_id = ""
         self.timeline_loaded_record_id = ""
-        self._last_timeline_highlight_key: tuple[int | None, int | None] = (None, None)
         self._last_history_selected_index = -1
         self.media_player: QMediaPlayer | None = None
         self.audio_output: QAudioOutput | None = None
@@ -119,7 +126,6 @@ class MainWindow(
         self._updating_playback_slider = False
         self.settings_dialog: SettingsDialog | None = None
         self.recording_dialog = None
-        self.recording_status_popup = None
 
         self.setWindowTitle("NoisNote")
         self.setWindowIcon(make_app_icon())
@@ -315,6 +321,12 @@ class MainWindow(
                 delete_current_record=self.delete_current_record,
                 copy_panel_text=self.copy_panel_text,
                 export_result=self._export_result_with_format,
+                toggle_detail_search=self.toggle_detail_search,
+                update_detail_search=self.update_detail_search,
+                find_detail_previous=self.find_detail_previous,
+                find_detail_next=self.find_detail_next,
+                clear_detail_search=self.clear_detail_search,
+                toggle_detail_edit_mode=self.toggle_detail_edit_mode,
                 seek_backward=self.seek_playback_backward,
                 toggle_playback=self.toggle_playback,
                 seek_forward=self.seek_playback_forward,
@@ -326,6 +338,7 @@ class MainWindow(
         )
         self.detail_webview = controls.detail_webview
         self.result_stack = controls.result_stack
+        self.detail_header = controls.detail_header
         self.transcript_tab_button = controls.transcript_tab_button
         self.timeline_tab_button = controls.timeline_tab_button
         self.summary_tab_button = controls.summary_tab_button
@@ -336,7 +349,17 @@ class MainWindow(
         self.detail_time_label = controls.detail_time_label
         self.detail_processing_status_label = controls.detail_processing_status_label
         self.detail_metadata_button = controls.detail_metadata_button
+        self.detail_metadata_panel = controls.detail_metadata_panel
         self.detail_more_button = controls.detail_more_button
+        self.detail_copy_button = controls.detail_copy_button
+        self.detail_search_button = controls.detail_search_button
+        self.detail_edit_toggle_button = controls.detail_edit_toggle_button
+        self.detail_search_bar = controls.detail_search_bar
+        self.detail_search_input = controls.detail_search_input
+        self.detail_search_count_label = controls.detail_search_count_label
+        self.detail_search_prev_button = controls.detail_search_prev_button
+        self.detail_search_next_button = controls.detail_search_next_button
+        self.detail_search_clear_button = controls.detail_search_clear_button
         self.detail_action_menu = controls.detail_action_menu
         self.detail_transcribe_action = controls.detail_transcribe_action
         self.detail_summary_action = controls.detail_summary_action
@@ -364,6 +387,7 @@ class MainWindow(
         self.playback_rate_combo = controls.playback_rate_combo
         self.playback_cc_button = controls.playback_cc_button
         self._set_result_tab("transcript")
+        self._apply_detail_edit_mode()
         self._sync_detail_action_menu()
         return page
 
@@ -390,6 +414,8 @@ class MainWindow(
         if previous_tab != self.active_result_tab:
             self._bump_detail_revision()
         self._refresh_detail_payload()
+        self._refresh_detail_search()
+        self._apply_detail_edit_mode()
 
     def _set_summary_text(self, summary: str) -> None:
         """以 Markdown 方式展示总结，同时保留原文用于复制和导出。"""
@@ -409,6 +435,11 @@ class MainWindow(
         can_transcribe = bool(record and record.audio_path.exists() and not self.is_processing)
         self.detail_more_button.setEnabled(has_record)
         self.detail_metadata_button.setEnabled(has_record)
+        if not has_record:
+            self.detail_metadata_expanded = False
+            self.detail_metadata_button.setChecked(False)
+            self.detail_metadata_panel.hide()
+            self.detail_header.show()
         self.detail_transcribe_action.setEnabled(can_transcribe)
         self.detail_summary_action.setEnabled(
             bool(has_record and record.has_transcript and not record.has_summary and not self.is_processing)
@@ -417,12 +448,74 @@ class MainWindow(
         self.detail_delete_action.setEnabled(has_record)
 
     def show_metadata_details(self) -> None:
-        """打开当前历史记录的只读元数据弹窗。"""
+        """展开或收起当前历史记录的内联元数据区域。"""
         if not self.current_record:
             self._set_status("请先选择一条历史记录")
             return
-        dialog = DetailMetadataDialog(self, build_metadata_fields(self.current_record))
-        dialog.exec()
+        expanded = not bool(getattr(self, "detail_metadata_expanded", False))
+        self.detail_metadata_expanded = expanded
+        if expanded:
+            self._populate_detail_metadata_panel()
+        self.detail_metadata_panel.setVisible(expanded)
+        self.detail_metadata_button.setChecked(expanded)
+
+    def _populate_detail_metadata_panel(self) -> None:
+        """将当前记录元数据填充到详情头的内联面板。"""
+        if not self.current_record:
+            return
+        layout = self.detail_metadata_panel.layout()
+        if not isinstance(layout, QGridLayout):
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        fields = build_metadata_fields(self.current_record)
+        split_at = (len(fields) + 1) // 2
+        for index, field in enumerate(fields):
+            side = 0 if index < split_at else 1
+            row = index if side == 0 else index - split_at
+            label_column = side * 2
+            value_column = label_column + 1
+
+            field_label = str(field.get("label") or "")
+            field_value = str(field.get("value") or "--")
+            label = QLabel(field_label)
+            label.setObjectName("DetailMetadataLabel")
+            value = QLabel(field_value)
+            value.setObjectName("DetailMetadataValue")
+            value_alignment = Qt.AlignmentFlag.AlignLeft
+            if field_label == "状态":
+                value.setObjectName("DetailStatusPill")
+                value.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+            elif field_label == "视频链接" and field_value != "--":
+                safe_url = escape(field_value, quote=True)
+                value.setText(f'<a href="{safe_url}">{safe_url}</a>')
+                value.setTextFormat(Qt.TextFormat.RichText)
+                value.setOpenExternalLinks(False)
+                value.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+                value.setTextInteractionFlags(
+                    Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
+                )
+            else:
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value.setWordWrap(True)
+
+            layout.addWidget(label, row, label_column)
+            layout.addWidget(value, row, value_column, alignment=value_alignment)
+
+    def _set_detail_metadata_scrolled_to_top(self, at_top: bool) -> None:
+        """根据正文滚动位置自动显示或隐藏整个详情头部区域。"""
+        if not self.current_record:
+            return
+        if at_top and self.current_record:
+            self._populate_detail_metadata_panel()
+            self.detail_metadata_panel.setVisible(bool(getattr(self, "detail_metadata_expanded", False)))
+        self.detail_header.setVisible(bool(at_top))
+        self.detail_metadata_button.setChecked(bool(getattr(self, "detail_metadata_expanded", False)))
 
     def show_detail_action_menu(self) -> None:
         """在详情页更多按钮下方弹出记录操作菜单。"""
@@ -433,6 +526,9 @@ class MainWindow(
     def _update_detail_header(self, record: HistoryRecord) -> None:
         """刷新详情头部内容后同步头部操作状态。"""
         HistoryViewHandlers._update_detail_header(self, record)
+        self.detail_header.show()
+        if bool(getattr(self, "detail_metadata_expanded", False)):
+            self._populate_detail_metadata_panel()
         self._sync_detail_action_menu()
 
     def _clear_missing_current_record(self, *, clear_persisted_selection: bool = True) -> None:
@@ -441,6 +537,9 @@ class MainWindow(
             self,
             clear_persisted_selection=clear_persisted_selection,
         )
+        self.detail_metadata_expanded = False
+        self.detail_metadata_button.setChecked(False)
+        self.detail_metadata_panel.hide()
         self._bump_detail_revision()
         self._refresh_detail_payload()
         self._sync_detail_action_menu()
@@ -608,6 +707,8 @@ class MainWindow(
         if not self.current_record:
             self._set_status("请先选择一条历史记录")
             return
+        if kind == "active":
+            kind = self.active_result_tab
         if kind == "transcript":
             text = self.transcript_plain_text or self.history_service.read_transcript(self.current_record)
             label = "转录文字"
@@ -623,6 +724,142 @@ class MainWindow(
             return
         QApplication.clipboard().setText(text)
         self._set_status(f"已复制{label}")
+
+    def toggle_detail_search(self) -> None:
+        visible = self.detail_search_bar.isHidden()
+        self.detail_search_bar.setVisible(visible)
+        if visible:
+            self.detail_search_input.setFocus()
+            self.detail_search_input.selectAll()
+            self._refresh_detail_search()
+            return
+        self.detail_search_query = ""
+        self.detail_search_index = 0
+        self.detail_search_match_count_from_webview = None
+        self.detail_search_input.blockSignals(True)
+        self.detail_search_input.clear()
+        self.detail_search_input.blockSignals(False)
+        self._set_detail_web_search("", 0)
+        self._sync_detail_search_controls(0)
+
+    def update_detail_search(self, text: str) -> None:
+        self.detail_search_query = text
+        self.detail_search_index = 0
+        self.detail_search_match_count_from_webview = None
+        self._refresh_detail_search()
+
+    def find_detail_previous(self) -> None:
+        count = self._detail_search_match_count()
+        if count <= 0:
+            self._sync_detail_search_controls(0)
+            return
+        self.detail_search_index = (self.detail_search_index - 1) % count
+        self._sync_detail_search_controls(count)
+        self._set_detail_web_search(self.detail_search_query, self.detail_search_index)
+
+    def find_detail_next(self) -> None:
+        count = self._detail_search_match_count()
+        if count <= 0:
+            self._sync_detail_search_controls(0)
+            return
+        self.detail_search_index = (self.detail_search_index + 1) % count
+        self._sync_detail_search_controls(count)
+        self._set_detail_web_search(self.detail_search_query, self.detail_search_index)
+
+    def clear_detail_search(self) -> None:
+        if self.detail_search_input.text():
+            self.detail_search_input.clear()
+            return
+        self.update_detail_search("")
+
+    def _sync_detail_search_from_webview(self, match_count: int, index: int) -> None:
+        if not str(getattr(self, "detail_search_query", "") or ""):
+            self.detail_search_match_count_from_webview = 0
+            self.detail_search_index = 0
+            self._sync_detail_search_controls(0)
+            return
+        count = max(0, int(match_count))
+        self.detail_search_match_count_from_webview = count
+        if count <= 0:
+            self.detail_search_index = 0
+        else:
+            self.detail_search_index = min(max(0, int(index)), count - 1)
+        self._sync_detail_search_controls(count)
+
+    def toggle_detail_edit_mode(self) -> None:
+        self.detail_edit_mode = not bool(getattr(self, "detail_edit_mode", False))
+        self._apply_detail_edit_mode()
+
+    def _refresh_detail_search(self) -> None:
+        count = self._detail_search_match_count()
+        if count <= 0:
+            self.detail_search_index = 0
+        elif self.detail_search_index >= count:
+            self.detail_search_index = count - 1
+        self._sync_detail_search_controls(count)
+        self._set_detail_web_search(self.detail_search_query, self.detail_search_index)
+
+    def _detail_search_match_count(self) -> int:
+        query = str(getattr(self, "detail_search_query", "") or "")
+        if not query:
+            return 0
+        detail_webview = getattr(self, "detail_webview", None)
+        is_webengine_available = getattr(detail_webview, "is_webengine_available", None)
+        if callable(is_webengine_available) and is_webengine_available():
+            return max(0, int(getattr(self, "detail_search_match_count_from_webview", 0) or 0))
+        text = self._detail_current_source_text()
+        lowered_text = text.lower()
+        lowered_query = query.lower()
+        count = 0
+        start = 0
+        while lowered_query:
+            index = lowered_text.find(lowered_query, start)
+            if index < 0:
+                break
+            count += 1
+            start = index + len(lowered_query)
+        return count
+
+    def _sync_detail_search_controls(self, count: int) -> None:
+        if not str(getattr(self, "detail_search_query", "") or "") or count <= 0:
+            self.detail_search_count_label.setText("0 / 0")
+            self.detail_search_prev_button.setEnabled(False)
+            self.detail_search_next_button.setEnabled(False)
+            return
+        self.detail_search_prev_button.setEnabled(True)
+        self.detail_search_next_button.setEnabled(True)
+        self.detail_search_count_label.setText(f"{self.detail_search_index + 1} / {count}")
+
+    def _set_detail_web_search(self, query: str, index: int) -> None:
+        detail_webview = getattr(self, "detail_webview", None)
+        set_search_state = getattr(detail_webview, "set_search_state", None)
+        if callable(set_search_state):
+            set_search_state(query, index)
+
+    def _detail_current_source_text(self) -> str:
+        if not self.current_record:
+            return ""
+        if self.active_result_tab == "summary":
+            return self._detail_summary_content(self.current_record)
+        if self.active_result_tab == "timeline":
+            return self._timeline_display_text(self.current_record)
+        return self._detail_transcript_content(self.current_record)
+
+    def _apply_detail_edit_mode(self) -> None:
+        if not hasattr(self, "detail_edit_toggle_button"):
+            return
+        editable_tab = self.active_result_tab in {"transcript", "summary", "timeline"}
+        enabled = bool(getattr(self, "detail_edit_mode", False)) and editable_tab
+        icon_name = "视图.svg" if enabled else "编辑.svg"
+        tooltip = "逐句时间轴不可编辑" if not editable_tab else "视图" if enabled else "编辑"
+        icon_path = Path(__file__).resolve().parents[1] / "assets" / "svg" / icon_name
+        self.detail_edit_toggle_button.setIcon(QIcon(str(icon_path)))
+        self.detail_edit_toggle_button.setToolTip(tooltip)
+        self.detail_edit_toggle_button.setEnabled(editable_tab)
+        detail_webview = getattr(self, "detail_webview", None)
+        set_edit_mode = getattr(detail_webview, "set_edit_mode", None)
+        if callable(set_edit_mode):
+            set_edit_mode(enabled)
 
     def delete_current_record(self) -> None:
         """删除当前选中的历史记录。"""

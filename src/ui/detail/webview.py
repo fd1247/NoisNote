@@ -9,7 +9,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
 from PySide6.QtWidgets import QPlainTextEdit, QTextBrowser, QVBoxLayout, QWidget
 
-from .detail_models import timeline_display_text
+from .models import timeline_display_text
 
 try:  # pragma: no cover - 可选依赖在 CI 和精简环境里经常不存在
     from PySide6.QtWebChannel import QWebChannel
@@ -24,10 +24,10 @@ except ImportError:  # pragma: no cover
     QWebEngineView = None  # type: ignore[assignment]
 
 
-_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "detail_viewer"
+_ASSET_DIR = Path(__file__).resolve().parent / "assets"
 _INDEX_HTML = _ASSET_DIR / "index.html"
 _DETAIL_CSS = _ASSET_DIR / "detail-viewer.css"
-_VNOTE_READ_MODE_ZOOM_FACTOR = 1.5
+_VNOTE_READ_MODE_ZOOM_FACTOR = 1.1
 
 
 def _is_link_click_navigation(request_type: Any) -> bool:
@@ -100,6 +100,11 @@ class DetailWebView(QWidget):
         self._page_ready = False
         self._pending_content: dict[str, Any] | None = None
         self._pending_playback: dict[str, Any] | None = None
+        self._pending_edit_mode: bool | None = None
+        self._pending_search_state: dict[str, Any] | None = None
+        self.is_edit_mode = False
+        self.current_search_state: dict[str, Any] = {"query": "", "index": 0}
+        self._rendering_fallback = False
         self._bridge = DetailWebBridge(self)
         self._bridge.commandReceived.connect(self._handle_bridge_command)
         self._web_view: Any = None
@@ -131,6 +136,30 @@ class DetailWebView(QWidget):
             self._flush_pending_js()
             return
         self._render_fallback()
+
+    def set_edit_mode(self, enabled: bool) -> None:
+        """切换详情正文的编辑/视图模式。"""
+
+        self.is_edit_mode = bool(enabled)
+        if self.is_webengine_available():
+            self._pending_edit_mode = self.is_edit_mode
+            self._flush_pending_js()
+            return
+        if self._fallback is not None:
+            self._render_fallback()
+            self._fallback.setReadOnly(not self.is_edit_mode)
+
+    def set_search_state(self, query: str, index: int = 0) -> None:
+        """同步详情正文搜索词和当前匹配序号。"""
+
+        try:
+            safe_index = max(0, int(index))
+        except (TypeError, ValueError):
+            safe_index = 0
+        self.current_search_state = {"query": str(query or ""), "index": safe_index}
+        if self.is_webengine_available():
+            self._pending_search_state = dict(self.current_search_state)
+            self._flush_pending_js()
 
     def update_playback(self, payload: dict) -> None:
         """保存播放状态，并在 WebView 可用时通知前端高亮当前时间轴行。"""
@@ -165,6 +194,7 @@ class DetailWebView(QWidget):
         browser.setOpenExternalLinks(False)
         browser.setReadOnly(True)
         browser.document().setDefaultStyleSheet(_fallback_stylesheet())
+        browser.textChanged.connect(self._handle_fallback_text_changed)
         layout.addWidget(browser)
         self._fallback = browser
         self._render_fallback()
@@ -185,6 +215,8 @@ class DetailWebView(QWidget):
         self._page_ready = False
         self._pending_content = None
         self._pending_playback = None
+        self._pending_edit_mode = None
+        self._pending_search_state = None
 
     def _handle_load_finished(self, ok: bool) -> None:
         if not ok:
@@ -209,6 +241,12 @@ class DetailWebView(QWidget):
         if self._pending_playback is not None:
             self._run_js_call("updatePlayback", self._pending_playback)
             self._pending_playback = None
+        if self._pending_edit_mode is not None:
+            self._run_js_call("setEditMode", {"enabled": self._pending_edit_mode})
+            self._pending_edit_mode = None
+        if self._pending_search_state is not None:
+            self._run_js_call("setSearchState", self._pending_search_state)
+            self._pending_search_state = None
 
     def _run_js_call(self, name: str, payload: dict[str, Any]) -> None:
         encoded = json.dumps(payload, ensure_ascii=False)
@@ -221,8 +259,37 @@ class DetailWebView(QWidget):
         mode = str(payload.get("mode") or "transcript")
         content = str(payload.get("content") or "")
         timeline = payload.get("timeline")
-        if mode == "timeline":
-            lines = timeline_display_text(timeline if isinstance(timeline, list) else [])
-            self._fallback.setPlainText(lines or "暂无时间轴。")
+        self._rendering_fallback = True
+        try:
+            if mode == "timeline":
+                lines = timeline_display_text(timeline if isinstance(timeline, list) else [])
+                self._fallback.setPlainText(lines)
+                self._fallback.setReadOnly(not self.is_edit_mode)
+                return
+            if self.is_edit_mode:
+                self._fallback.setPlainText(content)
+            else:
+                self._fallback.setMarkdown(content)
+            self._fallback.setReadOnly(not self.is_edit_mode)
+        finally:
+            self._rendering_fallback = False
+
+    def _handle_fallback_text_changed(self) -> None:
+        if self._fallback is None or self._rendering_fallback or not self.is_edit_mode:
             return
-        self._fallback.setMarkdown(content or "暂无内容。")
+        payload = self.current_payload or {}
+        mode = str(payload.get("mode") or "transcript")
+        if mode == "timeline":
+            return
+        text = self._fallback.toPlainText()
+        self.current_payload = dict(payload, content=text)
+        if self._command_callback is not None:
+            self._command_callback(
+                {
+                    "command": "contentChanged",
+                    "recordKey": payload.get("recordKey", ""),
+                    "revision": payload.get("revision", 0),
+                    "mode": mode,
+                    "text": text,
+                }
+            )

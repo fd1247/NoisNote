@@ -8,8 +8,8 @@ from PySide6.QtMultimedia import QMediaDevices
 from ..audio import AudioRecorder, CaptureMode, CaptureSettings, list_capture_devices
 from ..app.config import get_output_dir
 from ..utils.logging import file_context, hash_text, log_event, record_context
-from ..ui.result import set_button_object_name
-from ..ui.recording_dialog import RecordingDialog, RecordingStatusPopup
+from ..ui.pages.result import set_button_object_name
+from ..ui.dialogs.recording import RecordingDialog
 
 
 class RecordingHandlers:
@@ -386,32 +386,6 @@ class RecordingHandlers:
         self._sync_record_toolbar_state()
         if self.recording_dialog is not None:
             self.recording_dialog.sync_recording_state(self.is_recording)
-        if self.recording_status_popup is not None and self.is_recording:
-            self.recording_status_popup.update_status(
-                self._recording_popup_device_text(),
-                f"时长：{self.duration_label.text()}",
-            )
-
-    def _show_recording_status_popup(self, event) -> None:
-        if not self.is_recording:
-            return
-        if self.recording_status_popup is None:
-            self.recording_status_popup = RecordingStatusPopup(self)
-        self.recording_status_popup.update_status(
-            self._recording_popup_device_text(),
-            f"时长：{self.duration_label.text()}",
-        )
-        pos = self.record_toolbar_button.mapToGlobal(self.record_toolbar_button.rect().bottomLeft())
-        self.recording_status_popup.move(pos)
-        self.recording_status_popup.show()
-
-    def _hide_recording_status_popup(self, event) -> None:
-        if self.recording_status_popup is not None:
-            self.recording_status_popup.hide()
-
-    def _recording_popup_device_text(self) -> str:
-        device = self.recorder.get_device_name() if self.recorder else ""
-        return f"设备：{device or '不可用'}"
 
     def _set_button_object_name(self, button, object_name: str) -> None:
         """切换按钮样式对象名，并立即刷新 Qt 样式。"""

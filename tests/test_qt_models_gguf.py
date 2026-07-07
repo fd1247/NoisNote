@@ -473,7 +473,7 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
     saved_configs: list[dict] = []
     info_messages: list[str] = []
     confirmation: dict[str, str] = {}
-    monkeypatch.setattr("src.ui.model_panel.save_config", lambda value: saved_configs.append(value))
+    monkeypatch.setattr("src.ui.panels.model.save_config", lambda value: saved_configs.append(value))
 
     def fake_confirm(parent, title, text, confirm_text="确认", cancel_text="取消"):
         confirmation["title"] = title
@@ -482,9 +482,9 @@ def test_model_manager_deletes_downloaded_model_after_confirmation(monkeypatch, 
         confirmation["cancel_text"] = cancel_text
         return True
 
-    monkeypatch.setattr("src.ui.model_panel.confirm_without_icon", fake_confirm)
+    monkeypatch.setattr("src.ui.panels.model.confirm_without_icon", fake_confirm)
     monkeypatch.setattr(
-        "src.ui.model_panel.alert_without_icon",
+        "src.ui.panels.model.alert_without_icon",
         lambda parent, title, message, confirm_text="确认": info_messages.append(message),
     )
 
@@ -523,7 +523,7 @@ def test_model_manager_cancel_delete_keeps_downloaded_model(monkeypatch, tmp_pat
     manager = ModelDownloadManager(config)
     panel = SettingsPanel(config, manager)
     monkeypatch.setattr(
-        "src.ui.model_panel.confirm_without_icon",
+        "src.ui.panels.model.confirm_without_icon",
         lambda *args, **kwargs: False,
     )
 
@@ -679,6 +679,25 @@ def test_runtime_reports_missing_vendor_bin_as_dependency_error(tmp_path: Path) 
 
     assert exc_info.value.error_type == "MissingRuntimeDependency"
     assert "运行时依赖" in exc_info.value.user_message
+
+
+def test_runtime_resolves_relative_tool_dir_to_absolute_path(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    relative_tool_dir = Path("vendor") / "qwen3-asr-gguf"
+    relative_tool_dir.mkdir(parents=True)
+    runtime = Qwen3AsrGgufRuntime(
+        Qwen3AsrGgufRuntimeConfig(
+            model_dir=tmp_path,
+            model_name=QWEN3_ASR_GGUF_06B_ID,
+            model_size="0.6B",
+            tool_dir=relative_tool_dir,
+        )
+    )
+
+    tool_dir = runtime._resolve_tool_dir()
+
+    assert tool_dir.is_absolute()
+    assert tool_dir == relative_tool_dir.resolve()
 
 
 def test_build_context_merges_user_context_and_hotwords() -> None:

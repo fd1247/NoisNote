@@ -1,8 +1,7 @@
-"""录音控制弹窗和状态浮层。"""
+"""录音控制对话框。"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout, QWidget
 
 
 class RecordingDialog(QDialog):
@@ -37,22 +36,3 @@ class RecordingDialog(QDialog):
         self.start_stop_button.setObjectName("DangerButton" if is_recording else "RecordButton")
         self.start_stop_button.style().unpolish(self.start_stop_button)
         self.start_stop_button.style().polish(self.start_stop_button)
-
-
-class RecordingStatusPopup(QFrame):
-    """录音按钮 hover 时显示的轻量状态浮层。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.ToolTip)
-        self.setObjectName("RecordingStatusPopup")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
-        self.device_label = QLabel("")
-        self.duration_label = QLabel("")
-        layout.addWidget(self.device_label)
-        layout.addWidget(self.duration_label)
-
-    def update_status(self, device: str, duration: str) -> None:
-        self.device_label.setText(device)
-        self.duration_label.setText(duration)

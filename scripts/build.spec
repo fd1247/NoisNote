@@ -187,7 +187,7 @@ for dll_path in _openssl_dlls:
 app_datas = [
     # 应用资源文件
     (str(ROOT / "src" / "assets"), "src/assets"),
-    (str(ROOT / "src" / "ui" / "assets" / "detail_viewer"), "src/ui/assets/detail_viewer"),
+    (str(ROOT / "src" / "ui" / "detail" / "assets"), "src/ui/detail/assets"),
 ]
 
 # 添加 ffmpeg（只包含 exe 文件）

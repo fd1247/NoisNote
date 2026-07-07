@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...history.types import HistoryRecord
-from ..icons import make_history_icon
+from ..core.icons import make_history_icon
 
 _ROLE_KIND = Qt.ItemDataRole.UserRole
 _ROLE_VALUE = Qt.ItemDataRole.UserRole + 1

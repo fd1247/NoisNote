@@ -1,20 +1,30 @@
-"""时间戳时间轴转换与导出工具。"""
+"""时间轴转换、分句和导出工具。"""
 from __future__ import annotations
 
 import re
-from html import escape
 from typing import Any
 
 from .types import TimelineSegment, TimelineToken
 
-_SENTENCE_SPLIT_PATTERN = re.compile(r"[，。？！；：\n]|[,.?!;:]\s*")
-_DEFAULT_MAX_SEGMENT_CHARS = 40
+_STRONG_END_PATTERN = re.compile(r"[。！？!?\.]")
+_WEAK_SPLIT_PATTERN = re.compile(r"[，、；：,;:]")
+_BLANK_LINE_PATTERN = re.compile(r"\n\s*\n")
+_ENGLISH_WORD_PATTERN = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*")
+_CJK_CHAR_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_CLOSING_SENTENCE_MARKS = set("”’」』】）》〉)")
+_DEFAULT_MAX_SEGMENT_WORDS = 120
+_DEFAULT_MIN_SEGMENT_WORDS = 3
 
 
-def alignment_items_to_timeline(items: list[Any] | tuple[Any, ...] | None) -> list[TimelineSegment]:
-    """把 vendor 字级 alignment items 聚合成应用内部逐句时间轴片段。"""
+def alignment_items_to_timeline(
+    items: list[Any] | tuple[Any, ...] | None,
+    *,
+    max_words: int = _DEFAULT_MAX_SEGMENT_WORDS,
+    min_words: int = _DEFAULT_MIN_SEGMENT_WORDS,
+) -> list[TimelineSegment]:
+    """将 vendor 字级 alignment items 聚合成句级时间轴。"""
     word_segments = _alignment_items_to_word_segments(items)
-    return _word_segments_to_sentence_timeline(word_segments)
+    return _word_segments_to_sentence_timeline(word_segments, max_words=max_words, min_words=min_words)
 
 
 def _alignment_items_to_word_segments(items: list[Any] | tuple[Any, ...] | None) -> list[TimelineSegment]:
@@ -33,49 +43,36 @@ def _alignment_items_to_word_segments(items: list[Any] | tuple[Any, ...] | None)
 
 def _word_segments_to_sentence_timeline(
     word_segments: list[TimelineSegment],
-    max_chars: int = _DEFAULT_MAX_SEGMENT_CHARS,
+    max_words: int = _DEFAULT_MAX_SEGMENT_WORDS,
+    min_words: int = _DEFAULT_MIN_SEGMENT_WORDS,
 ) -> list[TimelineSegment]:
-    timeline: list[TimelineSegment] = []
-    current_texts: list[str] = []
+    max_words = max(1, int(max_words or _DEFAULT_MAX_SEGMENT_WORDS))
+    min_words = max(1, int(min_words or _DEFAULT_MIN_SEGMENT_WORDS))
+    rough_sentences: list[list[TimelineToken]] = []
     current_tokens: list[TimelineToken] = []
-    start: float | None = None
-    end = 0.0
 
     for segment in word_segments:
-        if start is None and segment.text.strip():
-            start = segment.start
-        current_texts.append(segment.text)
-        current_tokens.append(TimelineToken(start=segment.start, end=segment.end, text=segment.text))
-        end = max(end, segment.end)
-        content = _normalize_timeline_text("".join(current_texts))
-        if _SENTENCE_SPLIT_PATTERN.search(segment.text) or len(content) >= max_chars:
-            if content:
-                timeline.append(
-                    TimelineSegment(
-                        start=start if start is not None else segment.start,
-                        end=end,
-                        text=content,
-                        tokens=_clean_tokens(current_tokens),
-                    )
-                )
-            current_texts = []
+        if _BLANK_LINE_PATTERN.search(segment.text):
+            if _tokens_text(current_tokens):
+                rough_sentences.append(current_tokens)
             current_tokens = []
-            start = None
-            end = 0.0
+            continue
+        token = TimelineToken(start=segment.start, end=segment.end, text=segment.text)
+        for piece in _split_token_at_sentence_boundaries(token):
+            current_tokens.append(piece)
+            if _ends_sentence(piece.text):
+                if _tokens_text(current_tokens):
+                    rough_sentences.append(current_tokens)
+                current_tokens = []
 
-    content = _normalize_timeline_text("".join(current_texts))
-    if content:
-        fallback_start = start if start is not None else (word_segments[-1].start if word_segments else 0.0)
-        timeline.append(
-            TimelineSegment(
-                start=fallback_start,
-                end=end,
-                text=content,
-                tokens=_clean_tokens(current_tokens),
-            )
-        )
+    if _tokens_text(current_tokens):
+        rough_sentences.append(current_tokens)
 
-    return timeline
+    split_sentences: list[list[TimelineToken]] = []
+    for sentence in rough_sentences:
+        split_sentences.extend(_split_tokens_by_word_limit(sentence, max_words))
+
+    return [_tokens_to_segment(tokens) for tokens in _merge_short_sentences(split_sentences, min_words)]
 
 
 def timeline_to_dicts(timeline: list[TimelineSegment]) -> list[dict[str, Any]]:
@@ -104,7 +101,7 @@ def timeline_to_dicts(timeline: list[TimelineSegment]) -> list[dict[str, Any]]:
 
 
 def timeline_from_dicts(items: list[dict[str, Any]] | None) -> list[TimelineSegment]:
-    """从历史 JSON 结构恢复时间轴片段。"""
+    """从 timeline.json 结构恢复时间轴片段。"""
     timeline: list[TimelineSegment] = []
     for item in items or []:
         text = str(item.get("text") or "").strip()
@@ -117,39 +114,6 @@ def timeline_from_dicts(items: list[dict[str, Any]] | None) -> list[TimelineSegm
         tokens = _tokens_from_dicts(item.get("tokens"))
         timeline.append(TimelineSegment(start=start, end=end, text=text, tokens=tokens))
     return sorted(timeline, key=lambda segment: (segment.start, segment.end))
-
-
-def timeline_to_html(timeline: list[TimelineSegment], position_seconds: float | None = None) -> str:
-    """把时间轴渲染为详情页可高亮的 HTML。"""
-    active_sentence = _active_sentence_index(timeline, position_seconds)
-    active_token = _active_token_index(timeline[active_sentence], position_seconds) if active_sentence is not None else None
-    blocks = []
-    for index, segment in enumerate(timeline):
-        anchor = '<a name="timeline-current"></a>' if index == active_sentence else ""
-        sentence_class = "timeline-sentence active" if index == active_sentence else "timeline-sentence"
-        text_html = _segment_text_html(segment, active_token if index == active_sentence else None)
-        blocks.append(
-            (
-                f"<tr class=\"{sentence_class}\">"
-                f"<td class=\"timeline-time\">{anchor}{escape(format_display_time(segment.start))} - "
-                f"{escape(format_display_time(segment.end))}</td>"
-                f"<td class=\"timeline-content\">{text_html}</td>"
-                "</tr>"
-            )
-        )
-    return (
-        "<html><head><style>"
-        "body{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:14px;color:#111827;margin:0;}"
-        ".timeline-table{border-collapse:separate;border-spacing:0 3px;width:100%;}"
-        ".timeline-sentence td{padding:8px 10px;line-height:1.65;vertical-align:top;}"
-        ".timeline-sentence.active td{background:#eef4ff;}"
-        ".timeline-time{color:#6b7280;width:138px;padding-right:28px;white-space:nowrap;}"
-        ".timeline-content{color:#111827;}"
-        ".timeline-token{border-radius:4px;padding:1px 2px;background:#bfdbfe;color:#0f172a;}"
-        "</style></head><body><table class=\"timeline-table\">"
-        + "".join(blocks)
-        + "</table></body></html>"
-    )
 
 
 def format_display_time(seconds: float) -> str:
@@ -227,12 +191,178 @@ def _normalize_timeline_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _tokens_text(tokens: list[TimelineToken]) -> str:
+    return _normalize_timeline_text("".join(token.text for token in tokens))
+
+
+def _token_word_count(token: TimelineToken) -> int:
+    text = token.text or ""
+    english_spans = list(_ENGLISH_WORD_PATTERN.finditer(text))
+    count = len(english_spans) + len(_CJK_CHAR_PATTERN.findall(text))
+    stripped = text.strip()
+    if count == 0 and stripped and not _STRONG_END_PATTERN.fullmatch(stripped) and not _WEAK_SPLIT_PATTERN.fullmatch(stripped):
+        return 1
+    return count
+
+
+def _tokens_word_count(tokens: list[TimelineToken]) -> int:
+    return sum(_token_word_count(token) for token in tokens)
+
+
+def _ends_sentence(text: str) -> bool:
+    stripped = (text or "").rstrip()
+    while stripped and stripped[-1] in _CLOSING_SENTENCE_MARKS:
+        stripped = stripped[:-1].rstrip()
+    return bool(stripped and _STRONG_END_PATTERN.search(stripped[-1]))
+
+
+def _split_token_at_sentence_boundaries(token: TimelineToken) -> list[TimelineToken]:
+    text = str(token.text or "")
+    if not text or not _STRONG_END_PATTERN.search(text):
+        return [token]
+
+    boundaries: list[int] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if not _STRONG_END_PATTERN.fullmatch(char):
+            index += 1
+            continue
+        split_at = index + 1
+        while split_at < length and text[split_at] in _CLOSING_SENTENCE_MARKS:
+            split_at += 1
+        if split_at < length:
+            boundaries.append(split_at)
+        index = split_at
+
+    if not boundaries:
+        return [token]
+
+    parts: list[str] = []
+    start_index = 0
+    for boundary in boundaries:
+        part = text[start_index:boundary]
+        if part:
+            parts.append(part)
+        start_index = boundary
+    tail = text[start_index:]
+    if tail:
+        parts.append(tail)
+
+    if len(parts) <= 1:
+        return [token]
+
+    duration = max(0.0, token.end - token.start)
+    total_units = max(1, sum(len(part) for part in parts))
+    pieces: list[TimelineToken] = []
+    elapsed_units = 0
+    for part in parts:
+        piece_start = token.start + duration * (elapsed_units / total_units)
+        elapsed_units += len(part)
+        piece_end = token.start + duration * (elapsed_units / total_units)
+        pieces.append(TimelineToken(start=piece_start, end=piece_end, text=part))
+    return pieces
+
+
+def _split_tokens_by_word_limit(tokens: list[TimelineToken], max_words: int) -> list[list[TimelineToken]]:
+    if _tokens_word_count(tokens) <= max_words:
+        return [tokens]
+
+    split_index = _weak_split_index_near_middle(tokens, max_words)
+    if split_index is None:
+        split_index = _hard_split_index(tokens, max_words)
+    if split_index <= 0 or split_index >= len(tokens):
+        return [tokens]
+
+    return (
+        _split_tokens_by_word_limit(tokens[:split_index], max_words)
+        + _split_tokens_by_word_limit(tokens[split_index:], max_words)
+    )
+
+
+def _weak_split_index_near_middle(tokens: list[TimelineToken], max_words: int) -> int | None:
+    total = _tokens_word_count(tokens)
+    if total <= max_words:
+        return None
+    target = total / 2
+    best: tuple[float, int] | None = None
+    running = 0
+    for index, token in enumerate(tokens):
+        running += _token_word_count(token)
+        if not _WEAK_SPLIT_PATTERN.search(token.text or ""):
+            continue
+        left_count = running
+        right_count = total - running
+        if left_count <= 0 or right_count <= 0:
+            continue
+        score = abs(left_count - target)
+        if left_count <= max_words or right_count <= max_words:
+            score -= 0.25
+        candidate = (score, index + 1)
+        if best is None or candidate < best:
+            best = candidate
+    return best[1] if best else None
+
+
+def _hard_split_index(tokens: list[TimelineToken], max_words: int) -> int:
+    running = 0
+    for index, token in enumerate(tokens):
+        running += _token_word_count(token)
+        if running >= max_words:
+            return max(1, index + 1)
+    return max(1, len(tokens) // 2)
+
+
+def _merge_short_sentences(sentences: list[list[TimelineToken]], min_words: int) -> list[list[TimelineToken]]:
+    merged: list[list[TimelineToken]] = []
+    index = 0
+    while index < len(sentences):
+        current = list(sentences[index])
+        if _tokens_word_count(current) < min_words and index + 1 < len(sentences):
+            current = _join_token_groups(current, sentences[index + 1])
+            index += 2
+        else:
+            index += 1
+        if _tokens_word_count(current) < min_words and merged:
+            merged[-1] = _join_token_groups(merged[-1], current)
+        else:
+            merged.append(current)
+    return [tokens for tokens in merged if _tokens_text(tokens)]
+
+
+def _join_token_groups(left: list[TimelineToken], right: list[TimelineToken]) -> list[TimelineToken]:
+    if not left:
+        return list(right)
+    if not right:
+        return list(left)
+    joined = list(left)
+    previous = joined[-1].text or ""
+    next_text = right[0].text or ""
+    if previous and next_text and not previous[-1].isspace() and not next_text[0].isspace():
+        boundary = max(joined[-1].end, right[0].start)
+        joined.append(TimelineToken(start=boundary, end=boundary, text=" "))
+    joined.extend(right)
+    return joined
+
+
+def _tokens_to_segment(tokens: list[TimelineToken]) -> TimelineSegment:
+    clean_tokens = _clean_tokens(tokens)
+    visible = [token for token in clean_tokens if token.text.strip()]
+    start = visible[0].start if visible else (clean_tokens[0].start if clean_tokens else 0.0)
+    end = max((token.end for token in clean_tokens), default=start)
+    return TimelineSegment(start=start, end=end, text=_tokens_text(clean_tokens), tokens=clean_tokens)
+
+
 def _clean_tokens(tokens: list[TimelineToken]) -> list[TimelineToken]:
     clean: list[TimelineToken] = []
     for token in tokens:
         text = str(token.text or "")
-        if not text.strip() and text != " ":
-            continue
+        if not text.strip():
+            if text:
+                text = " "
+            else:
+                continue
         end = max(token.start, token.end)
         clean.append(TimelineToken(start=max(0.0, token.start), end=end, text=text))
     return clean
@@ -254,41 +384,3 @@ def _tokens_from_dicts(items: Any) -> list[TimelineToken]:
             end = start
         tokens.append(TimelineToken(start=start, end=end, text=text))
     return tokens
-
-
-def _active_sentence_index(timeline: list[TimelineSegment], position_seconds: float | None) -> int | None:
-    if position_seconds is None:
-        return None
-    position = max(0.0, float(position_seconds))
-    for index, segment in enumerate(timeline):
-        if segment.start <= position <= max(segment.start, segment.end):
-            return index
-    for index, segment in enumerate(timeline):
-        if position < segment.start:
-            return max(0, index - 1)
-    return len(timeline) - 1 if timeline else None
-
-
-def _active_token_index(segment: TimelineSegment, position_seconds: float | None) -> int | None:
-    if position_seconds is None:
-        return None
-    position = max(0.0, float(position_seconds))
-    tokens = _clean_tokens(segment.tokens)
-    for index, token in enumerate(tokens):
-        if token.start <= position <= max(token.start, token.end):
-            return index
-    return None
-
-
-def _segment_text_html(segment: TimelineSegment, active_token: int | None) -> str:
-    tokens = _clean_tokens(segment.tokens)
-    if not tokens:
-        return escape(segment.text)
-    parts: list[str] = []
-    for index, token in enumerate(tokens):
-        text = escape(token.text)
-        if index == active_token:
-            parts.append(f"<span class=\"timeline-token\">{text}</span>")
-        else:
-            parts.append(text)
-    return "".join(parts)

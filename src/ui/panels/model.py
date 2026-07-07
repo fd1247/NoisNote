@@ -18,11 +18,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..app.config import save_config
-from ..utils.logging import log_event
-from .widgets.dialogs import alert_without_icon, confirm_without_icon
-from ..model_registry.downloader import ModelDownloadManager
-from ..model_registry.service import (
+from ...app.config import save_config
+from ...utils.logging import log_event
+from ..widgets.dialogs import alert_without_icon, confirm_without_icon
+from ...model_registry.downloader import ModelDownloadManager
+from ...model_registry.service import (
     DownloadTaskState,
     LocalModelInfo,
     ModelCatalogEntry,

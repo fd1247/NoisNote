@@ -21,11 +21,11 @@ from src.app.config import (
 )
 from src.app.main_window import MainWindow
 from src.asr.engine import TranscriptionEngine
-from src.asr.timestamps import alignment_items_to_timeline, timeline_from_dicts, timeline_to_dicts, timeline_to_html
+from src.asr.timestamps import alignment_items_to_timeline, timeline_from_dicts, timeline_to_dicts
 from src.history.service import HistoryService
 from src.model_registry.downloader import ModelDownloadManager
 from src.model_registry.service import ModelService
-from src.ui.settings import SettingsPanel
+from src.ui.pages.settings import SettingsPanel
 
 
 def make_config(root: Path) -> dict:
@@ -85,10 +85,90 @@ def test_alignment_items_are_grouped_into_sentence_timeline() -> None:
     timeline = alignment_items_to_timeline(items)
 
     assert [(item.start, item.end, item.text) for item in timeline] == [
-        (0.0, 0.2, "你好。"),
-        (0.3, 1.1, "NoisNote ready?"),
+        (0.0, 1.1, "你好。 NoisNote ready?"),
     ]
-    assert [token.text for token in timeline[0].tokens] == ["你", "好", "。"]
+    assert [token.text for token in timeline[0].tokens[:3]] == ["你", "好", "。"]
+    assert [token.text for token in timeline[0].tokens[-3:]] == [" ", "ready", "?"]
+
+
+def test_alignment_items_split_long_sentence_at_middle_weak_punctuation() -> None:
+    words = "one two three, four five six, seven eight.".split(" ")
+    items = [
+        SimpleNamespace(
+            text=word + (" " if index < len(words) - 1 else ""),
+            start_time=float(index),
+            end_time=float(index) + 0.5,
+        )
+        for index, word in enumerate(words)
+    ]
+
+    timeline = alignment_items_to_timeline(items, max_words=4, min_words=1)
+
+    assert [item.text for item in timeline] == [
+        "one two three,",
+        "four five six,",
+        "seven eight.",
+    ]
+    assert all(len(item.tokens) <= 4 for item in timeline)
+
+
+def test_alignment_items_merge_short_sentence_into_next_sentence() -> None:
+    tokens = ["OK", ".", "Good", " ", "enough", " ", "now", "."]
+    items = [
+        SimpleNamespace(text=text, start_time=index / 10, end_time=(index + 1) / 10)
+        for index, text in enumerate(tokens)
+    ]
+
+    timeline = alignment_items_to_timeline(items, min_words=3)
+
+    assert [item.text for item in timeline] == ["OK. Good enough now."]
+    assert timeline[0].start == 0.0
+    assert timeline[0].end == 0.8
+
+
+def test_alignment_items_move_opening_book_mark_after_sentence_end_to_next_sentence() -> None:
+    items = [
+        SimpleNamespace(text="都妈成大女主偶像了。《", start_time=0.0, end_time=1.0),
+        SimpleNamespace(text="四渡", start_time=1.0, end_time=1.5),
+        SimpleNamespace(text="》", start_time=1.5, end_time=1.6),
+        SimpleNamespace(text="作为一部七线里片。", start_time=1.6, end_time=2.5),
+    ]
+
+    timeline = alignment_items_to_timeline(items, min_words=1)
+
+    assert [item.text for item in timeline] == [
+        "都妈成大女主偶像了。",
+        "《四渡》作为一部七线里片。",
+    ]
+    assert timeline[1].tokens[0].text == "《"
+
+
+def test_alignment_items_count_chinese_by_character_when_splitting_long_sentence() -> None:
+    text = "\u4e00\u4e8c\u4e09\uff0c\u56db\u4e94\u516d\uff0c\u4e03\u516b\u4e5d\u3002"
+    items = [
+        SimpleNamespace(text=char, start_time=index / 10, end_time=(index + 1) / 10)
+        for index, char in enumerate(text)
+    ]
+
+    timeline = alignment_items_to_timeline(items, max_words=3, min_words=1)
+
+    assert [item.text for item in timeline] == [
+        "\u4e00\u4e8c\u4e09\uff0c",
+        "\u56db\u4e94\u516d\uff0c",
+        "\u4e03\u516b\u4e5d\u3002",
+    ]
+
+
+def test_alignment_items_treat_blank_line_as_sentence_boundary_but_single_newline_as_space() -> None:
+    tokens = ["first", "\n", "line", ".", "\n\n", "second", " ", "part", "."]
+    items = [
+        SimpleNamespace(text=text, start_time=index / 10, end_time=(index + 1) / 10)
+        for index, text in enumerate(tokens)
+    ]
+
+    timeline = alignment_items_to_timeline(items, min_words=1)
+
+    assert [item.text for item in timeline] == ["first line.", "second part."]
 
 
 def test_timeline_dicts_preserve_tokens_and_html_highlights_active_token() -> None:
@@ -108,23 +188,16 @@ def test_timeline_dicts_preserve_tokens_and_html_highlights_active_token() -> No
     )
 
     payload = timeline_to_dicts(timeline)
-    html = timeline_to_html(timeline, 0.5)
 
     assert payload[0]["tokens"][1]["text"] == "好"
-    assert "timeline-sentence active" in html
-    assert "timeline-table" in html
-    assert "padding-right:28px" in html
-    assert '<a name="timeline-current"></a>' in html
-    assert '<span class="timeline-token">好</span>' in html
 
 
-def test_timeline_html_highlights_sentence_without_tokens() -> None:
+def test_timeline_dicts_keep_sentence_without_tokens_for_runtime_fallback() -> None:
     timeline = timeline_from_dicts([{"start": 0.0, "end": 1.0, "text": "hello"}])
 
-    html = timeline_to_html(timeline, 0.5)
+    payload = timeline_to_dicts(timeline)
 
-    assert "timeline-sentence active" in html
-    assert '<span class="timeline-token">' not in html
+    assert payload == [{"start": 0.0, "end": 1.0, "text": "hello"}]
 
 
 def test_settings_asr_dropdown_excludes_downloaded_aligner(tmp_path: Path) -> None:
@@ -210,7 +283,9 @@ def test_history_timeline_export_and_clear_generated_results(tmp_path: Path) -> 
 
     assert record.has_timeline
     assert "00:00:00,000 --> 00:00:01,200" in srt_path.read_text(encoding="utf-8")
+    assert markdown_path == record.record_dir / "summary.md"
     assert markdown_path.read_text(encoding="utf-8") == "# summary"
+    assert not (record.record_dir / "export.md").exists()
 
     cleared = service.clear_generated_results(record)
     assert not cleared.timeline_path.exists()

@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..app.config import get_notebooks, save_config
 from ..history.service import HistoryService
 from ..model_registry.service import ModelService
-from ..ui.settings_dialog import SettingsDialog
+from ..ui.dialogs.settings import SettingsDialog
 
 
 class SettingsHandlers:

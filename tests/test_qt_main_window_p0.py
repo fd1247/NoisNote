@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton
 from PySide6.QtWidgets import QDialog
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
@@ -20,8 +20,7 @@ from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.history.service import HistoryService, HistoryStatus
 from src.history.types import format_size
 from src.app.main_window import MainWindow
-from src.ui.content import PlaybackRateCombo, SeekSlider
-from src.ui.detail_models import build_metadata_fields
+from src.ui.pages.content import PlaybackRateCombo, SeekSlider
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -256,7 +255,13 @@ def test_detail_header_has_action_menu_and_metadata_button(monkeypatch, tmp_path
     window = make_window(monkeypatch, tmp_path)
     try:
         assert window.detail_more_button.toolTip() == "记录操作"
+        assert window.detail_more_button.text() == ""
+        assert not window.detail_more_button.icon().isNull()
+        assert isinstance(window.detail_metadata_button, QToolButton)
         assert window.detail_metadata_button.text() == "详细信息"
+        assert not window.detail_metadata_button.icon().isNull()
+        assert window.detail_metadata_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        assert window.detail_metadata_button.layoutDirection() == Qt.LayoutDirection.RightToLeft
         assert [action.text() for action in window.detail_action_menu.actions()] == [
             "转录",
             "生成总结",
@@ -373,35 +378,98 @@ def test_detail_action_menu_summary_enabled_for_transcript_without_summary(monke
         app.processEvents()
 
 
-def test_show_metadata_details_uses_current_record_fields(monkeypatch, tmp_path: Path) -> None:
+def test_show_metadata_details_toggles_inline_panel_and_scroll_state(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
-    captured: dict[str, object] = {}
-
-    class FakeMetadataDialog:
-        def __init__(self, parent, fields):
-            captured["parent"] = parent
-            captured["fields"] = fields
-
-        def exec(self):
-            captured["exec_called"] = True
-            return QDialog.DialogCode.Accepted
-
     try:
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "meeting" / "audio.wav")
         record = service.scan()[0]
         window.history_service = service
         window._load_history_record(record)
-        monkeypatch.setattr("src.app.main_window.DetailMetadataDialog", FakeMetadataDialog)
+
+        assert not window.detail_header.isHidden()
+        assert window.detail_metadata_panel.isHidden()
+
+        window._on_detail_web_command({"command": "scrollState", "atTop": False})
+
+        assert window.detail_header.isHidden()
+
+        window._on_detail_web_command({"command": "scrollState", "atTop": True})
+
+        assert not window.detail_header.isHidden()
 
         window.show_metadata_details()
 
-        expected_labels = [field["label"] for field in build_metadata_fields(window.current_record)]
-        actual_labels = [field["label"] for field in captured["fields"]]
-        assert captured["parent"] == window
-        assert captured["exec_called"] is True
-        assert actual_labels == expected_labels
+        assert not window.detail_header.isHidden()
+        assert not window.detail_metadata_panel.isHidden()
+        assert window.detail_metadata_button.isChecked()
+        labels = [label.text() for label in window.detail_metadata_panel.findChildren(QLabel)]
+        assert "音频时长" in labels
+        assert "状态" in labels
+        metadata_status_values = [
+            label for label in window.detail_metadata_panel.findChildren(QLabel) if label.objectName() == "DetailStatusPill"
+        ]
+        assert len(metadata_status_values) == 1
+        assert metadata_status_values[0].sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+
+        window._on_detail_web_command({"command": "scrollState", "atTop": False})
+
+        assert window.detail_header.isHidden()
+        assert not window.detail_metadata_panel.isHidden()
+        assert window.detail_metadata_button.isChecked()
+
+        window._on_detail_web_command({"command": "scrollState", "atTop": True})
+
+        assert not window.detail_header.isHidden()
+        assert not window.detail_metadata_panel.isHidden()
+
+        window.show_metadata_details()
+
+        assert window.detail_metadata_panel.isHidden()
+        assert not window.detail_metadata_button.isChecked()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_video_link_opens_external_url(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    import src.app.main_window as main_window_module
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "QDesktopServices",
+        SimpleNamespace(openUrl=lambda url: opened.append(url.toString()) or True),
+        raising=False,
+    )
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "remote" / "audio.wav")
+        record = service.scan()[0]
+        record.metadata_path.write_text(
+            '{"source_kind":"remote_url","remote":{"webpage_url":"https://example.com/watch?v=demo"}}',
+            encoding="utf-8",
+        )
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+
+        window.show_metadata_details()
+
+        link_values = [
+            label
+            for label in window.detail_metadata_panel.findChildren(QLabel)
+            if label.objectName() == "DetailMetadataValue" and "https://example.com/watch?v=demo" in label.text()
+        ]
+        assert len(link_values) == 1
+        assert link_values[0].openExternalLinks() is False
+
+        link_values[0].linkActivated.emit("https://example.com/watch?v=demo")
+
+        assert opened == ["https://example.com/watch?v=demo"]
     finally:
         window.close()
         app.processEvents()
@@ -1112,6 +1180,45 @@ def test_export_markdown_without_summary_warns_before_choosing_directory(monkeyp
         app.processEvents()
 
 
+def test_export_markdown_copies_summary_md_without_record_export_file(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        export_dir = tmp_path / "exports"
+        export_dir.mkdir()
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_summary(record, "# Summary")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        monkeypatch.setattr(
+            "src.handlers.export.QFileDialog.getExistingDirectory",
+            lambda *args, **kwargs: str(export_dir),
+        )
+
+        window._export_result_with_format("markdown")
+
+        assert (export_dir / f"{record.display_name}.md").read_text(encoding="utf-8") == "# Summary"
+        assert not (record.record_dir / "export.md").exists()
+        assert record.summary_path == record.record_dir / "summary.md"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_legacy_export_markdown_entrypoint_is_removed(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert not hasattr(window, "export_markdown")
+        assert not hasattr(window.history_service, "save_markdown")
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_processing_notice_clicks_to_record_and_then_hides(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1280,7 +1387,7 @@ def test_retry_transcription_cancel_keeps_generated_files(monkeypatch, tmp_path:
         record = service.scan()[0]
         service.save_transcript(record, "旧转录")
         service.save_summary(record, "旧总结")
-        service.save_markdown(record, "旧导出")
+        record.markdown_path.write_text("旧导出", encoding="utf-8")
         record = service.scan()[0]
         window.history_service = service
         window.current_record = record
@@ -1342,7 +1449,7 @@ def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tm
         record = service.scan()[0]
         service.save_transcript(record, "旧转录")
         service.save_summary(record, "旧总结")
-        service.save_markdown(record, "旧导出")
+        record.markdown_path.write_text("旧导出", encoding="utf-8")
         record = service.scan()[0]
         window.history_service = service
         window.current_record = record
@@ -1684,6 +1791,236 @@ def test_detail_webview_receives_timeline_payload_when_tab_selected(monkeypatch,
         app.processEvents()
 
 
+def test_detail_tab_toolbar_has_copy_search_and_edit_toggle_buttons(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert isinstance(window.detail_copy_button, QToolButton)
+        assert isinstance(window.detail_search_button, QToolButton)
+        assert isinstance(window.detail_edit_toggle_button, QToolButton)
+        assert not window.detail_copy_button.icon().isNull()
+        assert not window.detail_search_button.icon().isNull()
+        assert not window.detail_edit_toggle_button.icon().isNull()
+        assert window.detail_edit_toggle_button.toolTip() == "编辑"
+        assert not window.detail_search_bar.isVisible()
+
+        window.detail_edit_toggle_button.click()
+
+        assert window.detail_edit_mode is True
+        assert window.detail_edit_toggle_button.toolTip() == "视图"
+        assert not window.detail_edit_toggle_button.icon().isNull()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_timeline_tab_enters_same_view_edit_mode_when_edit_mode_is_enabled(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_timeline(record, [{"start": 0, "end": 1, "text": "逐句时间轴内容"}])
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.detail_edit_mode = True
+
+        window._set_result_tab("timeline")
+
+        assert window.active_result_tab == "timeline"
+        assert window.detail_webview.is_edit_mode is True
+        assert window.detail_edit_toggle_button.isEnabled()
+        assert window.detail_edit_toggle_button.toolTip() == "视图"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_toolbar_copy_uses_active_tab_export_content(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        markdown = "# Summary\n\n- item"
+        service.save_transcript(record, "transcript body")
+        service.save_summary(record, markdown)
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window._set_result_tab("summary")
+        QApplication.clipboard().clear()
+
+        window.detail_copy_button.click()
+
+        assert QApplication.clipboard().text() == markdown
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_search_bar_counts_matches_and_navigates(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "alpha beta alpha")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+
+        assert window.detail_search_bar.isHidden()
+        window.detail_search_button.click()
+        assert not window.detail_search_bar.isHidden()
+        assert isinstance(window.detail_search_input, QLineEdit)
+
+        window.detail_search_input.setText("alpha")
+
+        assert window.detail_search_count_label.text() == "1 / 2"
+        window.detail_search_next_button.click()
+        assert window.detail_search_count_label.text() == "2 / 2"
+        window.detail_search_prev_button.click()
+        assert window.detail_search_count_label.text() == "1 / 2"
+        window.detail_search_clear_button.click()
+        assert window.detail_search_input.text() == ""
+        assert window.detail_search_count_label.text() == "0 / 0"
+
+        window.detail_search_button.click()
+        assert window.detail_search_bar.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_search_bar_counts_timeline_matches(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_timeline(record, [{"start": 0, "end": 1, "text": "alpha beta alpha"}])
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window._set_result_tab("timeline")
+
+        window.detail_search_button.click()
+        window.detail_search_input.setText("alpha")
+
+        assert window.detail_search_count_label.text() == "1 / 2"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_search_previous_button_uses_up_icon() -> None:
+    source = Path(__file__).resolve().parents[1] / "src" / "ui" / "pages" / "content.py"
+
+    assert '"向上.svg"' in source.read_text(encoding="utf-8")
+
+
+def test_detail_edit_content_changed_saves_active_summary(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_summary(record, "# Old")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window._set_result_tab("summary")
+        window.detail_edit_mode = True
+
+        window._on_detail_web_command(
+            {
+                "command": "contentChanged",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "mode": "summary",
+                "text": "# Edited\n\nBody",
+            }
+        )
+
+        assert record.summary_path.read_text(encoding="utf-8") == "# Edited\n\nBody"
+        assert window.summary_markdown_text == "# Edited\n\nBody"
+        assert window.detail_webview.current_payload["content"] == "# Edited\n\nBody"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_edit_content_changed_saves_transcript(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "old transcript")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.detail_edit_mode = True
+
+        window._on_detail_web_command(
+            {
+                "command": "contentChanged",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "mode": "transcript",
+                "text": "edited transcript",
+            }
+        )
+
+        assert record.transcript_path.read_text(encoding="utf-8") == "edited transcript"
+        assert window.transcript_plain_text == "edited transcript"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_edit_content_changed_saves_timeline(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_timeline(record, [{"start": 0, "end": 1, "text": "old timeline"}])
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window._set_result_tab("timeline")
+        window.detail_edit_mode = True
+
+        window._on_detail_web_command(
+            {
+                "command": "contentChanged",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "mode": "timeline",
+                "text": "00:00.000 - 00:01.000  edited timeline",
+                "timeline": [{"start": 0, "end": 1, "text": "edited timeline"}],
+            }
+        )
+
+        saved = service.read_timeline(record)
+        assert saved[0]["text"] == "edited timeline"
+        assert window.timeline_items[0]["text"] == "edited timeline"
+        assert window.detail_webview.current_payload["timeline"][0]["text"] == "edited timeline"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_detail_seek_command_calls_playback_seek(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1919,7 +2256,7 @@ def test_detail_status_rows_are_hidden_from_body(monkeypatch, tmp_path: Path) ->
 
 
 def test_detail_styles_remove_borders_and_thin_splitter() -> None:
-    from src.ui.styles import APP_STYLESHEET
+    from src.ui.core.styles import APP_STYLESHEET
 
     def style_block(selector: str) -> str:
         start = APP_STYLESHEET.index(f"{selector} {{")
@@ -2150,10 +2487,6 @@ def test_timeline_token_highlight_preserves_manual_scroll_within_same_sentence(m
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
-        def fail_timeline_render(*_args, **_kwargs) -> str:
-            raise AssertionError("playback highlight should not render hidden HTML")
-
-        monkeypatch.setattr("src.asr.timestamps.timeline_to_html", fail_timeline_render)
         items = [
             {
                 "start": float(index),
@@ -2224,10 +2557,6 @@ def test_hidden_timeline_is_not_refreshed_by_playback_stop(monkeypatch, tmp_path
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
-        def fail_timeline_render(*_args, **_kwargs) -> str:
-            raise AssertionError("hidden timeline should not render")
-
-        monkeypatch.setattr("src.asr.timestamps.timeline_to_html", fail_timeline_render)
         window.active_result_tab = "transcript"
         window.timeline_items = [{"start": 0.0, "end": 1.0, "text": "hidden"}]
         window.media_player = FakeMediaPlayer()
@@ -2304,6 +2633,12 @@ def test_playback_controls_seek_rate_and_toggle_with_fake_player(monkeypatch, tm
 
         window.set_playback_rate("1.5x")
         assert fake.rate == 1.5
+        window.set_playback_rate("0.75x")
+        assert fake.rate == 0.75
+        window.set_playback_rate("1.25x")
+        assert fake.rate == 1.25
+        window.set_playback_rate("3x")
+        assert fake.rate == 3.0
 
         window.toggle_playback()
         assert fake.source is not None
@@ -2381,8 +2716,20 @@ def test_playback_rate_control_is_left_of_cc_button(monkeypatch, tmp_path: Path)
         layout = window.playback_rate_combo.parentWidget().layout()
 
         assert transport_layout.spacing() == 6
+        assert window.detail_webview.parentWidget().layout().spacing() == 0
+        assert window.playback_widget.minimumHeight() == 70
+        assert window.playback_widget.maximumHeight() == 70
         assert layout.indexOf(window.playback_rate_combo) < layout.indexOf(window.playback_cc_button)
         assert layout.spacing() == 6
+        assert [window.playback_rate_combo.itemText(index) for index in range(window.playback_rate_combo.count())] == [
+            "0.5x",
+            "0.75x",
+            "1x",
+            "1.25x",
+            "1.5x",
+            "2x",
+            "3x",
+        ]
     finally:
         window.close()
         app.processEvents()
@@ -2392,7 +2739,7 @@ def test_playback_rate_combo_uses_positioned_menu() -> None:
     app = QApplication.instance() or QApplication([])
     combo = PlaybackRateCombo()
     try:
-        for value in ("0.5x", "1x", "1.5x", "2x"):
+        for value in ("0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x", "3x"):
             combo.addItem(value)
         combo.setCurrentText("1x")
         combo.resize(38, 28)
@@ -2407,7 +2754,7 @@ def test_playback_rate_combo_uses_positioned_menu() -> None:
         assert menu.objectName() == "PlayerRateMenu"
         assert menu.width() >= combo.popup_width
 
-        menu.actions()[2].trigger()
+        menu.actions()[4].trigger()
         assert combo.currentText() == "1.5x"
     finally:
         menu = getattr(combo, "_rate_menu", None)

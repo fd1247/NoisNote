@@ -13,21 +13,23 @@ def _app() -> QApplication:
 
 
 def test_import_detail_webview_module_succeeds() -> None:
-    import src.ui.detail_webview as detail_webview
+    import src.ui.detail.webview as detail_webview
 
     assert hasattr(detail_webview, "DetailWebBridge")
     assert hasattr(detail_webview, "DetailWebView")
 
 
 def test_detail_webview_uses_vnote_read_mode_zoom_factor() -> None:
-    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail_webview.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "webview.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert "_VNOTE_READ_MODE_ZOOM_FACTOR = 1.5" in source
+    assert "_VNOTE_READ_MODE_ZOOM_FACTOR = 1.1" in source
     assert "setZoomFactor(_VNOTE_READ_MODE_ZOOM_FACTOR)" in source
 
 
 def test_bridge_post_message_emits_dict_and_json_string() -> None:
-    from src.ui.detail_webview import DetailWebBridge
+    from src.ui.detail.webview import DetailWebBridge
 
     bridge = DetailWebBridge()
     received: list[dict] = []
@@ -43,14 +45,16 @@ def test_bridge_post_message_emits_dict_and_json_string() -> None:
 
 
 def test_bridge_webchannel_slot_accepts_json_string_protocol() -> None:
-    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail_webview.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "webview.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "@Slot(str)" in source
     assert "@Slot(object)" not in source
 
 
 def test_bridge_post_message_handles_malformed_input_without_raising() -> None:
-    from src.ui.detail_webview import DetailWebBridge
+    from src.ui.detail.webview import DetailWebBridge
 
     bridge = DetailWebBridge()
     received: list[dict] = []
@@ -64,7 +68,7 @@ def test_bridge_post_message_handles_malformed_input_without_raising() -> None:
 
 
 def test_local_webengine_page_allows_initial_file_navigation_without_legacy_enum() -> None:
-    from src.ui.detail_webview import _LocalOnlyWebEnginePage
+    from src.ui.detail.webview import _LocalOnlyWebEnginePage
 
     class FakePage:
         pass
@@ -89,7 +93,7 @@ def test_local_webengine_page_allows_initial_file_navigation_without_legacy_enum
 def test_detail_webview_fallback_instantiates_and_renders_current_markdown_content() -> None:
     _app()
 
-    from src.ui.detail_webview import DetailWebView
+    from src.ui.detail.webview import DetailWebView
 
     view = DetailWebView(command_callback=lambda _command: None)
     payload = {
@@ -120,7 +124,7 @@ def test_detail_webview_fallback_instantiates_and_renders_current_markdown_conte
 def test_detail_webview_fallback_loads_vnote_stylesheet() -> None:
     _app()
 
-    from src.ui.detail_webview import DetailWebView
+    from src.ui.detail.webview import DetailWebView
 
     view = DetailWebView(command_callback=lambda _command: None)
 
@@ -139,7 +143,7 @@ def test_detail_webview_fallback_loads_vnote_stylesheet() -> None:
 def test_detail_webview_fallback_shows_only_markdown_body_without_debug_fields() -> None:
     _app()
 
-    from src.ui.detail_webview import DetailWebView
+    from src.ui.detail.webview import DetailWebView
 
     view = DetailWebView(command_callback=lambda _command: None)
     payload = {
@@ -168,10 +172,33 @@ def test_detail_webview_fallback_shows_only_markdown_body_without_debug_fields()
         assert "<ol" in rendered_html
 
 
+def test_detail_webview_empty_markdown_renders_blank_body() -> None:
+    _app()
+
+    from src.ui.detail.webview import DetailWebView
+
+    view = DetailWebView(command_callback=lambda _command: None)
+    payload = {
+        "mode": "transcript",
+        "title": "Empty Body",
+        "content": "",
+        "timeline": [],
+        "playback": {"positionSeconds": 0.0, "isPlaying": False},
+    }
+
+    view.set_content(payload)
+
+    assert view.current_payload == payload
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
+        assert browser.toPlainText() == ""
+
+
 def test_detail_webview_fallback_playback_update_does_not_rerender_body() -> None:
     _app()
 
-    from src.ui.detail_webview import DetailWebView
+    from src.ui.detail.webview import DetailWebView
 
     view = DetailWebView(command_callback=lambda _command: None)
     payload = {
@@ -195,10 +222,49 @@ def test_detail_webview_fallback_playback_update_does_not_rerender_body() -> Non
         assert view.current_playback == {"positionSeconds": 42.0, "isPlaying": True}
 
 
+def test_detail_webview_fallback_edit_mode_toggles_readonly() -> None:
+    _app()
+
+    from src.ui.detail.webview import DetailWebView
+
+    view = DetailWebView(command_callback=lambda _command: None)
+
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
+        assert browser.isReadOnly()
+
+        view.set_edit_mode(True)
+        assert not browser.isReadOnly()
+
+        view.set_edit_mode(False)
+        assert browser.isReadOnly()
+
+
+def test_detail_webview_fallback_edit_mode_shows_raw_markdown() -> None:
+    _app()
+
+    from src.ui.detail.webview import DetailWebView
+
+    view = DetailWebView(command_callback=lambda _command: None)
+    view.set_content({"mode": "summary", "content": "**Bold** text", "timeline": []})
+
+    if not view.is_webengine_available():
+        browser = view.findChild(QTextBrowser)
+        assert browser is not None
+        assert browser.toPlainText() == "Bold text"
+
+        view.set_edit_mode(True)
+        assert browser.toPlainText() == "**Bold** text"
+
+        view.set_edit_mode(False)
+        assert browser.toPlainText() == "Bold text"
+
+
 def test_detail_webview_fallback_renders_timeline_only_in_timeline_mode() -> None:
     _app()
 
-    from src.ui.detail_webview import DetailWebView
+    from src.ui.detail.webview import DetailWebView
 
     view = DetailWebView()
     payload = {
@@ -222,7 +288,7 @@ def test_detail_webview_fallback_renders_timeline_only_in_timeline_mode() -> Non
 def test_detail_webview_falls_back_when_webengine_setup_raises(monkeypatch) -> None:
     _app()
 
-    from src.ui.detail_webview import DetailWebView
+    from src.ui.detail.webview import DetailWebView
 
     def raise_setup(self, layout) -> None:  # noqa: ANN001
         self._web_view = object()
@@ -251,7 +317,7 @@ def test_detail_webview_falls_back_when_webengine_setup_raises(monkeypatch) -> N
 
 
 def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
-    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
 
     index = root / "index.html"
     css = root / "detail-viewer.css"
@@ -269,12 +335,22 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert "modeLabel" not in index_text
     assert "copyButton" not in index_text
     css_text = css.read_text(encoding="utf-8")
-    assert "timeline-row" in css_text
+    assert "timeline-entry" in css_text
+    assert "timeline-range" in css_text
+    assert "timeline-token" in css_text
+    assert "timeline-token.active" in css_text
     assert 'font-family: "YaHei Consolas Hybrid", "Noto Sans", "Helvetica Neue"' in css_text
     assert "color: #34495E;" in css_text
     assert "font-size: 2.2rem;" in css_text
     assert "#vx-content" in css_text
-    assert "padding: 30px 30px 40px;" in css_text
+    assert "padding: 10px 30px 40px;" in css_text
+    assert "padding: 0 0 12px;" in css_text
+    assert "font-size: 18px;" in css_text
+    assert "line-height: 1.5;" in css_text
+    assert "#timelinePanel span.vx-search-match" in css_text
+    assert "#timelinePanel span.vx-current-search-match" in css_text
+    assert "[hidden]" in css_text
+    assert ".timeline-list[hidden]" in css_text
     assert "width:100%;" in css_text
     assert "background-color: #f2f2f2;" in css_text
     assert "color: #e96900;" in css_text
@@ -293,13 +369,64 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert "markdownItTocDoneRight" in script
     assert '"vx-data-anchor-icon": "¶"' in script
     assert "$(\"vx-content\")" in script
+    assert 'mode === "timeline"' in script
+    assert "clearTimeline();" in script
+    assert 'return "";' in script
+    assert 'command: "scrollState"' in script
+    assert "window.addEventListener(\"scroll\"" in script
+    assert "document.addEventListener(\"wheel\"" in script
+    assert "emitScrollState(false, true)" in script
+    assert "wheelDelta < 0" in script
+    assert "emitScrollState(true, true)" in script
+    assert "setEditMode" in script
+    assert "editorPanel" in script
+    assert 'Boolean(state.editMode) && selected !== "timeline"' in script
+    assert '$("timelinePanel").hidden = selected !== "timeline";' in script
+    assert 'command: "contentChanged"' in script
+    assert "event.ctrlKey" in script
+    assert "canScrollDown" in script
+    assert "renderTimelineTokens" in script
+    assert "timeline-token" in script
+    assert "data-token-index" in script
+    assert "activeToken" in script
+    assert "currentViewportBottom" in script
+    assert "isBelowCurrentPage" in script
+    assert "scrollTimelinePage" in script
+    assert 'text.setAttribute("contenteditable", state.editMode ? "true" : "false");' in script
+    assert "emitTimelineChange" in script
+    assert "tokenizeTimelineText(text, item.start || 0, item.end || item.start || 0)" in script
+    assert "renderTimelineText(text, item)" in script
+    assert 'item.tokens = text ? [{ start: item.start || 0, end: item.end || item.start || 0, text: text }] : []' not in script
+    assert "timeline: state.payload.timeline" in script
+    assert 'state.editMode && selectedMode() !== "timeline"' in script
+    assert "setSearchState" in script
+    assert 'command: "searchChanged"' in script
+    assert "matchCount" in script
+    assert "goToSearchMatch" not in script
+    assert "vx-search-match" in script
+    assert "vx-current-search-match" in script
     markdown_text = markdown.read_text(encoding="utf-8")
     assert "markdown-it 14.1.0" in markdown_text
     assert "compatibility" not in markdown_text.lower()
 
 
+def test_detail_viewer_sanitizes_inline_styles_under_strict_csp() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
+    index_text = (root / "index.html").read_text(encoding="utf-8")
+    script = (root / "detail-viewer.js").read_text(encoding="utf-8")
+
+    assert "style-src 'self'" in index_text
+    assert "unsafe-inline" not in index_text
+    assert "function sanitizeRenderedHtml" in script
+    assert "template.innerHTML = html;" in script
+    assert 'template.content.querySelectorAll("style").forEach' in script
+    assert 'template.content.querySelectorAll("[style]").forEach' in script
+    assert 'node.removeAttribute("style");' in script
+    assert "return sanitizeRenderedHtml(html);" in script
+
+
 def test_detail_viewer_loads_vnote_markdown_plugins() -> None:
-    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
     index_text = (root / "index.html").read_text(encoding="utf-8")
 
     plugin_files = [
@@ -324,7 +451,7 @@ def test_detail_viewer_loads_vnote_markdown_plugins() -> None:
 
 
 def test_detail_viewer_timeline_rendering_uses_generation_token() -> None:
-    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
     script = (root / "detail-viewer.js").read_text(encoding="utf-8")
 
     assert "timelineRenderGeneration" in script
@@ -333,8 +460,43 @@ def test_detail_viewer_timeline_rendering_uses_generation_token() -> None:
     assert "generation !== state.timelineRenderGeneration" in script
 
 
+def test_detail_viewer_timeline_uses_token_seek_and_viewport_paging() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
+    script = (root / "detail-viewer.js").read_text(encoding="utf-8")
+
+    assert 'span.dataset.start = String(token.start' in script
+    assert 'command: "seek"' in script
+    assert "var seekSeconds = target && target.dataset" in script
+    assert "Number(target.dataset.start || current.dataset.start || 0)" in script
+    assert "seconds: seekSeconds" in script
+    assert "row.querySelectorAll(\".timeline-token.active\")" in script
+    assert "active.activeToken.classList.add(\"active\")" in script
+    assert "var scrollTarget = row;" in script
+    assert "isOutsideCurrentPage(scrollTarget)" in script
+    assert "isFullyVisible(scrollTarget)" in script
+    assert "timelineContentRect(row)" in script
+    assert "timelineTextLineRects(text)" in script
+    assert "range.getClientRects()" in script
+    assert "currentTimelineVisibleBottom()" in script
+    assert "TIMELINE_PAGE_TOLERANCE" in script
+    assert "var TIMELINE_PAGE_TOLERANCE = 2;" in script
+
+
+def test_detail_viewer_debounces_edit_save_commands() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
+    script = (root / "detail-viewer.js").read_text(encoding="utf-8")
+
+    assert "editSaveTimer" in script
+    assert "scheduleContentChanged" in script
+    assert "window.clearTimeout(state.editSaveTimer)" in script
+    assert "window.setTimeout" in script
+    assert "isAboveCurrentPage" in script
+    assert 'target.scrollIntoView({ block: "start", behavior: "smooth" })' in script
+    assert "window.setTimeout(function ()" not in script
+
+
 def test_detail_viewer_resets_active_timeline_cache_when_clearing_rows() -> None:
-    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "assets" / "detail_viewer"
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
     script = (root / "detail-viewer.js").read_text(encoding="utf-8")
 
     clear_start = script.index("function clearTimeline()")

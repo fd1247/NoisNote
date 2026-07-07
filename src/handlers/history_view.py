@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from ..app.config import get_notebooks, normalize_notebooks, save_config
 from ..history.service import HistoryRecord, HistoryStatus
 from ..history.types import format_size
-from ..ui.notebook_dialogs import ManageNotebooksDialog, NewNotebookDialog
+from ..ui.dialogs.notebook import ManageNotebooksDialog, NewNotebookDialog
 
 
 class HistoryViewHandlers:

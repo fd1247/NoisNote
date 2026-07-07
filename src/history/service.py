@@ -20,7 +20,7 @@ class HistoryService(HistoryStorageMixin):
     STORAGE_REFERENCE = "reference"
     FOLDER_AUDIO = "audio.wav"
     FOLDER_TRANSCRIPT = "transcript.txt"
-    FOLDER_SUMMARY = "summary.txt"
+    FOLDER_SUMMARY = "summary.md"
     FOLDER_MARKDOWN = "export.md"
     FOLDER_TIMELINE = "timeline.json"
     FOLDER_METADATA = "metadata.json"
@@ -514,13 +514,6 @@ class HistoryService(HistoryStorageMixin):
         self._write_folder_metadata(record.record_dir)
         return record.summary_path
 
-    def save_markdown(self, record: HistoryRecord, text: str) -> Path:
-        """保存 Markdown 导出文件。"""
-        record.markdown_path.parent.mkdir(parents=True, exist_ok=True)
-        record.markdown_path.write_text(text, encoding="utf-8")
-        self._write_folder_metadata(record.record_dir)
-        return record.markdown_path
-
     def read_timeline(self, record: HistoryRecord) -> list[dict[str, Any]]:
         """读取结构化时间轴，不存在时返回空列表。"""
         data = self._read_json(record.timeline_path)
@@ -550,7 +543,7 @@ class HistoryService(HistoryStorageMixin):
         summary = self.read_summary(record).strip()
         if not summary:
             raise ValueError("当前记录没有可导出的总结内容")
-        return self.save_markdown(record, summary)
+        return record.summary_path
 
     def export_timeline_srt(self, record: HistoryRecord) -> Path:
         """根据时间轴生成 SRT 字幕文件。"""

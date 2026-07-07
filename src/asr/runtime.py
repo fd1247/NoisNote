@@ -216,7 +216,7 @@ class Qwen3AsrGgufRuntime:
         config = None
         if self.config.tool_dir:
             config = {"qwen3_asr_gguf": {"tool_dir": str(self.config.tool_dir)}}
-        tool_dir = get_qwen3_asr_gguf_tool_dir(config)
+        tool_dir = get_qwen3_asr_gguf_tool_dir(config).resolve(strict=False)
         if not tool_dir.exists():
             raise Qwen3AsrGgufError(
                 "缺少 Qwen3-ASR GGUF 推理工具，请先完成应用运行环境配置。",

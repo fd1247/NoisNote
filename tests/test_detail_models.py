@@ -6,10 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 from src.history.types import HistoryRecord, HistoryStatus
-from src.ui.detail_models import (
+from src.ui.detail.models import (
     build_detail_payload,
     build_metadata_fields,
-    find_active_timeline_segment,
     normalize_timeline_items,
     parse_detail_command,
     timeline_display_text,
@@ -182,7 +181,7 @@ def test_metadata_fields_hide_local_source_path_as_remote_url(tmp_path: Path) ->
 
     fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
 
-    assert fields["视频链接"] == "--"
+    assert "视频链接" not in fields
 
 
 def test_metadata_fields_use_local_and_recording_labels_and_local_path_fallback(tmp_path: Path) -> None:
@@ -209,11 +208,6 @@ def test_timeline_active_segment_and_display_text() -> None:
         {"start": 2, "end": 3, "text": "world"},
     ]
 
-    assert find_active_timeline_segment(items, None) is None
-    assert find_active_timeline_segment(items, 0.5) == 0
-    assert find_active_timeline_segment(items, 1.5) == 0
-    assert find_active_timeline_segment(items, 2.5) == 1
-    assert find_active_timeline_segment(items, 9) == 1
     assert timeline_display_text(items) == "00:00.000 - 00:01.000  hello\n00:02.000 - 00:03.000  world"
 
 
@@ -233,10 +227,6 @@ def test_timeline_items_normalize_in_chronological_order() -> None:
         "00:02.000 - 00:03.000  second\n"
         "00:04.000 - 00:05.000  third"
     )
-    assert find_active_timeline_segment(items, 1.5) == 0
-    assert find_active_timeline_segment(items, 2.5) == 1
-    assert find_active_timeline_segment(items, float("nan")) is None
-    assert find_active_timeline_segment(items, float("inf")) is None
 
 
 def test_timeline_non_finite_values_normalize_to_displayable_text() -> None:
@@ -253,6 +243,14 @@ def test_timeline_non_finite_values_normalize_to_displayable_text() -> None:
     assert normalized[1]["start"] == 2.0
     assert normalized[1]["end"] == 2.0
     assert timeline_display_text(items) == "00:00.000 - 00:00.000  bad start\n00:02.000 - 00:02.000  bad end"
+
+
+def test_timeline_display_text_has_single_python_implementation() -> None:
+    root = Path(__file__).resolve().parents[1]
+    timeline_view_source = (root / "src" / "handlers" / "timeline_view.py").read_text(encoding="utf-8")
+
+    assert "timeline_display_text" in timeline_view_source
+    assert "def _timeline_items_display_text" not in timeline_view_source
 
 
 def test_timeline_token_times_normalize_to_finite_values() -> None:
@@ -296,6 +294,7 @@ def test_timeline_mixed_token_list_skips_invalid_entries() -> None:
 
     assert normalized[0]["tokens"] == [
         {"start": 0.1, "end": 0.2, "text": "valid"},
+        {"start": 0.2, "end": 0.3, "text": " "},
         {"start": 0.0, "end": 0.3, "text": "normalized"},
     ]
 
@@ -368,6 +367,93 @@ def test_parse_detail_command_accepts_current_seek() -> None:
     assert command is not None
     assert command.command == "seek"
     assert command.payload == {"seconds": 3.5, "segmentId": 7}
+
+
+def test_parse_detail_command_accepts_scroll_state() -> None:
+    command = parse_detail_command(
+        {"command": "scrollState", "atTop": False},
+        "record:1",
+        2,
+    )
+
+    assert command is not None
+    assert command.command == "scrollState"
+    assert command.payload == {"atTop": False}
+
+
+def test_parse_detail_command_accepts_search_changed_count_from_webview() -> None:
+    command = parse_detail_command(
+        {"command": "searchChanged", "recordKey": "record:1", "revision": 2, "matchCount": 3, "index": 1},
+        "record:1",
+        2,
+    )
+
+    assert command is not None
+    assert command.command == "searchChanged"
+    assert command.payload == {"matchCount": 3, "index": 1}
+    assert (
+        parse_detail_command(
+            {"command": "searchChanged", "recordKey": "record:0", "revision": 2, "matchCount": 3},
+            "record:1",
+            2,
+        )
+        is None
+    )
+
+
+def test_parse_detail_command_accepts_current_content_changed() -> None:
+    command = parse_detail_command(
+        {
+            "command": "contentChanged",
+            "recordKey": "record:1",
+            "revision": 2,
+            "mode": "summary",
+            "text": "# Edited\n\nBody",
+        },
+        "record:1",
+        2,
+    )
+
+    assert command is not None
+    assert command.command == "contentChanged"
+    assert command.payload == {"mode": "summary", "text": "# Edited\n\nBody"}
+    assert (
+        parse_detail_command(
+            {
+                "command": "contentChanged",
+                "recordKey": "record:0",
+                "revision": 2,
+                "mode": "summary",
+                "text": "stale",
+            },
+            "record:1",
+            2,
+        )
+        is None
+    )
+
+
+def test_parse_detail_command_accepts_current_timeline_content_changed() -> None:
+    command = parse_detail_command(
+        {
+            "command": "contentChanged",
+            "recordKey": "record:1",
+            "revision": 2,
+            "mode": "timeline",
+            "text": "00:00.000 - 00:01.000  edited timeline",
+            "timeline": [{"start": 0, "end": 1, "text": "edited timeline"}],
+        },
+        "record:1",
+        2,
+    )
+
+    assert command is not None
+    assert command.command == "contentChanged"
+    assert command.payload == {
+        "mode": "timeline",
+        "text": "00:00.000 - 00:01.000  edited timeline",
+        "timeline": [{"start": 0, "end": 1, "text": "edited timeline"}],
+    }
 
 
 def test_parse_detail_command_rejects_unknown_copy_mode_and_accepts_known_mode() -> None:

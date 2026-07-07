@@ -72,20 +72,3 @@ class ExportHandlers:
         if format_type == "markdown" and not self.history_service.read_summary(record).strip():
             return "当前记录没有可导出的总结内容"
         return ""
-
-    def export_markdown(self) -> None:
-        if not self.current_record:
-            self._show_error("请先选择或生成一条录音")
-            return
-
-        transcript = self.transcript_text.toPlainText().strip() or "（无转录文字）"
-        summary = self.summary_markdown_text.strip() or "（无总结）"
-        content = (
-            f"# 录音记录 - {self.current_record.display_name}\n\n"
-            f"## 转录文字\n\n{transcript}\n\n"
-            f"## 总结\n\n{summary}\n"
-        )
-        markdown_file = self.history_service.save_markdown(self.current_record, content)
-        self.current_record = self.history_service.refresh_metadata(self.current_record)
-        self._set_status(f"已导出：{markdown_file.name}")
-        self.load_recordings()

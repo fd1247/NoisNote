@@ -8,6 +8,10 @@ body {
     font-size: 16px;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 h1, h2, h3, h4, h5, h6 {
     color: #34495e;
     font-weight: bold;
@@ -268,19 +272,21 @@ div.vx-plantuml-graph {
     display: none;
 }
 
-#vx-content span.vx-search-match {
+#vx-content span.vx-search-match,
+#timelinePanel span.vx-search-match {
     color: #222222;
     background-color: #4db6ac;
 }
 
-#vx-content span.vx-current-search-match {
+#vx-content span.vx-current-search-match,
+#timelinePanel span.vx-current-search-match {
     color: #222222;
     background-color: #66bb6a;
 }
 
 #vx-content {
     margin: 0 auto;
-    padding: 30px 30px 40px;
+    padding: 10px 30px 40px;
 }
 
 /* 宽度设定 */
@@ -293,7 +299,7 @@ div.vx-plantuml-graph {
 @media screen and (max-width: 768px) {
     #vx-content {
         max-width: 100%;
-        padding: 30px 15px 40px;
+        padding: 10px 15px 40px;
     }
 }
 
@@ -383,6 +389,34 @@ div.vx-plantuml-graph {
     padding: 0;
 }
 
+.markdown-editor {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    min-height: calc(100vh - 20px);
+    margin: 0;
+    padding: 10px 30px 40px;
+    border: 0;
+    outline: none;
+    box-shadow: none;
+    resize: none;
+    background: #ffffff;
+    color: #34495E;
+    font-family: "YaHei Consolas Hybrid", "Noto Sans", "Helvetica Neue", "Segoe UI", Helvetica, Tahoma, Arial, Geneva, Georgia, Palatino, "Times New Roman", "Microsoft YaHei", "Microsoft YaHei UI", Dengxian, SimSun, "Apple Color Emoji", "Segoe UI Emoji";
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.markdown-editor:focus {
+    border: 0;
+    outline: none;
+    box-shadow: none;
+}
+
+.markdown-editor[hidden] {
+    display: none !important;
+}
+
 .state-panel {
     margin: 16px;
     padding: 16px 18px;
@@ -399,55 +433,76 @@ div.vx-plantuml-graph {
 }
 
 .timeline-list {
-    display: grid;
-    gap: 8px;
-    margin: 0;
-    padding: 16px;
+    display: block;
+    margin: 0 auto;
+    padding: 10px 30px 40px;
+    max-width: 1100px;
     list-style: none;
 }
 
-.timeline-row {
-    display: grid;
-    grid-template-columns: 116px 1fr;
-    gap: 14px;
-    padding: 10px 12px;
-    border: 1px solid #d9dee7;
-    border-radius: 6px;
-    background: #ffffff;
+.timeline-list[hidden] {
+    display: none !important;
+}
+
+.timeline-entry {
+    display: block;
+    padding: 0 0 12px;
+    border: 0;
+    background: transparent;
     cursor: pointer;
 }
 
-.timeline-row:hover {
-    background: #f7f9fb;
+.timeline-entry:hover .timeline-text {
+    color: #111827;
 }
 
-.timeline-row.active {
-    border-color: #72aee6;
-    background: #eef6ff;
+.timeline-entry.active .timeline-range {
+    color: #9ca3af;
 }
 
-.timeline-time {
-    color: #6b7280;
-    font-family: "YaHei Consolas Hybrid", Consolas, Monaco, "Andale Mono", Monospace, "Courier New";
-    font-size: 12px;
+.timeline-range {
+    display: block;
+    margin: 0 0 2px;
+    color: #b6bdc8;
+    font-size: 14px;
+    line-height: 20px;
     white-space: nowrap;
 }
 
 .timeline-text {
+    display: block;
     min-width: 0;
+    color: #222222;
+    font-size: 18px;
+    line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
+.timeline-token {
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.timeline-token.active {
+    background: #dbeafe;
+    color: #111827;
+}
+
 a:focus-visible,
-.timeline-row:focus-visible {
+.timeline-entry:focus-visible {
     outline: 2px solid #1976d2;
     outline-offset: 2px;
 }
 
 @media (max-width: 640px) {
-    .timeline-row {
-        grid-template-columns: 1fr;
-        gap: 4px;
+    .timeline-list {
+        max-width: 100%;
+        padding: 10px 15px 40px;
+    }
+
+    .timeline-text {
+        font-size: 16px;
+        line-height: 1.45;
     }
 }
 

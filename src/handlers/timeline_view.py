@@ -1,8 +1,8 @@
 """主窗口逐句时间轴视图逻辑。"""
 from __future__ import annotations
 
-from ..asr.timestamps import format_display_time
 from ..history.service import HistoryRecord
+from ..ui.detail.models import timeline_display_text
 
 
 class TimelineViewHandlers:
@@ -22,7 +22,6 @@ class TimelineViewHandlers:
         """释放长时间轴数据和 QTextDocument，避免后台高亮刷新拖慢切换。"""
         self.timeline_items = []
         self.timeline_loaded_record_id = ""
-        self._last_timeline_highlight_key = (None, None)
         self.timeline_text.clear()
         self.timeline_copy_button.hide()
         if self.active_result_tab == "timeline":
@@ -31,20 +30,11 @@ class TimelineViewHandlers:
     def _timeline_display_text(self, record: HistoryRecord) -> str:
         """把结构化时间轴格式化为详情页可读文本。"""
         items = self.timeline_items or self.history_service.read_timeline(record)
-        lines: list[str] = []
-        for item in items:
-            text = str(item.get("text") or "").strip()
-            if not text:
-                continue
-            start = _format_timeline_seconds(item.get("start", 0.0))
-            end = _format_timeline_seconds(item.get("end", 0.0))
-            lines.append(f"{start} - {end}  {text}")
-        return "\n".join(lines)
+        return timeline_display_text(items)
 
     def _set_timeline_items(self, items: list[dict]) -> None:
         self.timeline_items = items
-        self._last_timeline_highlight_key = (None, None)
-        display_text = _timeline_items_display_text(items)
+        display_text = timeline_display_text(items)
         self.timeline_text.setPlainText(display_text)
         self.timeline_copy_button.setVisible(bool(display_text.strip()) and self.active_result_tab == "timeline")
         if self.active_result_tab == "timeline":
@@ -69,7 +59,7 @@ class TimelineViewHandlers:
             {
                 "mode": "timeline",
                 "title": title,
-                "content": _timeline_items_display_text(items),
+                "content": timeline_display_text(items),
                 "timeline": items or [],
             }
         )
@@ -79,51 +69,3 @@ class TimelineViewHandlers:
         update_detail_playback = getattr(self, "_update_detail_playback", None)
         if callable(update_detail_playback):
             update_detail_playback(position_seconds)
-
-    def _timeline_highlight_key(self, position_seconds: float | None) -> tuple[int | None, int | None]:
-        if position_seconds is None:
-            return (None, None)
-        position = max(0.0, float(position_seconds))
-        for sentence_index, item in enumerate(self.timeline_items):
-            start = _safe_float(item.get("start", 0.0))
-            end = max(start, _safe_float(item.get("end", start)))
-            if not (start <= position <= end):
-                continue
-            tokens = item.get("tokens")
-            if isinstance(tokens, list):
-                for token_index, token in enumerate(tokens):
-                    if not isinstance(token, dict):
-                        continue
-                    token_start = _safe_float(token.get("start", start))
-                    token_end = max(token_start, _safe_float(token.get("end", token_start)))
-                    if token_start <= position <= token_end:
-                        return (sentence_index, token_index)
-            return (sentence_index, None)
-        return (None, None)
-
-
-def _format_timeline_seconds(value: object) -> str:
-    try:
-        seconds = max(0.0, float(value))
-    except (TypeError, ValueError):
-        seconds = 0.0
-    return format_display_time(seconds)
-
-
-def _timeline_items_display_text(items: list[dict]) -> str:
-    lines: list[str] = []
-    for item in items:
-        text = str(item.get("text") or "").strip()
-        if not text:
-            continue
-        start = _format_timeline_seconds(item.get("start", 0.0))
-        end = _format_timeline_seconds(item.get("end", 0.0))
-        lines.append(f"{start} - {end}  {text}")
-    return "\n".join(lines)
-
-
-def _safe_float(value: object) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
