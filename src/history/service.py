@@ -40,6 +40,13 @@ class HistoryService(HistoryStorageMixin):
         ]
         self.active_notebook_id = active_notebook_id
 
+    def get_record_by_key(self, record_key: str) -> HistoryRecord | None:
+        """按 notebook_id:record_id 查找历史记录。"""
+        for record in self.scan():
+            if record.record_key == record_key:
+                return record
+        return None
+
     @classmethod
     def from_notebooks(
         cls,

@@ -538,6 +538,17 @@ def _normalize_storage_paths(config: dict) -> tuple[dict, bool]:
     if output_dir and _is_transient_test_path(Path(str(output_dir))):
         audio["output_dir"] = str((data_root / "data").expanduser())
         changed = True
+
+    tasks = config.setdefault("tasks", {})
+    if "max_queue_size" not in tasks:
+        tasks["max_queue_size"] = 20
+        changed = True
+    if "max_remote_imports" not in tasks:
+        tasks["max_remote_imports"] = 2
+        changed = True
+    if "completed_keep_limit" not in tasks:
+        tasks["completed_keep_limit"] = 50
+        changed = True
     return config, changed
 
 
