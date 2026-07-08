@@ -41,6 +41,7 @@ from ..handlers.recording import RecordingHandlers
 from ..handlers.remote_import import RemoteImportHandlers
 from ..handlers.settings import SettingsHandlers
 from ..handlers.summary import SummaryHandlers
+from ..handlers.task_queue import TaskQueueHandlers
 from ..handlers.timeline_view import TimelineViewHandlers
 from ..handlers.transcription import TranscriptionHandlers
 from ..ui.widgets.dialogs import alert_without_icon, confirm_without_icon, prompt_text_without_icon
@@ -81,6 +82,7 @@ class MainWindow(
     TimelineViewHandlers,
     PlaybackHandlers,
     ExportHandlers,
+    TaskQueueHandlers,
     QMainWindow,
 ):
     """NoisNote主窗口。"""
@@ -97,6 +99,8 @@ class MainWindow(
         self.recorder: AudioRecorder | None = None
         self.current_record: HistoryRecord | None = None
         self.processing_record: HistoryRecord | None = None
+        self.task_manager = None
+        self.current_processing_task = None
         self.all_history_items: list[HistoryRecord] = []
         self.current_items: list[HistoryRecord] = []
         self.current_notebook_id = str(self.config.get("active_notebook_id") or "default")
@@ -160,6 +164,7 @@ class MainWindow(
         self.model_download_manager.models_changed.connect(self._refresh_settings_after_model_change)
         self._init_recorder()
         self.load_recordings()
+        self._init_task_queue()
         self._import_demo_audio_if_empty()
         self._restore_last_selected_record()
         self._set_status("")

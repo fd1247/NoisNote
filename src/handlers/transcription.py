@@ -151,6 +151,8 @@ class TranscriptionHandlers:
             self.start_summarization(text, record)
         else:
             self._finish_processing(record, "转录完成")
+            if getattr(self, "current_processing_task", None):
+                self._finish_queue_task_success("转录完成")
 
     def _on_transcription_failed(self, error: str, diagnostics: dict | None = None) -> None:
         record = self.processing_record
@@ -210,6 +212,9 @@ class TranscriptionHandlers:
             self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
         else:
             self._show_error("转录失败，请查看日志或尝试更换设备。")
+        if getattr(self, "current_processing_task", None):
+            pause_queue = self._is_systemic_transcription_error(error, diagnostics)
+            self._finish_queue_task_failed(error, pause_queue=pause_queue)
 
     def _transcription_failure_dialog_message(self, error: str, diagnostics: dict | None = None) -> str:
         error_type = str(((diagnostics or {}).get("error") or {}).get("error_type") or "")
@@ -239,6 +244,17 @@ class TranscriptionHandlers:
         if not value or any(marker in lowered for marker in empty_markers):
             return "未识别到有效语音内容"
         return value
+
+    def _is_systemic_transcription_error(self, error: str, diagnostics: dict | None = None) -> bool:
+        error_type = str(((diagnostics or {}).get("error") or {}).get("error_type") or "")
+        return error_type in {
+            "MissingModelDirectory",
+            "MissingModelFile",
+            "MissingGgufToolDir",
+            "MissingRuntimeDependency",
+            "InvalidModelName",
+            "InvalidAsrModel",
+        } or "模型未下载" in error or "运行时依赖" in error
 
     def retry_transcription(self) -> None:
         """重新转录当前历史记录中的录音文件。"""

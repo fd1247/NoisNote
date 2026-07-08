@@ -94,6 +94,8 @@ class SummaryHandlers:
             },
         )
         self._finish_processing(record, "总结完成")
+        if getattr(self, "current_processing_task", None):
+            self._finish_queue_task_success("总结完成")
 
     def _on_summary_failed(self, error: str) -> None:
         record = self.processing_record
@@ -137,6 +139,8 @@ class SummaryHandlers:
                 self._select_record_by_key(record.record_key)
                 self.summary_status.setText(display_message)
         self._show_error(display_message)
+        if getattr(self, "current_processing_task", None):
+            self._finish_queue_task_failed(display_message)
 
     def manual_summarize(self) -> None:
         if self.is_processing:

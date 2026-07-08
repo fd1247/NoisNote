@@ -68,6 +68,10 @@ def make_config(root: Path) -> dict:
             "catalog": copy.deepcopy(DEFAULT_MODEL_CATALOG),
             "downloaded": {},
         },
+        "tasks": {
+            "max_queue_size": 20,
+            "completed_keep_limit": 50,
+        },
     }
 
 
@@ -101,6 +105,9 @@ class FakeRecorder:
 
 def make_window(monkeypatch, tmp_path: Path, config: dict | None = None) -> MainWindow:
     config = config or make_config(tmp_path)
+    app_config_dir = tmp_path / "app-config"
+    monkeypatch.setattr("src.app.config.APP_CONFIG_DIR", app_config_dir, raising=False)
+    monkeypatch.setattr("src.app.config.CONFIG_DIR", app_config_dir, raising=False)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
     monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
@@ -504,6 +511,107 @@ def test_manual_video_preprocess_completion_continues_transcription(monkeypatch,
         window._on_audio_preprocess_completed(record, result, "manual", "已提取视频音轨")
 
         assert started == [result.normalized_audio_path]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_ready_record_enqueues_processing_when_auto_transcribe_enabled(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "ready.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.config["audio"]["auto_transcribe"] = True
+        started: list[str] = []
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: started.append(task.record_key))
+
+        window._handle_audio_record_ready(record, "已导入音频", source="import")
+
+        assert started == [record.record_key]
+        assert window.task_manager.snapshot().running[0].record_key == record.record_key
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_second_ready_record_waits_in_queue(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        first_source = tmp_path / "first.wav"
+        second_source = tmp_path / "second.wav"
+        write_wav(first_source)
+        write_wav(second_source)
+        first = window.history_service.adopt_audio_file(first_source)
+        second = window.history_service.adopt_audio_file(second_source)
+        window.config["audio"]["auto_transcribe"] = True
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+
+        window._handle_audio_record_ready(first, "已保存录音", source="recording")
+        window._handle_audio_record_ready(second, "已导入音频", source="import")
+
+        snapshot = window.task_manager.snapshot()
+        assert [task.record_key for task in snapshot.running] == [first.record_key]
+        assert [task.record_key for task in snapshot.queued] == [second.record_key]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_finish_queue_task_starts_next(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        first_source = tmp_path / "first.wav"
+        second_source = tmp_path / "second.wav"
+        write_wav(first_source)
+        write_wav(second_source)
+        first = window.history_service.adopt_audio_file(first_source)
+        second = window.history_service.adopt_audio_file(second_source)
+        window.config["audio"]["auto_transcribe"] = True
+        started: list[str] = []
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: started.append(task.record_key))
+
+        window.enqueue_record_processing(first, source="recording")
+        window.enqueue_record_processing(second, source="import")
+
+        window._finish_queue_task_success("转录完成")
+
+        assert started[-1] == second.record_key
+        assert window.task_manager.snapshot().running[0].record_key == second.record_key
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_ready_record_does_not_claim_queued_when_queue_is_full(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    config = make_config(tmp_path)
+    config["tasks"]["max_queue_size"] = 1
+    window = make_window(monkeypatch, tmp_path, config)
+    try:
+        first_source = tmp_path / "first.wav"
+        second_source = tmp_path / "second.wav"
+        third_source = tmp_path / "third.wav"
+        write_wav(first_source)
+        write_wav(second_source)
+        write_wav(third_source)
+        first = window.history_service.adopt_audio_file(first_source)
+        second = window.history_service.adopt_audio_file(second_source)
+        third = window.history_service.adopt_audio_file(third_source)
+        window.config["audio"]["auto_transcribe"] = True
+        errors: list[str] = []
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window, "_show_error", lambda message: errors.append(message) or window._set_status(message))
+
+        window.enqueue_record_processing(first, source="recording")
+        window.enqueue_record_processing(second, source="import")
+        window._handle_audio_record_ready(third, "已导入音频", source="import")
+
+        assert errors == ["队列已满，最多可排队 1 个任务"]
+        assert window.status_label.text() == "队列已满，最多可排队 1 个任务"
     finally:
         window.close()
         app.processEvents()

@@ -359,7 +359,9 @@ class ImportHandlers:
         self._select_record_by_key(record.record_key)
 
         if self.config["audio"].get("auto_transcribe", True):
-            self.start_transcription(record.audio_path, record, source=source)
+            task = self.enqueue_record_processing(record, source=source)
+            if task is not None:
+                self._set_status(f"{status}，已加入处理队列")
             return
 
         self.record_button.setText("开始录音")
