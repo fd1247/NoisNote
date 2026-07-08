@@ -255,6 +255,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "root_dir": str(DEFAULT_DATA_ROOT / "models"),
         "downloaded": {},
     },
+    "tasks": {
+        "max_queue_size": 20,
+        "max_remote_imports": 2,
+        "completed_keep_limit": 50,
+    },
 }
 
 
