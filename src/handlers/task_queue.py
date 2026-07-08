@@ -34,9 +34,9 @@ class TaskQueueHandlers:
         self._start_next_processing_task()
 
     def _task_queue_path(self) -> Path:
-        from ..app.config import APP_CONFIG_DIR
+        from ..app import config as app_config
 
-        return Path(APP_CONFIG_DIR) / "task_queue.json"
+        return Path(app_config.CONFIG_DIR) / "task_queue.json"
 
     def enqueue_record_processing(
         self,
@@ -60,7 +60,8 @@ class TaskQueueHandlers:
             self._show_error(str(exc))
             return None
         self._persist_queued_tasks()
-        self._start_next_processing_task()
+        if not getattr(self, "_closing_for_exit", False):
+            self._start_next_processing_task()
         return task
 
     def _start_next_processing_task(self) -> None:
@@ -122,6 +123,8 @@ class TaskQueueHandlers:
             worker.request_cancel()
             return
         if getattr(self, "processing_source", None) == "preprocess":
+            self._cancelled_processing_task_ids.add(task_id)
+        if running.stage is TaskStage.SUMMARIZING:
             self._cancelled_processing_task_ids.add(task_id)
         self.current_processing_task = None
         self.processing_record = None
@@ -320,6 +323,8 @@ class TaskQueueHandlers:
             worker = getattr(self, "transcription_worker", None)
             if worker is not None and hasattr(worker, "request_cancel"):
                 worker.request_cancel()
+            if stage is TaskStage.SUMMARIZING:
+                self._cancelled_processing_task_ids.add(running.task_id)
             self.task_manager.interrupt_running(running.task_id, "应用退出，任务已中断")
             if self.processing_record:
                 step, use_input_error = self._history_interruption_target(stage)

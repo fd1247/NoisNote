@@ -19,7 +19,6 @@ if sys.platform == "win32":
 else:
     CONFIG_DIR = Path.home() / ".config" / "NoisNote"
 
-APP_CONFIG_DIR = CONFIG_DIR
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # 默认用户数据根目录

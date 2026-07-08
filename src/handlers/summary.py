@@ -7,6 +7,7 @@ import time
 from ..utils.logging import log_event, record_context
 from ..history.service import HistoryRecord
 from ..llm.errors import summary_failure_code, summary_failure_message
+from ..tasks import TaskStage
 from ..ui.widgets.dialogs import confirm_without_icon
 from ..workers.summary import SummaryWorker
 
@@ -27,6 +28,12 @@ class SummaryHandlers:
             )
         task_id = self._new_task_id("summary")
         self.active_task_ids["summary"] = task_id
+        queue_task = self._queue_task_for_record(self.processing_record) if hasattr(self, "_queue_task_for_record") else None
+        queue_task_id = queue_task.task_id if queue_task is not None else ""
+        record_key = self.processing_record.record_key if self.processing_record is not None else ""
+        record_for_callback = self.processing_record
+        if queue_task is not None:
+            self.task_manager.mark_running(queue_task.task_id, TaskStage.SUMMARIZING, "正在总结")
         self.processing_started_at["summary"] = time.perf_counter()
         self.is_processing = True
         if not self.processing_source:
@@ -52,8 +59,25 @@ class SummaryHandlers:
         )
 
         worker = SummaryWorker(text, self.config, self)
-        worker.completed.connect(self._on_summary_completed)
-        worker.failed.connect(self._on_summary_failed)
+        self.summary_worker = worker
+        worker.completed.connect(
+            lambda summary, summary_task_id=task_id, task_id=queue_task_id, key=record_key, record=record_for_callback: self._on_summary_completed(
+                summary,
+                summary_task_id,
+                task_id,
+                key,
+                record,
+            )
+        )
+        worker.failed.connect(
+            lambda error, summary_task_id=task_id, task_id=queue_task_id, key=record_key, record=record_for_callback: self._on_summary_failed(
+                error,
+                summary_task_id,
+                task_id,
+                key,
+                record,
+            )
+        )
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
@@ -62,9 +86,18 @@ class SummaryHandlers:
         """把常见 LLM 错误映射到稳定错误码。"""
         return summary_failure_code(error)
 
-    def _on_summary_completed(self, summary: str) -> None:
-        record = self.processing_record
-        task_id = self.active_task_ids.pop("summary", "")
+    def _on_summary_completed(
+        self,
+        summary: str,
+        summary_task_id: str = "",
+        queue_task_id: str = "",
+        record_key: str = "",
+        callback_record: HistoryRecord | None = None,
+    ) -> None:
+        if not self._summary_callback_is_current(summary_task_id, queue_task_id, record_key):
+            return
+        record = callback_record or self.processing_record
+        task_id = self._pop_summary_task_id(summary_task_id)
         if self._is_current_record_processing():
             self._set_summary_text(summary)
             self.summary_status.setText("总结完成")
@@ -97,9 +130,18 @@ class SummaryHandlers:
         if getattr(self, "current_processing_task", None):
             self._finish_queue_task_success("总结完成")
 
-    def _on_summary_failed(self, error: str) -> None:
-        record = self.processing_record
-        task_id = self.active_task_ids.pop("summary", "")
+    def _on_summary_failed(
+        self,
+        error: str,
+        summary_task_id: str = "",
+        queue_task_id: str = "",
+        record_key: str = "",
+        callback_record: HistoryRecord | None = None,
+    ) -> None:
+        if not self._summary_callback_is_current(summary_task_id, queue_task_id, record_key):
+            return
+        record = callback_record or self.processing_record
+        task_id = self._pop_summary_task_id(summary_task_id)
         log_event(
             "summary.failed",
             level="ERROR",
@@ -143,6 +185,30 @@ class SummaryHandlers:
             self._finish_queue_task_failed(display_message)
         else:
             self._show_error(display_message)
+
+    def _summary_callback_is_current(self, summary_task_id: str, queue_task_id: str, record_key: str) -> bool:
+        if queue_task_id and self._consume_cancelled_processing_task(queue_task_id):
+            if summary_task_id and self.active_task_ids.get("summary", "") == summary_task_id:
+                self.active_task_ids.pop("summary", None)
+            return False
+        active_summary_task_id = self.active_task_ids.get("summary", "")
+        if summary_task_id and active_summary_task_id and active_summary_task_id != summary_task_id:
+            return False
+        if queue_task_id:
+            running = self.task_manager.running_process_task() if getattr(self, "task_manager", None) else None
+            if running is None or running.task_id != queue_task_id:
+                return False
+        if record_key:
+            record = self.processing_record
+            if record is None or record.record_key != record_key:
+                return False
+        return True
+
+    def _pop_summary_task_id(self, summary_task_id: str) -> str:
+        active_summary_task_id = self.active_task_ids.get("summary", "")
+        if summary_task_id and active_summary_task_id != summary_task_id:
+            return summary_task_id
+        return self.active_task_ids.pop("summary", "")
 
     def manual_summarize(self) -> None:
         if self.is_processing:

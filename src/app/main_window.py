@@ -101,6 +101,7 @@ class MainWindow(
         self.processing_record: HistoryRecord | None = None
         self.task_manager = None
         self.current_processing_task = None
+        self.summary_worker = None
         self.all_history_items: list[HistoryRecord] = []
         self.current_items: list[HistoryRecord] = []
         self.current_notebook_id = str(self.config.get("active_notebook_id") or "default")
@@ -108,6 +109,8 @@ class MainWindow(
         self.is_recording = False
         self.is_processing = False
         self.processing_source: str | None = None
+        self.active_remote_imports: dict[str, dict[str, object]] = {}
+        self._closing_for_exit = False
         self.previous_content_widget: QWidget | None = None
         self.processing_started_at: dict[str, float] = {}
         self.latest_transcription_percent: int | None = None
@@ -1146,8 +1149,6 @@ class MainWindow(
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.stop_playback()
-        if self.is_recording and self.recorder:
-            self.recorder.stop_recording()
         if self.model_download_manager.has_active_downloads():
             confirmed = confirm_without_icon(
                 self,
@@ -1159,7 +1160,9 @@ class MainWindow(
                 return
             self.model_download_manager.cancel_all_downloads()
         has_task_queue_work = bool(getattr(self, "task_manager", None) and self.task_manager.has_unfinished_tasks())
-        if has_task_queue_work or self.active_workers:
+        has_recording_work = bool(self.is_recording and self.recorder)
+        has_remote_import_work = bool(getattr(self, "active_remote_imports", {}))
+        if has_recording_work or has_remote_import_work or has_task_queue_work or self.active_workers:
             confirmed = confirm_without_icon(
                 self,
                 "后台任务仍在运行",
@@ -1168,6 +1171,12 @@ class MainWindow(
             if not confirmed:
                 event.ignore()
                 return
+            if has_recording_work:
+                self._closing_for_exit = True
+                try:
+                    self.stop_recording()
+                finally:
+                    self._closing_for_exit = False
             if hasattr(self, "prepare_task_queue_for_close"):
                 self.prepare_task_queue_for_close()
         if self.recorder:

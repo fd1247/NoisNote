@@ -25,15 +25,16 @@ class RemoteImportHandlers:
         self._start_remote_import(url)
 
     def _start_remote_import(self, url: str) -> None:
+        active_remote_imports = self._active_remote_imports()
+        if len(active_remote_imports) >= self._max_remote_imports():
+            self._show_error("远程导入任务已达上限，请等待当前任务完成后再试")
+            return
+
         task_id = self._new_task_id("remote")
-        self.active_task_ids["remote_import"] = task_id
+        active_remote_imports[task_id] = {"url": url, "record": None, "phase": "probe"}
         options = RemoteImportOptions(url=url)
         service = RemoteImportService(self.history_service, config=self.config)
-        self.is_processing = True
-        self.processing_record = None
-        self.processing_source = "remote_probe"
         self.recording_hint_label.setText("正在解析链接")
-        self._set_processing_ui(True)
         self._set_status("正在解析链接")
         log_event(
             "remote.probe.started",
@@ -43,18 +44,20 @@ class RemoteImportHandlers:
             context={"url": url},
         )
         worker = RemoteProbeWorker(self.history_service, url, self, service=service, config=self.config)
-        worker.progress.connect(self._on_remote_import_progress)
-        worker.completed.connect(lambda info, opts=options: self._on_remote_probe_completed(info, opts))
-        worker.failed.connect(self._on_remote_probe_failed)
+        active_remote_imports[task_id]["worker"] = worker
+        worker.progress.connect(lambda text, percent=None, task=task_id: self._on_remote_import_progress(text, percent, task))
+        worker.completed.connect(lambda info, opts=options, task=task_id: self._on_remote_probe_completed(info, opts, task))
+        worker.failed.connect(lambda error, task=task_id: self._on_remote_probe_failed(error, task))
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
 
-    def _on_remote_probe_completed(self, info: object, options: RemoteImportOptions) -> None:
-        task_id = self.active_task_ids.get("remote_import", "")
+    def _on_remote_probe_completed(self, info: object, options: RemoteImportOptions, task_id: str = "") -> None:
+        remote_task = self._remote_task(task_id)
         if not hasattr(info, "duration_seconds"):
             self._on_remote_probe_failed(
-                RemoteImportError(RemoteImportErrorKind.UNKNOWN, message_for_kind(RemoteImportErrorKind.UNKNOWN), "invalid probe result")
+                RemoteImportError(RemoteImportErrorKind.UNKNOWN, message_for_kind(RemoteImportErrorKind.UNKNOWN), "invalid probe result"),
+                task_id,
             )
             return
         log_event(
@@ -70,22 +73,22 @@ class RemoteImportHandlers:
         )
 
         if info.duration_seconds is None:
-            if not confirm_without_icon(self, "确认处理", "无法确认视频时长，是否继续处理"):
-                self._cancel_remote_import("已取消链接导入")
+            if not confirm_without_icon(self, "确认处理", "无法确认视频时长，是否继续处理?"):
+                self._cancel_remote_import("已取消链接导入", task_id)
                 return
         elif info.duration_seconds > options.max_duration_seconds:
-            if not confirm_without_icon(self, "确认处理", "视频超过2h，是否确认处理"):
-                self._cancel_remote_import("已取消链接导入")
+            if not confirm_without_icon(self, "确认处理", "视频超过2h，是否确认处理?"):
+                self._cancel_remote_import("已取消链接导入", task_id)
                 return
 
         try:
             service = RemoteImportService(self.history_service, config=self.config)
             record = self.history_service.create_remote_record(info)
+            if remote_task is not None:
+                remote_task["record"] = record
+                remote_task["phase"] = "import"
             self.current_record = record
-            self.processing_record = record
-            self.processing_source = "remote_import"
             self.recording_hint_label.setText("正在导入链接")
-            self._set_processing_ui(True)
             self.load_recordings()
             self._select_record_by_key(record.record_key)
             log_event(
@@ -97,18 +100,16 @@ class RemoteImportHandlers:
                 context={"record": record_context(record), "url": options.url, "extractor": info.extractor},
             )
             worker = RemoteImportWorker(self.history_service, record, info, options, self, service=service, config=self.config)
-            worker.progress.connect(self._on_remote_import_progress)
-            worker.completed.connect(self._on_remote_import_completed)
-            worker.failed.connect(self._on_remote_import_failed)
+            if remote_task is not None:
+                remote_task["worker"] = worker
+            worker.progress.connect(lambda text, percent=None, task=task_id: self._on_remote_import_progress(text, percent, task))
+            worker.completed.connect(lambda result, task=task_id: self._on_remote_import_completed(result, task))
+            worker.failed.connect(lambda error, task=task_id: self._on_remote_import_failed(error, task))
             worker.finished.connect(lambda: self._cleanup_worker(worker))
             self.active_workers.append(worker)
             worker.start()
         except Exception as exc:
-            self.active_task_ids.pop("remote_import", "")
-            self.is_processing = False
-            self.processing_record = None
-            self.processing_source = None
-            self._set_processing_ui(False)
+            self._active_remote_imports().pop(task_id, None)
             error = RemoteImportError(RemoteImportErrorKind.UNKNOWN, message_for_kind(RemoteImportErrorKind.UNKNOWN), str(exc))
             log_event(
                 "remote.import.start_failed",
@@ -123,8 +124,8 @@ class RemoteImportHandlers:
             self._show_error(_remote_error_text(error))
             self._set_status(error.message)
 
-    def _on_remote_probe_failed(self, error: object) -> None:
-        task_id = self.active_task_ids.pop("remote_import", "")
+    def _on_remote_probe_failed(self, error: object, task_id: str = "") -> None:
+        self._active_remote_imports().pop(task_id, None)
         if not isinstance(error, RemoteImportError):
             error = RemoteImportError(RemoteImportErrorKind.UNKNOWN, message_for_kind(RemoteImportErrorKind.UNKNOWN), str(error))
         log_event(
@@ -137,31 +138,25 @@ class RemoteImportHandlers:
             error_code="REM-000",
             error_type=error.kind.value,
         )
-        self.is_processing = False
-        self.processing_record = None
-        self.processing_source = None
         self.recording_hint_label.setText("链接解析失败")
-        self._set_processing_ui(False)
         self._show_error(_remote_error_text(error))
         self._set_status(error.message)
 
-    def _cancel_remote_import(self, status: str) -> None:
-        self.active_task_ids.pop("remote_import", "")
-        self.is_processing = False
-        self.processing_record = None
-        self.processing_source = None
+    def _cancel_remote_import(self, status: str, task_id: str = "") -> None:
+        self._active_remote_imports().pop(task_id, None)
         self.recording_hint_label.setText("准备捕获系统声音")
-        self._set_processing_ui(False)
         self._set_status(status)
 
-    def _on_remote_import_progress(self, text: str, percent: int | None = None) -> None:
+    def _on_remote_import_progress(self, text: str, percent: int | None = None, task_id: str = "") -> None:
+        if task_id and task_id not in self._active_remote_imports():
+            return
         self._set_status(text or "正在导入链接")
         self._refresh_history_status_indicators()
 
-    def _on_remote_import_completed(self, result: object) -> None:
-        record = getattr(result, "record", None)
+    def _on_remote_import_completed(self, result: object, task_id: str = "") -> None:
+        remote_task = self._active_remote_imports().pop(task_id, None)
+        record = getattr(result, "record", None) or (remote_task or {}).get("record")
         mode = getattr(result, "mode", "")
-        task_id = self.active_task_ids.pop("remote_import", "")
         log_event(
             "remote.import.completed",
             module="remote_import",
@@ -170,10 +165,6 @@ class RemoteImportHandlers:
             record_id=(record.record_id if record else None),
             context={"record": record_context(record), "mode": mode},
         )
-        self.is_processing = False
-        self.processing_record = None
-        self.processing_source = None
-        self._set_processing_ui(False)
         self.recording_hint_label.setText("链接导入完成")
         self.load_recordings()
         if record:
@@ -186,11 +177,11 @@ class RemoteImportHandlers:
             return
         self._set_status("已导入链接字幕" if mode == "subtitle" else "链接导入完成")
 
-    def _on_remote_import_failed(self, error: object) -> None:
-        task_id = self.active_task_ids.pop("remote_import", "")
+    def _on_remote_import_failed(self, error: object, task_id: str = "") -> None:
+        remote_task = self._active_remote_imports().pop(task_id, None)
         if not isinstance(error, RemoteImportError):
             error = RemoteImportError(RemoteImportErrorKind.UNKNOWN, message_for_kind(RemoteImportErrorKind.UNKNOWN), str(error))
-        record = self.processing_record
+        record = (remote_task or {}).get("record")
         log_event(
             "remote.import.failed",
             level="ERROR",
@@ -202,10 +193,6 @@ class RemoteImportHandlers:
             error_code="REM-001",
             error_type=error.kind.value,
         )
-        self.is_processing = False
-        self.processing_record = None
-        self.processing_source = None
-        self._set_processing_ui(False)
         self.recording_hint_label.setText("链接导入失败")
         if record:
             record = self.history_service.mark_input_error(record, error)
@@ -215,6 +202,23 @@ class RemoteImportHandlers:
                 self._select_record_by_key(record.record_key)
         self._show_error(_remote_error_text(error))
         self._set_status(error.message)
+
+    def _active_remote_imports(self) -> dict[str, dict[str, object]]:
+        if not hasattr(self, "active_remote_imports"):
+            self.active_remote_imports = {}
+        return self.active_remote_imports
+
+    def _remote_task(self, task_id: str) -> dict[str, object] | None:
+        if not task_id:
+            return None
+        return self._active_remote_imports().get(task_id)
+
+    def _max_remote_imports(self) -> int:
+        tasks_config = self.config.get("tasks", {})
+        try:
+            return max(1, int(tasks_config.get("max_remote_imports") or 2))
+        except (TypeError, ValueError):
+            return 2
 
 
 def _is_http_url(value: str) -> bool:

@@ -217,6 +217,116 @@ def test_recording_task_button_opens_dialog_without_switching_main_page(monkeypa
         app.processEvents()
 
 
+def test_close_cancel_keeps_active_recording_running(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    class FakeRecorder:
+        stopped = False
+
+        def stop_recording(self):
+            self.stopped = True
+            return str(tmp_path / "close.wav")
+
+        def cleanup(self):
+            return None
+
+    try:
+        recorder = FakeRecorder()
+        window.recorder = recorder
+        window.is_recording = True
+        window.active_task_ids["recording"] = "record-test"
+        prompts: list[str] = []
+        monkeypatch.setattr(
+            "src.app.main_window.confirm_without_icon",
+            lambda _parent, title, *_args, **_kwargs: prompts.append(title) or False,
+        )
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.ignored is True
+        assert event.accepted is False
+        assert recorder.stopped is False
+        assert window.is_recording is True
+        assert prompts
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_confirm_saves_active_recording_and_persists_queue(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    class FakeRecorder:
+        def __init__(self, output_file: Path) -> None:
+            self.output_file = output_file
+            self.stopped = False
+            self.cleaned = False
+
+        def get_device_name(self):
+            return "test device"
+
+        def capture_source_label(self):
+            return "系统声音"
+
+        def stop_recording(self):
+            self.stopped = True
+            return str(self.output_file)
+
+        def cleanup(self):
+            self.cleaned = True
+
+    try:
+        output_file = tmp_path / "close.wav"
+        write_wav(output_file)
+        recorder = FakeRecorder(output_file)
+        window.recorder = recorder
+        window.is_recording = True
+        window.active_task_ids["recording"] = "record-test"
+        window.config["audio"]["auto_transcribe"] = True
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+        saved: list[list[str]] = []
+        monkeypatch.setattr(window.task_queue_store, "save", lambda tasks: saved.append([task.record_key for task in tasks]))
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.accepted is True
+        assert event.ignored is False
+        assert recorder.stopped is True
+        assert recorder.cleaned is True
+        assert window.is_recording is False
+        assert len(window.history_service.scan()) == 1
+        assert saved
+        assert saved[-1]
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_import_entry_allowed_while_processing(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1971,6 +2081,70 @@ def test_queued_summary_failure_does_not_show_modal(monkeypatch, tmp_path: Path)
 
         assert messages == []
         assert window.task_manager.snapshot().completed[0].status is TaskStatus.FAILED
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_cancelled_running_summary_late_completion_does_not_update_next_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def emit(self, *args) -> None:
+            for callback in list(self.callbacks):
+                callback(*args)
+
+    class FakeSummaryWorker:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.completed = FakeSignal()
+            self.failed = FakeSignal()
+            self.finished = FakeSignal()
+            FakeSummaryWorker.instances.append(self)
+
+        def start(self) -> None:
+            return None
+
+        def deleteLater(self) -> None:
+            return None
+
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "first" / "audio.wav")
+        write_wav(tmp_path / "records" / "second" / "audio.wav")
+        records = {record.record_id: record for record in service.scan()}
+        service.save_transcript(records["first"], "first transcript")
+        service.save_transcript(records["second"], "second transcript")
+        records = {record.record_id: record for record in service.scan()}
+        window.history_service = service
+        window.config["audio"]["auto_summarize"] = False
+        monkeypatch.setattr("src.handlers.summary.SummaryWorker", FakeSummaryWorker)
+
+        first_task = window.enqueue_record_processing(records["first"], source="manual", summary_only=True)
+        second_task = window.enqueue_record_processing(records["second"], source="manual", summary_only=True)
+
+        assert first_task is not None
+        assert second_task is not None
+        assert len(FakeSummaryWorker.instances) == 1
+        window.cancel_processing_task(first_task.task_id)
+        assert len(FakeSummaryWorker.instances) == 2
+
+        FakeSummaryWorker.instances[0].completed.emit("late first summary")
+
+        refreshed = {record.record_id: record for record in service.scan()}
+        assert not refreshed["first"].summary_path.exists()
+        assert not refreshed["second"].summary_path.exists()
+        running = window.task_manager.running_process_task()
+        assert running is not None
+        assert running.task_id == second_task.task_id
     finally:
         window.close()
         app.processEvents()

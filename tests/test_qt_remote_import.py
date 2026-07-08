@@ -13,6 +13,8 @@ from PySide6.QtWidgets import QApplication
 from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.app.main_window import MainWindow
 from src.history.service import HistoryService
+from src.remote_import.errors import RemoteImportErrorKind, message_for_kind
+from src.remote_import.service import RemoteImportError
 from src.remote_import.types import RemoteMediaInfo
 
 
@@ -186,6 +188,81 @@ def test_remote_subtitle_completion_does_not_enqueue_processing(monkeypatch, tmp
 
         assert enqueued == []
     finally:
+        window.close()
+
+
+def test_two_remote_imports_complete_and_fail_with_separate_records(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        first = window.history_service.adopt_audio_file(_write_wav(tmp_path / "first.wav"))
+        second = window.history_service.adopt_audio_file(_write_wav(tmp_path / "second.wav"))
+        window.active_remote_imports = {
+            "remote-first": {"record": first, "url": "https://example.com/first"},
+            "remote-second": {"record": second, "url": "https://example.com/second"},
+        }
+        monkeypatch.setattr(window, "_show_error", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(window, "_handle_audio_record_ready", lambda *_args, **_kwargs: None)
+
+        window._on_remote_import_completed(
+            type("Result", (), {"record": first, "mode": "audio"})(),
+            "remote-first",
+        )
+        window._on_remote_import_failed(
+            RemoteImportError(
+                RemoteImportErrorKind.DOWNLOAD_FAILED,
+                message_for_kind(RemoteImportErrorKind.DOWNLOAD_FAILED),
+                "second failed",
+            ),
+            "remote-second",
+        )
+
+        refreshed = {record.record_id: record for record in window.history_service.scan()}
+        assert not refreshed[first.record_id].input_error
+        assert refreshed[second.record_id].input_error
+        assert window.active_remote_imports == {}
+    finally:
+        window.close()
+
+
+def test_remote_import_limit_rejects_new_task(monkeypatch, tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    config["tasks"] = {"max_remote_imports": 1}
+    monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
+    monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+    monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
+    monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    app.processEvents()
+
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class FakeRemoteProbeWorker:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.progress = FakeSignal()
+            self.completed = FakeSignal()
+            self.failed = FakeSignal()
+            self.finished = FakeSignal()
+
+        def start(self) -> None:
+            return None
+
+    try:
+        monkeypatch.setattr("src.handlers.remote_import.RemoteProbeWorker", FakeRemoteProbeWorker)
+        window.active_remote_imports = {"remote-existing": {"url": "https://example.com/old"}}
+        errors: list[str] = []
+        monkeypatch.setattr(window, "_show_error", lambda message: errors.append(message))
+
+        window._start_remote_import("https://example.com/new")
+
+        assert errors
+        assert window.active_remote_imports == {"remote-existing": {"url": "https://example.com/old"}}
+    finally:
+        window.active_workers.clear()
         window.close()
 
 

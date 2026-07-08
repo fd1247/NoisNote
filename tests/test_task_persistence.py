@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.history.service import HistoryRecord
+from src.handlers.task_queue import TaskQueueHandlers
 from src.tasks.persistence import TaskQueueStore
 from src.tasks.types import AppTask, TaskKind, TaskOptions, TaskStage, TaskStatus
 
@@ -132,3 +133,12 @@ def test_store_saves_only_queued_tasks(tmp_path: Path) -> None:
     loaded = store.load(FakeHistoryService({queued.record_key: queued, running.record_key: running}))
 
     assert [task.record_key for task in loaded] == [queued.record_key]
+
+
+def test_task_queue_path_uses_patched_config_dir(monkeypatch, tmp_path: Path) -> None:
+    from src.app import config as config_module
+
+    patched_config_dir = tmp_path / "patched-config"
+    monkeypatch.setattr(config_module, "CONFIG_DIR", patched_config_dir)
+
+    assert TaskQueueHandlers._task_queue_path(object()) == patched_config_dir / "task_queue.json"
