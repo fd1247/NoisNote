@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QElapsedTimer, QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QFrame, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton
 from PySide6.QtWidgets import QDialog
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
@@ -22,6 +22,7 @@ from src.history.service import HistoryService
 from src.history.types import format_size
 from src.app.main_window import MainWindow
 from src.remote_import import RemoteMediaInfo
+from src.tasks import AppTask, TaskKind, TaskOptions, TaskSnapshot, TaskStage, TaskStatus
 from src.ui.pages.content import PlaybackRateCombo, SeekSlider
 
 
@@ -3776,6 +3777,102 @@ def test_cancel_running_processing_task_requests_worker_cancel(monkeypatch, tmp_
         window.cancel_processing_task(task.task_id)
 
         assert worker.cancelled is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_has_three_sections(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.running_task_title.text().startswith("处理中")
+        assert window.queued_task_title.text().startswith("排队中")
+        assert window.completed_task_title.text().startswith("已处理")
+        assert window.running_task_list.count() >= 1
+        assert window.queued_task_list.count() >= 1
+        assert window.completed_task_list.count() >= 1
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_updates_counts(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+
+        window.enqueue_record_processing(record, source="import")
+
+        assert "1" in window.running_task_title.text()
+        assert "0" in window.queued_task_title.text()
+        assert "0" in window.completed_task_title.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_renders_snapshot_items_and_actions(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="运行中任务",
+                    message="正在转录",
+                    progress_percent=45,
+                ),
+            ),
+            queued=(
+                AppTask(
+                    task_id="queued-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.QUEUED,
+                    stage=TaskStage.WAITING,
+                    title="排队任务",
+                    message="等待处理",
+                ),
+            ),
+            completed=(
+                AppTask(
+                    task_id="done-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.FAILED,
+                    stage=TaskStage.FAILED,
+                    title="失败任务",
+                    record_key="record-1",
+                    message="处理失败",
+                    error_message="处理失败",
+                    options=TaskOptions(manual=True),
+                ),
+            ),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        running_item = window.running_task_list.itemAt(0).widget()
+        queued_item = window.queued_task_list.itemAt(0).widget()
+        completed_item = window.completed_task_list.itemAt(0).widget()
+
+        assert isinstance(running_item, QFrame)
+        assert isinstance(queued_item, QFrame)
+        assert isinstance(completed_item, QFrame)
+        assert {button.text() for button in running_item.findChildren(QPushButton)} == {"取消"}
+        assert {button.text() for button in queued_item.findChildren(QPushButton)} == {"上移", "下移", "删除"}
+        assert {button.text() for button in completed_item.findChildren(QPushButton)} == {"查看", "重试"}
+        labels = completed_item.findChildren(QLabel)
+        assert any(label.text() == "失败任务" for label in labels)
+        assert any(label.text() == "处理失败" for label in labels)
     finally:
         window.close()
         app.processEvents()

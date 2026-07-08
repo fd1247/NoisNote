@@ -905,6 +905,47 @@ QFrame#TaskPanel {
     background: #f8fafc;
     border-left: 1px solid #e5e7eb;
 }
+QScrollArea#TaskPanelScroll,
+QScrollArea#TaskPanelScroll > QWidget#qt_scrollarea_viewport,
+QWidget#TaskPanelContent {
+    background: transparent;
+    border: none;
+}
+QFrame#TaskSection {
+    background: transparent;
+    border: none;
+}
+QFrame#TaskSectionBody {
+    background: transparent;
+    border: none;
+}
+QLabel#TaskSectionTitle {
+    color: #374151;
+    font-size: 12px;
+    font-weight: 600;
+}
+QFrame#TaskItem {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+}
+QLabel#TaskItemTitle {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 600;
+}
+QPushButton#TaskMiniButton {
+    min-width: 38px;
+    min-height: 22px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #374151;
+}
+QPushButton#TaskMiniButton:hover {
+    background: #f3f4f6;
+}
 QTreeWidget#HistoryTree {
     border: 0;
     background: transparent;

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+
 from ..history.service import HistoryRecord
-from ..tasks import AppTask, QueueFullError, TaskManager, TaskQueueStore, TaskStage
+from ..tasks import AppTask, QueueFullError, TaskManager, TaskQueueStore, TaskSnapshot, TaskStage, TaskStatus
 
 
 class TaskQueueHandlers:
@@ -27,6 +30,7 @@ class TaskQueueHandlers:
         if restored:
             self.task_manager.load_queued(restored)
             self._set_status(f"已恢复 {len(restored)} 个待处理任务")
+        self._refresh_task_panel(self.task_manager.snapshot())
         self._start_next_processing_task()
 
     def _task_queue_path(self) -> Path:
@@ -140,9 +144,152 @@ class TaskQueueHandlers:
         return True
 
     def _on_task_snapshot_changed(self, snapshot: object) -> None:
-        refresh = getattr(self, "_refresh_task_panel", None)
-        if callable(refresh):
-            refresh(snapshot)
+        if isinstance(snapshot, TaskSnapshot):
+            self._refresh_task_panel(snapshot)
+
+    def _refresh_task_panel(self, snapshot: TaskSnapshot) -> None:
+        """根据任务快照刷新三段式任务面板。"""
+        if not hasattr(self, "running_task_title"):
+            return
+        self.running_task_title.setText(f"处理中（{len(snapshot.running)}）")
+        self.queued_task_title.setText(f"排队中（{len(snapshot.queued)}）")
+        self.completed_task_title.setText(f"已处理（{len(snapshot.completed)}）")
+        self._replace_task_list(self.running_task_list, snapshot.running, running=True)
+        self._replace_task_list(self.queued_task_list, snapshot.queued, queued=True)
+        self._replace_task_list(self.completed_task_list, snapshot.completed, completed=True)
+
+    def _replace_task_list(
+        self,
+        layout: QVBoxLayout,
+        tasks: tuple[AppTask, ...],
+        *,
+        running: bool = False,
+        queued: bool = False,
+        completed: bool = False,
+    ) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_nested_layout(child_layout)
+
+        if not tasks:
+            empty = QLabel("暂无任务")
+            empty.setObjectName("Muted")
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+            layout.addStretch(1)
+            return
+
+        for task in tasks:
+            layout.addWidget(
+                self._task_item_widget(
+                    task,
+                    running=running,
+                    queued=queued,
+                    completed=completed,
+                )
+            )
+        layout.addStretch(1)
+
+    def _task_item_widget(
+        self,
+        task: AppTask,
+        *,
+        running: bool,
+        queued: bool,
+        completed: bool,
+    ) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("TaskItem")
+
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(8, 8, 8, 8)
+        box.setSpacing(4)
+
+        title = QLabel(task.title or task.record_id or task.record_key or "任务")
+        title.setObjectName("TaskItemTitle")
+        title.setWordWrap(True)
+        box.addWidget(title)
+
+        message = QLabel(self._task_message_text(task))
+        message.setObjectName("Muted")
+        message.setWordWrap(True)
+        message.setTextFormat(Qt.TextFormat.PlainText)
+        box.addWidget(message)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(4)
+
+        if running:
+            actions.addWidget(self._task_action_button("取消", lambda: self.cancel_processing_task(task.task_id)))
+        if queued:
+            actions.addWidget(self._task_action_button("上移", lambda: self._move_queued_task(task.task_id, -1)))
+            actions.addWidget(self._task_action_button("下移", lambda: self._move_queued_task(task.task_id, 1)))
+            actions.addWidget(self._task_action_button("删除", lambda: self._remove_queued_task(task.task_id)))
+        if completed:
+            actions.addWidget(self._task_action_button("查看", lambda: self._select_record_by_key(task.record_key)))
+            if task.status in {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}:
+                actions.addWidget(self._task_action_button("重试", lambda: self._retry_task_record(task.record_key)))
+
+        actions.addStretch(1)
+        box.addLayout(actions)
+        return frame
+
+    def _task_action_button(self, text: str, callback) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("TaskMiniButton")
+        button.clicked.connect(callback)
+        return button
+
+    def _task_message_text(self, task: AppTask) -> str:
+        if task.error_message:
+            return task.error_message
+
+        percent = "" if task.progress_percent is None else f" {task.progress_percent}%"
+        stage_text = {
+            TaskStage.WAITING: "等待中",
+            TaskStage.PREPROCESSING: "预处理中",
+            TaskStage.TRANSCRIBING: "转录中",
+            TaskStage.SUMMARIZING: "总结中",
+            TaskStage.COMPLETED: "已完成",
+            TaskStage.FAILED: "失败",
+            TaskStage.CANCELLED: "已取消",
+            TaskStage.INTERRUPTED: "已中断",
+        }.get(task.stage, task.stage.value)
+        detail = str(task.message or "").strip()
+        if detail:
+            return f"{detail}{percent}".strip()
+        return f"{stage_text}{percent}".strip()
+
+    def _move_queued_task(self, task_id: str, offset: int) -> None:
+        if self.task_manager.move_queued(task_id, offset):
+            self._persist_queued_tasks()
+
+    def _remove_queued_task(self, task_id: str) -> None:
+        if self.task_manager.remove_queued(task_id):
+            self._persist_queued_tasks()
+
+    def _retry_task_record(self, record_key: str) -> None:
+        if not record_key:
+            return
+        record = self.history_service.get_record_by_key(record_key)
+        if record is not None:
+            self.enqueue_record_processing(record, source="manual", overwrite_existing=True, manual=True)
+
+    def _clear_nested_layout(self, layout: QVBoxLayout | QHBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_nested_layout(child_layout)
 
     def _persist_queued_tasks(self) -> None:
         task_manager = getattr(self, "task_manager", None)

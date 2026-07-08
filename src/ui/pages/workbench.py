@@ -6,7 +6,16 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import QLabel, QFrame, QMenu, QToolBar, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QMenu,
+    QScrollArea,
+    QToolBar,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 @dataclass(frozen=True)
@@ -117,21 +126,73 @@ def install_workbench_menus(
 
 
 def build_task_panel(parent: QWidget) -> QFrame:
-    """创建任务管理占位区。"""
+    """创建三段式任务管理面板。"""
     panel = QFrame(parent)
     panel.setObjectName("TaskPanel")
-    panel.setMinimumWidth(220)
+    panel.setMinimumWidth(260)
+
     layout = QVBoxLayout(panel)
-    layout.setContentsMargins(14, 14, 14, 14)
-    layout.setSpacing(8)
+    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setSpacing(10)
+
     title = QLabel("任务")
     title.setObjectName("SectionTitle")
+    layout.addWidget(title)
+
+    scroll_area = QScrollArea(panel)
+    scroll_area.setObjectName("TaskPanelScroll")
+    scroll_area.setWidgetResizable(True)
+    scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+    scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    content = QWidget(scroll_area)
+    content.setObjectName("TaskPanelContent")
+    content_layout = QVBoxLayout(content)
+    content_layout.setContentsMargins(0, 0, 0, 0)
+    content_layout.setSpacing(12)
+
+    parent.running_task_title, parent.running_task_list = _add_task_section(content_layout, "处理中")
+    parent.queued_task_title, parent.queued_task_list = _add_task_section(content_layout, "排队中")
+    parent.completed_task_title, parent.completed_task_list = _add_task_section(content_layout, "已处理")
+    content_layout.addStretch(1)
+
+    scroll_area.setWidget(content)
+    layout.addWidget(scroll_area, stretch=1)
+    return panel
+
+
+def _add_task_section(layout: QVBoxLayout, title: str) -> tuple[QLabel, QVBoxLayout]:
+    """创建任务区段并返回标题与列表布局引用。"""
+    section = QFrame()
+    section.setObjectName("TaskSection")
+
+    section_layout = QVBoxLayout(section)
+    section_layout.setContentsMargins(0, 0, 0, 0)
+    section_layout.setSpacing(6)
+
+    section_title = QLabel(f"{title}（0）")
+    section_title.setObjectName("TaskSectionTitle")
+    section_layout.addWidget(section_title)
+
+    list_container = QFrame(section)
+    list_container.setObjectName("TaskSectionBody")
+    list_layout = QVBoxLayout(list_container)
+    list_layout.setContentsMargins(0, 0, 0, 0)
+    list_layout.setSpacing(6)
+    _add_empty_task_hint(list_layout)
+    section_layout.addWidget(list_container)
+
+    layout.addWidget(section)
+    return section_title, list_layout
+
+
+def _add_empty_task_hint(layout: QVBoxLayout) -> None:
+    """为任务列表填充默认空态。"""
     empty = QLabel("暂无任务")
     empty.setObjectName("Muted")
-    empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    layout.addWidget(title)
-    layout.addWidget(empty, stretch=1)
-    return panel
+    empty.setWordWrap(True)
+    layout.addWidget(empty)
+    layout.addStretch(1)
 
 
 def _make_toolbar_button(icon: QIcon, tooltip: str, callback: Callable[[], None]) -> QToolButton:
