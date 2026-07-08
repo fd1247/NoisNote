@@ -71,6 +71,7 @@ def make_window_with_config(monkeypatch, config: dict) -> MainWindow:
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
     monkeypatch.setattr("src.handlers.history_view.save_config", lambda _config: None)
     monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
     app = QApplication.instance() or QApplication([])
@@ -1939,6 +1940,33 @@ def test_unselected_summary_failure_does_not_update_current_detail(monkeypatch, 
         app.processEvents()
 
 
+def test_queued_summary_failure_does_not_show_modal(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "转录内容")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window.enqueue_record_processing(record, source="import")
+        window._on_summary_failed("API timeout")
+
+        assert messages == []
+        assert window.task_manager.snapshot().completed[0].status is TaskStatus.FAILED
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_summary_start_does_not_persist_model_before_success(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -2153,6 +2181,29 @@ def test_empty_speech_transcription_failure_shows_lightweight_reason(monkeypatch
 
         assert messages == []
         assert window.status_label.text() == "未识别到有效语音内容，请换一段有声音的音频后重试。"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_transcription_failure_does_not_show_modal(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window.enqueue_record_processing(record, source="import")
+        window.processing_record = record
+        window.is_processing = True
+        window._on_transcription_failed("模型未下载", {"error": {"error_type": "MissingModelDirectory"}})
+
+        assert messages == []
+        assert window.task_manager.snapshot().paused_reason == "模型未下载"
     finally:
         window.close()
         app.processEvents()
@@ -3777,6 +3828,46 @@ def test_cancel_running_processing_task_requests_worker_cancel(monkeypatch, tmp_
         window.cancel_processing_task(task.task_id)
 
         assert worker.cancelled is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_queued_tasks_prompts_and_persists(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        saved: list[list[str]] = []
+        confirm_calls: list[bool] = []
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window.task_queue_store, "save", lambda tasks: saved.append([item.task_id for item in tasks]))
+        monkeypatch.setattr(
+            "src.app.main_window.confirm_without_icon",
+            lambda *args, **kwargs: (confirm_calls.append(True), True)[1],
+        )
+
+        window.enqueue_record_processing(record, source="import")
+        saved.clear()
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.accepted is True
+        assert confirm_calls == [True]
+        assert saved
     finally:
         window.close()
         app.processEvents()

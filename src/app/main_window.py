@@ -1158,15 +1158,18 @@ class MainWindow(
                 event.ignore()
                 return
             self.model_download_manager.cancel_all_downloads()
-        if self.active_workers:
+        has_task_queue_work = bool(getattr(self, "task_manager", None) and self.task_manager.has_unfinished_tasks())
+        if has_task_queue_work or self.active_workers:
             confirmed = confirm_without_icon(
                 self,
                 "后台任务仍在运行",
-                "转录或总结仍在运行，确定退出吗?",
+                "仍有任务正在运行或排队，退出应用会中断运行中的任务并保留排队任务。确定退出吗?",
             )
             if not confirmed:
                 event.ignore()
                 return
+            if hasattr(self, "prepare_task_queue_for_close"):
+                self.prepare_task_queue_for_close()
         if self.recorder:
             self.recorder.cleanup()
         event.accept()

@@ -111,6 +111,7 @@ def make_window(monkeypatch, tmp_path: Path, config: dict | None = None) -> Main
     monkeypatch.setattr("src.app.config.CONFIG_DIR", app_config_dir, raising=False)
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
     monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", FakeRecorder)

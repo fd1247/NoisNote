@@ -298,6 +298,17 @@ class TaskQueueHandlers:
             return
         task_queue_store.save(task_manager.queued_tasks())
 
+    def prepare_task_queue_for_close(self) -> None:
+        running = self.task_manager.running_process_task()
+        if running is not None:
+            worker = getattr(self, "transcription_worker", None)
+            if worker is not None and hasattr(worker, "request_cancel"):
+                worker.request_cancel()
+            self.task_manager.interrupt_running(running.task_id, "应用退出，任务已中断")
+            if self.processing_record:
+                self.history_service.mark_error(self.processing_record, "应用退出，任务已中断", step="transcription")
+        self._persist_queued_tasks()
+
     def _active_queue_task(self) -> AppTask | None:
         if self.current_processing_task is not None:
             return self.current_processing_task

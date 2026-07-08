@@ -138,9 +138,11 @@ class SummaryHandlers:
             if was_selected:
                 self._select_record_by_key(record.record_key)
                 self.summary_status.setText(display_message)
-        self._show_error(display_message)
-        if getattr(self, "current_processing_task", None):
+        if self._active_queue_task() is not None:
+            self._set_status(display_message)
             self._finish_queue_task_failed(display_message)
+        else:
+            self._show_error(display_message)
 
     def manual_summarize(self) -> None:
         if self.is_processing:

@@ -209,14 +209,18 @@ class TranscriptionHandlers:
             self.load_recordings()
             if was_selected:
                 self._select_record_by_key(record.record_key)
-        dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
-        if dialog_message:
-            self._show_error(dialog_message)
-        elif error == "未识别到有效语音内容":
-            self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
+        is_queue_task = self._active_queue_task() is not None
+        if not is_queue_task:
+            dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
+            if dialog_message:
+                self._show_error(dialog_message)
+            elif error == "未识别到有效语音内容":
+                self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
+            else:
+                self._show_error("转录失败，请查看日志或尝试更换设备。")
         else:
-            self._show_error("转录失败，请查看日志或尝试更换设备。")
-        if getattr(self, "current_processing_task", None):
+            self._set_status(f"任务失败：{error}")
+        if is_queue_task:
             pause_queue = self._is_systemic_transcription_error(error, diagnostics)
             self._finish_queue_task_failed(error, pause_queue=pause_queue)
 
