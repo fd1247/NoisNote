@@ -1177,6 +1177,8 @@ class MainWindow(
                     self.stop_recording()
                 finally:
                     self._closing_for_exit = False
+            if hasattr(self, "prepare_remote_imports_for_close"):
+                self.prepare_remote_imports_for_close()
             if hasattr(self, "prepare_task_queue_for_close"):
                 self.prepare_task_queue_for_close()
         if self.recorder:

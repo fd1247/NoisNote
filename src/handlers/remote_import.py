@@ -173,7 +173,11 @@ class RemoteImportHandlers:
             self._handle_audio_record_ready(record, "已导入链接音频", source="remote_import")
             return
         if record and self.config["audio"].get("auto_summarize", True) and getattr(result, "transcript_text", "").strip():
-            self.start_summarization(getattr(result, "transcript_text"), record)
+            self.enqueue_record_processing(
+                record,
+                source="remote_import",
+                summary_only=True,
+            )
             return
         self._set_status("已导入链接字幕" if mode == "subtitle" else "链接导入完成")
 
@@ -219,6 +223,40 @@ class RemoteImportHandlers:
             return max(1, int(tasks_config.get("max_remote_imports") or 2))
         except (TypeError, ValueError):
             return 2
+
+    def prepare_remote_imports_for_close(self) -> None:
+        interrupted_records = []
+        for task_id, remote_task in list(self._active_remote_imports().items()):
+            self._stop_remote_import_worker(remote_task.get("worker"))
+            record = remote_task.get("record")
+            if record is not None:
+                updated = self.history_service.mark_input_error(record, "应用退出，远程导入已中断")
+                interrupted_records.append(updated)
+                self._add_history_notice_if_unselected(updated, "出现异常，点击查看详情")
+            self._active_remote_imports().pop(task_id, None)
+        if interrupted_records:
+            self.load_recordings()
+
+    def _stop_remote_import_worker(self, worker: object | None) -> None:
+        if worker is None:
+            return
+        if hasattr(worker, "requestInterruption"):
+            worker.requestInterruption()
+        if hasattr(worker, "quit"):
+            worker.quit()
+        waited = False
+        if hasattr(worker, "wait"):
+            try:
+                waited = bool(worker.wait(200))
+            except TypeError:
+                waited = bool(worker.wait())
+        if not waited and hasattr(worker, "terminate"):
+            worker.terminate()
+            if hasattr(worker, "wait"):
+                try:
+                    worker.wait(200)
+                except TypeError:
+                    worker.wait()
 
 
 def _is_http_url(value: str) -> bool:

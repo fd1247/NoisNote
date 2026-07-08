@@ -16,6 +16,7 @@ from src.history.service import HistoryService
 from src.remote_import.errors import RemoteImportErrorKind, message_for_kind
 from src.remote_import.service import RemoteImportError
 from src.remote_import.types import RemoteMediaInfo
+from src.tasks import TaskStage
 
 
 def make_config(root: Path) -> dict:
@@ -188,6 +189,56 @@ def test_remote_subtitle_completion_does_not_enqueue_processing(monkeypatch, tmp
 
         assert enqueued == []
     finally:
+        window.close()
+
+
+def test_remote_subtitle_completion_enqueues_summary_only_when_queue_busy(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+    running_task = None
+    try:
+        busy_record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "busy.wav"))
+        subtitle_record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "subtitle-summary.wav"))
+        window.config["audio"]["auto_summarize"] = True
+
+        def fake_execute(task) -> None:
+            window.current_processing_task = task
+            window.processing_record = busy_record
+            window.processing_source = "import"
+            window.is_processing = True
+            window.task_manager.mark_running(task.task_id, TaskStage.TRANSCRIBING, "busy")
+
+        monkeypatch.setattr(window, "_execute_processing_task", fake_execute)
+        running_task = window.enqueue_record_processing(busy_record, source="import")
+        assert running_task is not None
+        assert window.current_processing_task is not None
+
+        enqueued: list[tuple[str, bool, str]] = []
+        started: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(
+                (record.record_key, summary_only, source)
+            ),
+        )
+        monkeypatch.setattr(window, "start_summarization", lambda text, record=None: started.append(text))
+        result = type(
+            "Result",
+            (),
+            {"record": subtitle_record, "mode": "subtitle", "transcript_text": "subtitle text"},
+        )()
+
+        window._on_remote_import_completed(result)
+
+        assert enqueued == [(subtitle_record.record_key, True, "remote_import")]
+        assert started == []
+    finally:
+        if running_task is not None:
+            window.task_manager.cancel_running(running_task.task_id, "cleanup")
+        window.current_processing_task = None
+        window.processing_record = None
+        window.processing_source = None
+        window.is_processing = False
         window.close()
 
 

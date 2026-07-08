@@ -4285,6 +4285,139 @@ def test_close_with_running_preprocess_task_uses_input_error(monkeypatch, tmp_pa
         app.processEvents()
 
 
+def test_close_with_active_remote_import_marks_record_interrupted(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.ignored = True
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self.interruption_requested = False
+            self.quit_called = False
+            self.wait_calls: list[int] = []
+            self.terminate_called = False
+
+        def requestInterruption(self) -> None:
+            self.interruption_requested = True
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+        def wait(self, timeout: int = 0) -> bool:
+            self.wait_calls.append(timeout)
+            return False
+
+        def terminate(self) -> None:
+            self.terminate_called = True
+
+    try:
+        info = RemoteMediaInfo(
+            url="https://example.com/video",
+            extractor="generic",
+            webpage_url="https://example.com/video",
+            title="Remote Import",
+            duration_seconds=60,
+        )
+        record = window.history_service.create_remote_record(info)
+        worker = FakeWorker()
+        window.active_remote_imports = {
+            "remote-import": {
+                "record": record,
+                "phase": "import",
+                "worker": worker,
+                "url": info.url,
+            }
+        }
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+
+        event = Event()
+        window.closeEvent(event)
+
+        refreshed = window.history_service.get_record_by_key(record.record_key)
+        assert event.accepted is True
+        assert refreshed is not None
+        assert refreshed.input_error is not None
+        assert refreshed.input_error["message"] == "应用退出，远程导入已中断"
+        assert window.active_remote_imports == {}
+        assert worker.interruption_requested is True
+        assert worker.quit_called is True
+        assert worker.wait_calls
+        assert worker.terminate_called is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_probe_only_remote_entry_clears_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.ignored = True
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self.interruption_requested = False
+            self.quit_called = False
+            self.wait_calls: list[int] = []
+            self.terminate_called = False
+
+        def requestInterruption(self) -> None:
+            self.interruption_requested = True
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+        def wait(self, timeout: int = 0) -> bool:
+            self.wait_calls.append(timeout)
+            return True
+
+        def terminate(self) -> None:
+            self.terminate_called = True
+
+    try:
+        worker = FakeWorker()
+        window.active_remote_imports = {
+            "remote-probe": {
+                "record": None,
+                "phase": "probe",
+                "worker": worker,
+                "url": "https://example.com/probe",
+            }
+        }
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.accepted is True
+        assert window.active_remote_imports == {}
+        assert window.history_service.scan() == []
+        assert worker.interruption_requested is True
+        assert worker.quit_called is True
+        assert worker.wait_calls
+        assert worker.terminate_called is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_task_panel_has_three_sections(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
