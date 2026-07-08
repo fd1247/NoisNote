@@ -391,16 +391,24 @@ def test_detail_action_menu_transcribe_missing_audio_shows_reason(monkeypatch, t
         app.processEvents()
 
 
-def test_detail_action_menu_transcribe_while_processing_shows_reason(monkeypatch, tmp_path: Path) -> None:
+def test_detail_action_menu_transcribe_while_processing_queues_task(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     messages: list[str] = []
+    enqueued: list[tuple[str, str, bool, bool]] = []
     try:
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "meeting" / "audio.wav")
         record = service.scan()[0]
         window.history_service = service
         monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(
+                (record.record_key, source, overwrite_existing, manual)
+            ),
+        )
 
         window._load_history_record(record)
         window.is_processing = True
@@ -408,7 +416,8 @@ def test_detail_action_menu_transcribe_while_processing_shows_reason(monkeypatch
         window.detail_transcribe_action.trigger()
 
         assert window.detail_transcribe_action.isEnabled()
-        assert messages == ["正在处理中，请稍后重试"]
+        assert messages == []
+        assert enqueued == [(record.record_key, "manual", True, True)]
 
         window.is_processing = False
         window._sync_detail_action_menu()
@@ -3204,7 +3213,7 @@ def test_manual_summary_existing_summary_requires_overwrite_confirmation(monkeyp
         app.processEvents()
 
 
-def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_path: Path) -> None:
+def test_detail_tabs_keep_available_empty_results_blank(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -3216,7 +3225,7 @@ def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_p
         window._load_history_record(record)
 
         assert not window.transcript_tab_button.isHidden()
-        assert not window.timeline_tab_button.isHidden()
+        assert window.timeline_tab_button.isHidden()
         assert not window.summary_tab_button.isHidden()
         assert window.transcript_status.text() == ""
         assert window.timeline_status.text() == ""
@@ -3227,12 +3236,6 @@ def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_p
         app.processEvents()
         assert window.detail_webview.current_payload["mode"] == "summary"
         assert window.detail_webview.current_payload["content"] == ""
-
-        window.timeline_tab_button.click()
-        app.processEvents()
-        assert window.detail_webview.current_payload["mode"] == "timeline"
-        assert window.detail_webview.current_payload["content"] == ""
-        assert window.detail_webview.current_payload["timeline"] == []
     finally:
         window.close()
         app.processEvents()

@@ -302,6 +302,8 @@ class HistoryViewHandlers:
             self.transcript_status.setText("已加载转录" if recording.has_transcript else "")
         self.summary_status.setText("已加载总结" if recording.has_summary else "")
         self.timeline_status.setText("已加载逐句时间轴" if recording.has_timeline else "")
+        if hasattr(self, "timeline_tab_button"):
+            self.timeline_tab_button.setVisible(recording.has_timeline)
         if self.active_result_tab != "transcript":
             self._set_result_tab("transcript")
         else:
