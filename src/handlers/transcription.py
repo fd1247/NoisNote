@@ -87,9 +87,11 @@ class TranscriptionHandlers:
         )
 
         worker = TranscriptionWorker(str(audio_file), self)
+        self.transcription_worker = worker
         worker.progress.connect(self._on_transcription_progress)
         worker.completed.connect(self._on_transcription_completed)
         worker.failed.connect(self._on_transcription_failed)
+        worker.cancelled.connect(self._on_transcription_cancelled)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
@@ -102,6 +104,7 @@ class TranscriptionHandlers:
         self._refresh_history_status_indicators()
 
     def _on_transcription_completed(self, text: str, diagnostics: dict | None = None) -> None:
+        self.transcription_worker = None
         record = self.processing_record
         if not text.strip():
             self._on_transcription_failed("未识别到有效语音内容", diagnostics)
@@ -155,6 +158,7 @@ class TranscriptionHandlers:
                 self._finish_queue_task_success("转录完成")
 
     def _on_transcription_failed(self, error: str, diagnostics: dict | None = None) -> None:
+        self.transcription_worker = None
         record = self.processing_record
         was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
         error = self._normalize_transcription_error(error)
@@ -215,6 +219,56 @@ class TranscriptionHandlers:
         if getattr(self, "current_processing_task", None):
             pause_queue = self._is_systemic_transcription_error(error, diagnostics)
             self._finish_queue_task_failed(error, pause_queue=pause_queue)
+
+    def _on_transcription_cancelled(self, message: str, diagnostics: dict | None = None) -> None:
+        self.transcription_worker = None
+        record = self.processing_record
+        was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
+        task_id = self.active_task_ids.pop("transcription", "")
+        log_event(
+            "asr.transcribe.cancelled",
+            level="WARNING",
+            module="asr",
+            message="音频转录已取消",
+            task_id=task_id,
+            record_id=(record.record_id if record else None),
+            context={
+                "record": record_context(record),
+                "diagnostics": diagnostics or {},
+            },
+        )
+        self.is_processing = False
+        self.processing_source = None
+        self.processing_record = None
+        self.latest_transcription_percent = None
+        if was_selected:
+            self.transcript_status.setText(message or "已取消转录")
+            if hasattr(self, "_refresh_detail_payload"):
+                self._refresh_detail_payload()
+        self.record_button.setText("开始录音")
+        self.recording_hint_label.setText("转录已取消，可重新创建录音")
+        self._set_processing_ui(False)
+        self._update_recording_entry()
+        if record:
+            record = self.history_service.mark_error(
+                record,
+                message or "已取消转录",
+                step="transcription",
+                elapsed_seconds=self._elapsed_seconds("transcription"),
+            )
+            if diagnostics:
+                record = self.history_service.save_asr_metadata(record, diagnostics)
+            self.load_recordings()
+            if was_selected:
+                self._select_record_by_key(record.record_key)
+        if getattr(self, "current_processing_task", None):
+            task = self.current_processing_task
+            self.current_processing_task = None
+            self.task_manager.cancel_running(task.task_id, message or "已取消转录")
+            self._persist_queued_tasks()
+            self._start_next_processing_task()
+            return
+        self._set_status(message or "已取消转录")
 
     def _transcription_failure_dialog_message(self, error: str, diagnostics: dict | None = None) -> str:
         error_type = str(((diagnostics or {}).get("error") or {}).get("error_type") or "")

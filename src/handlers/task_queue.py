@@ -99,6 +99,20 @@ class TaskQueueHandlers:
         self._persist_queued_tasks()
         self._start_next_processing_task()
 
+    def cancel_processing_task(self, task_id: str) -> None:
+        running = self.task_manager.running_process_task()
+        if running is None or running.task_id != task_id:
+            return
+        worker = getattr(self, "transcription_worker", None)
+        if worker is not None and hasattr(worker, "request_cancel"):
+            self.task_manager.mark_running(task_id, running.stage, "正在取消")
+            worker.request_cancel()
+            return
+        self.task_manager.cancel_running(task_id, "已取消")
+        self.current_processing_task = None
+        self._persist_queued_tasks()
+        self._start_next_processing_task()
+
     def _on_task_snapshot_changed(self, snapshot: object) -> None:
         refresh = getattr(self, "_refresh_task_panel", None)
         if callable(refresh):

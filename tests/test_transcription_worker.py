@@ -56,3 +56,32 @@ def test_hidden_creationflags_adds_create_no_window(monkeypatch) -> None:
     monkeypatch.setattr(transcription_worker.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
 
     assert _hidden_creationflags(0x00000004) == 0x08000004
+
+
+def test_transcription_worker_request_cancel_terminates_process() -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+            self.stdout = iter(())
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout=None) -> int:
+            if timeout is not None:
+                raise TimeoutError()
+            return -15
+
+    worker = TranscriptionWorker("audio.wav")
+    process = FakeProcess()
+    worker.process = process
+
+    worker.request_cancel()
+
+    assert worker.cancel_requested is True
+    assert process.terminated is True
+    assert process.killed is True

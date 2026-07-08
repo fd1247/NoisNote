@@ -20,6 +20,7 @@ class TranscriptionWorker(QThread):
     progress = Signal(object)
     completed = Signal(str, object)
     failed = Signal(str, object)
+    cancelled = Signal(str, object)
 
     def __init__(self, audio_file: str, parent=None):
         super().__init__(parent)
@@ -27,7 +28,22 @@ class TranscriptionWorker(QThread):
         self.process: subprocess.Popen[str] | None = None
         self._completed = False
         self._failed = False
+        self.cancel_requested = False
         self._output_tail: deque[str] = deque(maxlen=30)
+
+    def request_cancel(self) -> None:
+        self.cancel_requested = True
+        process = self.process
+        if process is None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def run(self) -> None:
         command = _asr_worker_command(self.audio_file)
@@ -53,10 +69,15 @@ class TranscriptionWorker(QThread):
             self._output_tail.append(f"[cmd] {' '.join(command)}")
             self._read_worker_output()
             exit_code = self.process.wait()
-            if not self._completed and not self._failed:
+            if self.cancel_requested:
+                self.cancelled.emit("已取消转录", {"cancelled": True})
+            elif not self._completed and not self._failed:
                 self.failed.emit(_crash_message(exit_code), _crash_diagnostics(exit_code, self._output_tail))
         except Exception as exc:
-            self.failed.emit(str(exc), {})
+            if self.cancel_requested:
+                self.cancelled.emit("已取消转录", {"cancelled": True})
+            else:
+                self.failed.emit(str(exc), {})
         finally:
             self.process = None
 

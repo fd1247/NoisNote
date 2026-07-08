@@ -3749,3 +3749,33 @@ def test_seek_slider_click_jumps_to_clicked_position() -> None:
 
     assert moved
     assert 450 <= moved[-1] <= 550
+
+
+def test_cancel_running_processing_task_requests_worker_cancel(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": None)
+
+        task = window.enqueue_record_processing(record, source="manual")
+        assert task is not None
+
+        class FakeWorker:
+            def __init__(self) -> None:
+                self.cancelled = False
+
+            def request_cancel(self) -> None:
+                self.cancelled = True
+
+        worker = FakeWorker()
+        window.transcription_worker = worker
+
+        window.cancel_processing_task(task.task_id)
+
+        assert worker.cancelled is True
+    finally:
+        window.close()
+        app.processEvents()
