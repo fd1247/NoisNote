@@ -65,3 +65,16 @@
 - 变更范围保持在 review 指定的 `src/workers/transcription.py`、`src/handlers/task_queue.py`、`src/handlers/media_import.py` 以及对应的 focused tests，没有扩散到 task panel UI、关闭流程或其他 worker。
 - 预处理取消标记是纯内存态，只用于吞掉旧回调，不改动历史记录目录结构、配置结构或用户本地数据目录。
 - 这轮修复只覆盖 review 指出的两个风险路径；summary worker 的取消语义仍保持原状。
+
+## Task 5 Fix Applied
+
+- Updated `TaskQueueHandlers.cancel_processing_task()` so canceling a running preprocess queue task now clears MainWindow processing state directly (`is_processing`, `processing_source`, `processing_record`, UI refresh/status text, progress state) in the no-worker preprocess path, then persists queue state and advances queue.
+- Added regression tests for late preprocess callbacks after cancel with no next task:
+  - `test_cancelled_preprocess_without_next_task_clears_processing_state_on_late_completion`
+  - `test_cancelled_preprocess_without_next_task_clears_processing_state_on_late_failure`
+- Both tests assert processing state is reset and no transcription is restarted when late completion/failure callbacks arrive.
+
+### Validation
+
+- Command: `python -m pytest tests/test_transcription_worker.py tests/test_qt_main_window_ch07.py tests/test_qt_main_window_p0.py::test_cancel_running_processing_task_requests_worker_cancel -q`
+- Result: `36 passed in 5.24s`

@@ -733,6 +733,108 @@ def test_cancelled_preprocess_completion_does_not_continue_transcription(monkeyp
         app.processEvents()
 
 
+def test_cancelled_preprocess_without_next_task_clears_processing_state_on_late_completion(
+    monkeypatch, tmp_path: Path
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "screen.mp4"
+        source.write_bytes(b"fake mp4")
+        service = HistoryService(tmp_path / "records")
+        record = service.import_audio_file(source)
+        window.history_service = service
+        start_transcription_calls: list[tuple[Path, str]] = []
+        monkeypatch.setattr(
+            window,
+            "start_transcription",
+            lambda audio_file, record=None, source="manual": start_transcription_calls.append((audio_file, source)),
+        )
+
+        task = window.enqueue_record_processing(record, source="manual")
+        assert task is not None
+        window.processing_source = "preprocess"
+        window.processing_record = record
+        window.is_processing = True
+        start_transcription_calls.clear()
+
+        window.cancel_processing_task(task.task_id)
+
+        assert window.task_manager.snapshot().running == ()
+        assert window.is_processing is False
+        assert window.processing_source is None
+        assert window.processing_record is None
+
+        result = AudioPreprocessResult(
+            normalized_audio_path=record.record_dir / "audio.normalized.wav",
+            original_path=record.audio_path,
+            duration_seconds=12.0,
+            sample_rate=16000,
+            channels=1,
+            source_format="mp4",
+        )
+        result.normalized_audio_path.write_bytes(b"wav")
+
+        window._on_audio_preprocess_completed(
+            record,
+            result,
+            "manual",
+            "mock-preprocess-status",
+            task.task_id,
+        )
+
+        assert start_transcription_calls == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_cancelled_preprocess_without_next_task_clears_processing_state_on_late_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "screen.mp4"
+        source.write_bytes(b"fake mp4")
+        service = HistoryService(tmp_path / "records")
+        record = service.import_audio_file(source)
+        window.history_service = service
+        start_transcription_calls: list[tuple[Path, str]] = []
+        monkeypatch.setattr(
+            window,
+            "start_transcription",
+            lambda audio_file, record=None, source="manual": start_transcription_calls.append((audio_file, source)),
+        )
+
+        task = window.enqueue_record_processing(record, source="manual")
+        assert task is not None
+        window.processing_source = "preprocess"
+        window.processing_record = record
+        window.is_processing = True
+        start_transcription_calls.clear()
+
+        window.cancel_processing_task(task.task_id)
+
+        assert window.task_manager.snapshot().running == ()
+        assert window.is_processing is False
+        assert window.processing_source is None
+        assert window.processing_record is None
+
+        window._on_audio_preprocess_failed(
+            record,
+            AudioInputError("transcode_failed", "error", "stderr"),
+            task.task_id,
+        )
+
+        assert start_transcription_calls == []
+        snapshot = window.task_manager.snapshot()
+        assert snapshot.running == ()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_queued_transcription_completion_uses_task_auto_summarize_false(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

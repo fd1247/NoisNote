@@ -112,8 +112,22 @@ class TaskQueueHandlers:
             return
         if getattr(self, "processing_source", None) == "preprocess":
             self._cancelled_processing_task_ids.add(task_id)
-        self.task_manager.cancel_running(task_id, "已取消")
         self.current_processing_task = None
+        self.processing_record = None
+        self.processing_source = None
+        self.is_processing = False
+        self.latest_transcription_percent = None
+        self.record_button.setText("开始录音")
+        self.record_button.setObjectName("RecordButton")
+        self.record_button.style().unpolish(self.record_button)
+        self.record_button.style().polish(self.record_button)
+        self.recording_hint_label.setText("准备捕获系统声音")
+        self._set_processing_ui(False)
+        self._refresh_history_status_indicators()
+        self._sync_detail_processing_view()
+        self.load_recordings()
+        self._set_status("已取消")
+        self.task_manager.cancel_running(task_id, "已取消")
         self._persist_queued_tasks()
         self._start_next_processing_task()
 
