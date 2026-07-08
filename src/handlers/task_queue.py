@@ -17,6 +17,7 @@ class TaskQueueHandlers:
             completed_keep_limit=int(tasks_config.get("completed_keep_limit") or 50),
             parent=self,
         )
+        self._cancelled_processing_task_ids: set[str] = set()
         self.current_processing_task: AppTask | None = None
         self.task_queue_store = TaskQueueStore(self._task_queue_path())
         self.task_manager.changed.connect(self._on_task_snapshot_changed)
@@ -65,6 +66,7 @@ class TaskQueueHandlers:
         self._persist_queued_tasks()
 
     def _execute_processing_task(self, task: AppTask) -> None:
+        self._cancelled_processing_task_ids.discard(task.task_id)
         record = self.history_service.get_record_by_key(task.record_key)
         if record is None:
             self.task_manager.fail_running(task.task_id, "历史记录不存在")
@@ -108,10 +110,20 @@ class TaskQueueHandlers:
             self.task_manager.mark_running(task_id, running.stage, "正在取消")
             worker.request_cancel()
             return
+        if getattr(self, "processing_source", None) == "preprocess":
+            self._cancelled_processing_task_ids.add(task_id)
         self.task_manager.cancel_running(task_id, "已取消")
         self.current_processing_task = None
         self._persist_queued_tasks()
         self._start_next_processing_task()
+
+    def _consume_cancelled_processing_task(self, task_id: str) -> bool:
+        if not task_id:
+            return False
+        if task_id not in self._cancelled_processing_task_ids:
+            return False
+        self._cancelled_processing_task_ids.discard(task_id)
+        return True
 
     def _on_task_snapshot_changed(self, snapshot: object) -> None:
         refresh = getattr(self, "_refresh_task_panel", None)

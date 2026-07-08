@@ -16,6 +16,7 @@ from ..audio.preprocess import (
 )
 from ..utils.logging import file_context, log_event, record_context
 from ..history.service import HistoryRecord
+from ..tasks import TaskStage
 from ..workers.preprocess import AudioPreprocessWorker
 
 
@@ -210,6 +211,10 @@ class ImportHandlers:
         self.is_processing = True
         task_id = self._new_task_id("preprocess")
         self.active_task_ids["preprocess"] = task_id
+        queue_task = self._queue_task_for_record(record)
+        queue_task_id = queue_task.task_id if queue_task else ""
+        if queue_task is not None:
+            self.task_manager.mark_running(queue_task.task_id, TaskStage.PREPROCESSING, "正在处理音频")
         self.recording_hint_label.setText("处理音频")
         self._set_processing_ui(True)
         self.load_recordings()
@@ -241,11 +246,11 @@ class ImportHandlers:
         worker = AudioPreprocessWorker(request, self, config=self.config)
         worker.progress.connect(self._on_audio_preprocess_progress)
         worker.completed.connect(
-            lambda result, r=record, s=source, label=status_after_success: self._on_audio_preprocess_completed(
-                r, result, s, label
+            lambda result, r=record, s=source, label=status_after_success, qid=queue_task_id: self._on_audio_preprocess_completed(
+                r, result, s, label, qid
             )
         )
-        worker.failed.connect(lambda error, r=record: self._on_audio_preprocess_failed(r, error))
+        worker.failed.connect(lambda error, r=record, qid=queue_task_id: self._on_audio_preprocess_failed(r, error, qid))
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
@@ -262,7 +267,10 @@ class ImportHandlers:
         result: AudioPreprocessResult,
         source: str,
         status_after_success: str,
+        queue_task_id: str = "",
     ) -> None:
+        if self._consume_cancelled_processing_task(queue_task_id):
+            return
         record = self.history_service.save_preprocess_result(record, result)
         task_id = self.active_task_ids.pop("preprocess", "")
         log_event(
@@ -290,7 +298,14 @@ class ImportHandlers:
             return
         self._handle_audio_record_ready(record, status_after_success, source=source)
 
-    def _on_audio_preprocess_failed(self, record: HistoryRecord, error: AudioInputError) -> None:
+    def _on_audio_preprocess_failed(
+        self,
+        record: HistoryRecord,
+        error: AudioInputError,
+        queue_task_id: str = "",
+    ) -> None:
+        if self._consume_cancelled_processing_task(queue_task_id):
+            return
         was_selected = bool(self.current_record and self.current_record.record_key == record.record_key)
         record = self.history_service.mark_input_error(record, error)
         task_id = self.active_task_ids.pop("preprocess", "")
