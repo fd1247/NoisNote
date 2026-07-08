@@ -74,7 +74,9 @@ class SettingsHandlers:
         self.settings_panel._refresh_asr_model_options()
 
     def _on_model_download_failed(self, name: str, error: str) -> None:
-        self._set_status(f"模型下载失败：{error}")
+        message = f"模型下载失败：{error}"
+        self._set_status(message)
+        self._show_error(message)
 
     def _on_model_download_completed(self, name: str) -> None:
         self._set_status("模型下载完成")

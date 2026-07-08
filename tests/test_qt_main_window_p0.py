@@ -18,9 +18,10 @@ from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
 
 from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
-from src.history.service import HistoryService, HistoryStatus
+from src.history.service import HistoryService
 from src.history.types import format_size
 from src.app.main_window import MainWindow
+from src.remote_import import RemoteMediaInfo
 from src.ui.pages.content import PlaybackRateCombo, SeekSlider
 
 
@@ -274,7 +275,7 @@ def test_detail_header_has_action_menu_and_metadata_button(monkeypatch, tmp_path
         app.processEvents()
 
 
-def test_detail_action_menu_enable_rules(monkeypatch, tmp_path: Path) -> None:
+def test_detail_action_menu_actions_stay_enabled_for_available_record(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -285,49 +286,54 @@ def test_detail_action_menu_enable_rules(monkeypatch, tmp_path: Path) -> None:
 
         window._load_history_record(record)
 
-        assert window.detail_transcribe_action.isEnabled()
-        assert not window.detail_summary_action.isEnabled()
-        assert window.detail_open_folder_action.isEnabled()
-        assert window.detail_delete_action.isEnabled()
+        assert all(action.isEnabled() for action in window.detail_action_menu.actions())
         assert window.detail_metadata_button.isEnabled()
     finally:
         window.close()
         app.processEvents()
 
 
-def test_detail_action_menu_transcribe_disabled_for_missing_audio(monkeypatch, tmp_path: Path) -> None:
+def test_detail_action_menu_transcribe_missing_audio_shows_reason(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
     try:
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "meeting" / "audio.wav")
         record = service.scan()[0]
         window.history_service = service
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
 
         window._load_history_record(record)
         record.audio_path.unlink()
         window._sync_detail_action_menu()
+        window.detail_transcribe_action.trigger()
 
-        assert not window.detail_transcribe_action.isEnabled()
+        assert window.detail_transcribe_action.isEnabled()
+        assert messages == ["当前记录没有可转录的音频文件"]
     finally:
         window.close()
         app.processEvents()
 
 
-def test_detail_action_menu_transcribe_disabled_while_processing(monkeypatch, tmp_path: Path) -> None:
+def test_detail_action_menu_transcribe_while_processing_shows_reason(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
     try:
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "meeting" / "audio.wav")
         record = service.scan()[0]
         window.history_service = service
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
 
         window._load_history_record(record)
         window.is_processing = True
         window._sync_detail_action_menu()
+        window.detail_transcribe_action.trigger()
 
-        assert not window.detail_transcribe_action.isEnabled()
+        assert window.detail_transcribe_action.isEnabled()
+        assert messages == ["正在处理中，请稍后重试"]
 
         window.is_processing = False
         window._sync_detail_action_menu()
@@ -338,14 +344,21 @@ def test_detail_action_menu_transcribe_disabled_while_processing(monkeypatch, tm
         app.processEvents()
 
 
-def test_detail_more_button_disabled_without_current_record(monkeypatch, tmp_path: Path) -> None:
+def test_detail_more_button_and_actions_stay_enabled_without_current_record(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
     try:
         window.current_record = None
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
         window._sync_detail_action_menu()
 
-        assert not window.detail_more_button.isEnabled()
+        assert window.detail_more_button.isEnabled()
+        assert all(action.isEnabled() for action in window.detail_action_menu.actions())
+
+        window.detail_transcribe_action.trigger()
+
+        assert messages == ["请先选择一条历史记录"]
 
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "meeting" / "audio.wav")
@@ -426,12 +439,8 @@ def test_show_metadata_details_toggles_inline_panel_and_scroll_state(monkeypatch
         assert window.detail_metadata_panel.maximumHeight() >= 0
         labels = [label.text() for label in window.detail_metadata_panel.findChildren(QLabel)]
         assert "音频时长" in labels
-        assert "状态" in labels
-        metadata_status_values = [
-            label for label in window.detail_metadata_panel.findChildren(QLabel) if label.objectName() == "DetailStatusPill"
-        ]
-        assert len(metadata_status_values) == 1
-        assert metadata_status_values[0].sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+        assert "状态" not in labels
+        assert "last_error" in labels
 
         window._on_detail_web_command(
             {
@@ -666,7 +675,7 @@ def test_metadata_refresh_keeps_visible_rows_when_panel_is_expanded(monkeypatch,
         visible_values = [
             label
             for label in window.detail_metadata_panel.findChildren(QLabel)
-            if label.objectName() in {"DetailMetadataValue", "DetailStatusPill"} and label.isVisible()
+            if label.objectName() == "DetailMetadataValue" and label.isVisible()
         ]
 
         assert visible_values
@@ -1190,14 +1199,20 @@ def test_multi_select_records_and_move_to_notebook(monkeypatch, tmp_path: Path) 
         window.history_service = HistoryService.from_notebooks(window.config["notebooks"])
         window.load_recordings()
 
-        history_record_item_at(window, 0).setSelected(True)
-        history_record_item_at(window, 2).setSelected(True)
+        items_by_id = {
+            str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1)).split(":", 1)[-1]:
+            history_record_item_at(window, row)
+            for row in range(history_tree_record_count(window))
+        }
+        items_by_id["a"].setSelected(True)
+        items_by_id["c"].setSelected(True)
         expected_keys = [
             str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1))
-            for row in (0, 2)
+            for row in range(history_tree_record_count(window))
+            if str(history_record_item_at(window, row).data(0, Qt.ItemDataRole.UserRole + 1)).split(":", 1)[-1] in {"a", "c"}
         ]
         window.history_tree.setCurrentItem(
-            history_record_item_at(window, 2),
+            items_by_id["c"],
             0,
             QItemSelectionModel.SelectionFlag.NoUpdate,
         )
@@ -1338,6 +1353,51 @@ def test_new_notebook_dialog_adds_and_switches_notebook(monkeypatch, tmp_path: P
         app.processEvents()
 
 
+def test_new_notebook_dialog_rejects_empty_path(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        class FakeDialog:
+            DialogCode = QDialog.DialogCode
+
+            def __init__(self, parent=None):
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def values(self):
+                return "工作", Path("")
+
+        monkeypatch.setattr("src.handlers.history_view.NewNotebookDialog", FakeDialog)
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window.show_new_notebook_dialog()
+
+        assert messages == ["请选择笔记本根文件夹"]
+        assert not any(item["name"] == "工作" for item in window.config.get("notebooks", []))
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_model_download_failure_shows_dialog(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_model_download_failed("Qwen3-ASR-0.6B-GGUF", "网络异常")
+
+        assert messages == ["模型下载失败：网络异常"]
+        assert window.status_label.text() == "模型下载失败：网络异常"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_manage_notebooks_dialog_omits_missing_notebook(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1461,7 +1521,7 @@ def test_detail_header_populates_record_metadata(monkeypatch, tmp_path: Path) ->
         assert window.detail_title_label.text() == "meeting"
         assert window.detail_duration_label.text() == record.duration_text
         assert window.detail_size_label.text() == format_size(record.total_size_bytes)
-        assert window.detail_status_label.text() == record.status_text
+        assert not hasattr(window, "detail_status_label")
         assert window.detail_time_label.text() == record.created_at.strftime("%Y-%m-%d %H:%M")
         assert not hasattr(window, "export_button")
         assert window.windowTitle() == "meeting - NoisNote"
@@ -1661,7 +1721,7 @@ def test_summary_processing_status_restores_after_switching_records(monkeypatch,
         window._load_history_record(records["a"])
         assert not window.detail_processing_status_label.isHidden()
         assert "正在总结" in window.detail_processing_status_label.text()
-        assert window.manual_summary_button.isHidden()
+        assert not hasattr(window, "manual_summary_button")
     finally:
         window.close()
         app.processEvents()
@@ -1711,6 +1771,70 @@ def test_summary_processing_status_uses_static_detail_text(monkeypatch, tmp_path
         app.processEvents()
 
 
+def test_summary_api_key_failure_uses_documented_message(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "转录内容")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        window.transcript_plain_text = "转录内容"
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_summary_failed("API key is invalid")
+
+        assert messages == ["总结失败：API Key 无效或未配置，请在设置中检查 LLM 配置。"]
+        assert window.summary_status.text() == "总结失败：API Key 无效或未配置，请在设置中检查 LLM 配置。"
+        refreshed = service.scan()[0]
+        assert refreshed.last_error == {
+            "stage": "summary",
+            "message": "总结失败：API Key 无效或未配置，请在设置中检查 LLM 配置。",
+            "details": "",
+        }
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_summary_http_failure_uses_documented_message(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "转录内容")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        window.transcript_plain_text = "转录内容"
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_summary_failed("Client error '400 Bad Request' for url 'https://api.deepseek.com/chat/completions'")
+
+        assert messages == ["总结失败：LLM API 返回错误，请检查模型名、Base URL 和服务状态。"]
+        assert window.summary_status.text() == "总结失败：LLM API 返回错误，请检查模型名、Base URL 和服务状态。"
+        refreshed = service.scan()[0]
+        assert refreshed.last_error == {
+            "stage": "summary",
+            "message": "总结失败：LLM API 返回错误，请检查模型名、Base URL 和服务状态。",
+            "details": "",
+        }
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_unselected_summary_failure_does_not_update_current_detail(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1729,14 +1853,13 @@ def test_unselected_summary_failure_does_not_update_current_detail(monkeypatch, 
         window.is_processing = True
         window.processing_started_at["summary"] = 1.0
         window.summary_status.setText("B 详情状态")
-        window.manual_summary_button.setVisible(True)
         monkeypatch.setattr(window, "_show_error", lambda *_args, **_kwargs: None)
 
         window._on_summary_failed("API timeout")
 
         assert window.current_record.record_id == "b"
         assert window.summary_status.text() == "B 详情状态"
-        assert not window.manual_summary_button.isHidden()
+        assert not hasattr(window, "manual_summary_button")
     finally:
         window.close()
         app.processEvents()
@@ -1854,6 +1977,113 @@ def test_retry_transcription_confirm_text_is_user_friendly(monkeypatch, tmp_path
         app.processEvents()
 
 
+def test_retry_transcription_without_audio_uses_audio_file_wording(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        info = RemoteMediaInfo(
+            url="https://example.com/video",
+            extractor="generic",
+            webpage_url="https://example.com/video",
+            title="Subtitle Only",
+            duration_seconds=60,
+        )
+        record = service.create_remote_record(info)
+        window.history_service = service
+        window.current_record = record
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window.retry_transcription()
+
+        assert messages == ["当前记录没有可转录的音频文件"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_missing_model_transcription_failure_shows_dialog_and_keeps_last_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_transcription_failed(
+            "模型未下载，请先下载模型。",
+            {"error": {"error_type": "MissingModelDirectory"}},
+        )
+
+        assert messages == ["转录失败：模型未下载，请先在设置 > 模型中下载 ASR 模型。"]
+        refreshed = service.scan()[0]
+        assert refreshed.last_error == {
+            "stage": "transcription",
+            "message": "模型未下载，请先下载模型。",
+            "details": "",
+        }
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_unknown_transcription_failure_shows_actionable_dialog(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_transcription_failed("worker exited unexpectedly", {"error": {"error_type": "ProcessExited"}})
+
+        assert messages == ["转录失败：转录进程异常退出，请重试；如果持续失败，请查看日志。"]
+        assert service.scan()[0].last_error == {
+            "stage": "transcription",
+            "message": "worker exited unexpectedly",
+            "details": "",
+        }
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_empty_speech_transcription_failure_shows_lightweight_reason(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_transcription_failed("未识别到有效语音内容")
+
+        assert messages == []
+        assert window.status_label.text() == "未识别到有效语音内容，请换一段有声音的音频后重试。"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1906,8 +2136,11 @@ def test_transcription_empty_result_becomes_no_valid_speech_error(monkeypatch, t
         window._on_transcription_completed("")
 
         scanned = service.scan()[0]
-        assert scanned.status == HistoryStatus.ERROR
-        assert scanned.error_message == "未识别到有效语音内容"
+        assert scanned.last_error == {
+            "stage": "transcription",
+            "message": "未识别到有效语音内容",
+            "details": "",
+        }
         assert "未识别到有效语音内容" in window.transcript_status.text()
     finally:
         window.close()
@@ -2217,6 +2450,8 @@ def test_detail_tab_toolbar_has_copy_search_and_edit_toggle_buttons(monkeypatch,
         assert not window.detail_edit_toggle_button.icon().isNull()
         assert window.detail_edit_toggle_button.toolTip() == "编辑"
         assert not window.detail_search_bar.isVisible()
+        assert not hasattr(window, "manual_summary_button")
+        assert not hasattr(window, "retry_transcription_button")
 
         window.detail_edit_toggle_button.click()
 
@@ -2487,7 +2722,8 @@ def test_detail_copy_command_updates_clipboard(monkeypatch, tmp_path: Path) -> N
         )
 
         assert QApplication.clipboard().text() == "copy me"
-        assert "copy" in window.status_label.text().lower() or "复制" in window.status_label.text()
+        assert window.detail_copy_notice_label.text() == "详情内容已复制"
+        assert not window.detail_copy_notice_label.isHidden()
     finally:
         window.close()
         app.processEvents()
@@ -2657,6 +2893,76 @@ def test_manual_summary_uses_cached_or_record_transcript(monkeypatch, tmp_path: 
         app.processEvents()
 
 
+def test_manual_summary_existing_summary_requires_overwrite_confirmation(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    started: list[str] = []
+    confirmations: list[tuple[str, str]] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "record transcript")
+        service.save_summary(record, "# old summary")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.start_summarization = lambda text, _record=None: started.append(text)
+
+        def fake_confirm(parent, title, text, confirm_text="OK", cancel_text="取消"):
+            confirmations.append((title, text))
+            return False
+
+        monkeypatch.setattr("src.handlers.summary.confirm_without_icon", fake_confirm)
+
+        window.manual_summarize()
+
+        assert confirmations == [("生成总结", "当前记录已有总结内容，是否覆盖")]
+        assert started == []
+
+        monkeypatch.setattr("src.handlers.summary.confirm_without_icon", lambda *args, **kwargs: True)
+        window.manual_summarize()
+
+        assert started == ["record transcript"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+
+        window._load_history_record(record)
+
+        assert not window.transcript_tab_button.isHidden()
+        assert not window.timeline_tab_button.isHidden()
+        assert not window.summary_tab_button.isHidden()
+        assert window.transcript_status.text() == ""
+        assert window.timeline_status.text() == ""
+        assert window.summary_status.text() == ""
+        assert window.detail_webview.current_payload["content"] == ""
+
+        window.summary_tab_button.click()
+        app.processEvents()
+        assert window.detail_webview.current_payload["mode"] == "summary"
+        assert window.detail_webview.current_payload["content"] == ""
+
+        window.timeline_tab_button.click()
+        app.processEvents()
+        assert window.detail_webview.current_payload["mode"] == "timeline"
+        assert window.detail_webview.current_payload["content"] == ""
+        assert window.detail_webview.current_payload["timeline"] == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_detail_status_rows_are_hidden_from_body(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -2787,6 +3093,34 @@ def test_detail_web_command_placeholder_does_not_change_status_or_state(monkeypa
         app.processEvents()
 
 
+def test_detail_web_command_empty_copy_shows_visible_status(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.status_label.hide()
+
+        window._on_detail_web_command(
+            {
+                "command": "copy",
+                "recordKey": record.record_key,
+                "revision": window.detail_revision,
+                "mode": "transcript",
+                "text": "",
+            }
+        )
+
+        assert window.detail_copy_notice_label.text() == "详情内容为空，无法复制"
+        assert not window.detail_copy_notice_label.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_summary_page_renders_markdown_but_copies_source(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -2829,6 +3163,33 @@ def test_copy_transcript_uses_detail_cache_not_hidden_widget(monkeypatch, tmp_pa
         window.copy_panel_text("transcript")
 
         assert QApplication.clipboard().text() == "cached transcript"
+        assert window.transcript_copy_notice_label.text() == "转录文字已复制"
+        assert not window.transcript_copy_notice_label.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_active_detail_copy_shows_notice_near_detail_copy_button(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "detail transcript")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.transcript_plain_text = "detail transcript"
+        QApplication.clipboard().clear()
+
+        window.copy_panel_text("active")
+
+        assert QApplication.clipboard().text() == "detail transcript"
+        assert window.detail_copy_notice_label.text() == "转录文字已复制"
+        assert not window.detail_copy_notice_label.isHidden()
+        assert window.transcript_copy_notice_label.isHidden()
     finally:
         window.close()
         app.processEvents()
@@ -2851,6 +3212,8 @@ def test_copy_timeline_uses_detail_timeline_text(monkeypatch, tmp_path: Path) ->
 
         assert "00:01.250 - 00:03.500" in QApplication.clipboard().text()
         assert "timeline sentence" in QApplication.clipboard().text()
+        assert window.timeline_copy_notice_label.text() == "逐句时间轴已复制"
+        assert not window.timeline_copy_notice_label.isHidden()
     finally:
         window.close()
         app.processEvents()
@@ -3097,6 +3460,73 @@ def test_processing_record_switch_keeps_playback_available_without_preloading_so
         assert fake.source is not None
         assert not fake.source.isEmpty()
         assert fake.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_playback_without_audio_shows_temporary_notice_near_player(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        info = RemoteMediaInfo(
+            url="https://example.com/video",
+            extractor="generic",
+            webpage_url="https://example.com/video",
+            title="Subtitle Only",
+            duration_seconds=60,
+        )
+        record = service.create_remote_record(info)
+        service.save_transcript(record, "字幕文本")
+        record = service.save_remote_metadata(
+            record,
+            {"source_kind": "remote_subtitle", "transcript_source": "external_subtitle"},
+        )
+        window.history_service = service
+
+        window._load_history_record(record)
+        window.show()
+        app.processEvents()
+        assert window.playback_play_button.isEnabled()
+        play_geometry = window.playback_play_button.geometry()
+        back_geometry = window.playback_back_button.geometry()
+        forward_geometry = window.playback_forward_button.geometry()
+
+        window.toggle_playback()
+        app.processEvents()
+
+        assert window.playback_notice_label.text() == "缺少可播放的音频"
+        assert not window.playback_notice_label.isHidden()
+        button_top_left = window.playback_play_button.mapTo(
+            window.playback_widget,
+            window.playback_play_button.rect().topLeft(),
+        )
+        assert window.playback_notice_label.geometry().bottom() <= button_top_left.y()
+        assert window.playback_play_button.geometry() == play_geometry
+        assert window.playback_back_button.geometry() == back_geometry
+        assert window.playback_forward_button.geometry() == forward_geometry
+        QTest.qWait(2100)
+        assert window.playback_notice_label.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_playback_decode_error_shows_temporary_notice(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        handler = getattr(window, "_on_playback_error", None)
+        assert callable(handler)
+
+        handler(QMediaPlayer.Error.ResourceError, "unsupported codec")
+        app.processEvents()
+
+        assert window.playback_notice_label.text() == "音频播放失败，当前系统可能不支持该格式。"
+        assert not window.playback_notice_label.isHidden()
+        QTest.qWait(2100)
+        assert window.playback_notice_label.isHidden()
     finally:
         window.close()
         app.processEvents()

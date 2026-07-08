@@ -153,15 +153,6 @@ QLabel#DetailMetaSeparator {
     color: #7a8496;
     font-size: 13px;
 }
-QLabel#DetailStatusPill {
-    background: #e7f8ee;
-    border: 1px solid #c3ead4;
-    border-radius: 10px;
-    color: #15803d;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 2px 8px;
-}
 QLabel#DetailProcessingStatus {
     color: #6b7280;
     font-size: 12px;
@@ -180,6 +171,16 @@ QLabel#DetailMetadataValue {
 QLabel#PlayerTime {
     color: #6b7280;
     min-width: 42px;
+}
+QLabel#PlayerNotice {
+    color: #b45309;
+    font-size: 12px;
+    min-width: 112px;
+}
+QLabel#CopyNotice {
+    color: #15803d;
+    font-size: 12px;
+    min-width: 96px;
 }
 QLabel#HotwordHeroTitle {
     color: #111827;

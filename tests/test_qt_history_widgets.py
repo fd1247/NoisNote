@@ -10,7 +10,7 @@ from PySide6.QtCore import QEvent, QPointF
 from PySide6.QtGui import QEnterEvent
 from PySide6.QtWidgets import QApplication
 
-from src.history.service import HistoryRecord, HistoryStatus
+from src.history.service import HistoryRecord
 from src.ui.widgets.history_item import HistoryListItemWidget
 
 
@@ -45,7 +45,6 @@ def make_record(root: Path, record_id: str = "20260624_120000") -> HistoryRecord
         duration_seconds=10,
         audio_size_bytes=1024,
         total_size_bytes=1024,
-        status=HistoryStatus.AUDIO_ONLY,
     )
 
 

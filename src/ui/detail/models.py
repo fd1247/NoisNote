@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from src.app.config import DEFAULT_MODEL_CATALOG
 from src.asr.timestamps import format_display_time
 from src.history.types import format_duration_seconds, format_size
+from src.llm.errors import summary_failure_message
 
 
 _VALID_MODES = {"transcript", "timeline", "summary"}
@@ -124,7 +125,7 @@ def build_metadata_fields(record: Any) -> list[dict[str, str]]:
                 "label": "总结模型",
                 "value": _summary_model(metadata),
             },
-            {"label": "状态", "value": str(getattr(record, "status_text", _MISSING) or _MISSING)},
+            {"label": "last_error", "value": _last_error_text(metadata)},
         ]
     )
     return fields
@@ -337,6 +338,39 @@ def _summary_model(metadata: dict[str, Any]) -> str:
     if _metadata_value(metadata, ("processing", "summary", "status")) != "completed":
         return _MISSING
     return _metadata_first(metadata, ("processing", "summary", "model"), ("llm", "model"))
+
+
+def _last_error_text(metadata: dict[str, Any]) -> str:
+    value = metadata.get("last_error")
+    if not isinstance(value, dict):
+        legacy = str(metadata.get("error_message") or "").strip()
+        return legacy or "None"
+    message = str(value.get("message") or "").strip()
+    if not message:
+        return "None"
+    raw_stage = str(value.get("stage") or "").strip()
+    if raw_stage == "summary" and not message.startswith("总结失败："):
+        friendly_message = summary_failure_message(message)
+        if friendly_message != f"总结失败：{message}":
+            return friendly_message
+    stage = _last_error_stage_label(raw_stage)
+    details = str(value.get("details") or "").strip()
+    if details:
+        message = f"{message}（{details}）"
+    if message.startswith(f"{stage}失败："):
+        return message
+    if stage:
+        return f"{stage}：{message}"
+    return message
+
+
+def _last_error_stage_label(stage: str) -> str:
+    return {
+        "input": "导入",
+        "transcription": "转录",
+        "summary": "总结",
+        "general": "通用",
+    }.get(stage, stage)
 
 
 def _model_display_name(value: Any) -> str:

@@ -203,13 +203,15 @@ def record_context(record) -> dict[str, Any]:
     """返回历史记录的安全摘要。"""
     if not record:
         return {}
+    last_error = getattr(record, "last_error", None)
+    last_error_stage = str(last_error.get("stage") or "") if isinstance(last_error, dict) else ""
     return {
         "record_id": getattr(record, "record_id", ""),
         "source_kind": getattr(record, "source_kind", ""),
         "audio_ext": getattr(record, "audio_path", Path("")).suffix.lower(),
         "audio_size_bytes": getattr(record, "audio_size_bytes", 0),
         "duration_seconds": getattr(record, "duration_seconds", None),
-        "status": getattr(getattr(record, "status", ""), "value", str(getattr(record, "status", ""))),
+        "last_error_stage": last_error_stage,
         "storage_mode": getattr(record, "storage_mode", ""),
     }
 

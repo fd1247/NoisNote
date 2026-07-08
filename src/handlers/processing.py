@@ -7,7 +7,6 @@ from typing import Any
 
 from ..app.config import DEFAULT_MODEL_CATALOG_BY_NAME
 from ..history.service import HistoryRecord
-from ..history.types import HistoryStatus
 
 
 class ProcessingHandlers:
@@ -25,8 +24,6 @@ class ProcessingHandlers:
         html = self._detail_processing_status_html()
         self.detail_processing_status_label.setText(html)
         self.detail_processing_status_label.setVisible(bool(html))
-        if self.is_processing and self._is_current_record_processing():
-            self.manual_summary_button.setVisible(False)
 
     def _detail_processing_status_html(self) -> str:
         if not (self.is_processing and self._is_current_record_processing()):
@@ -57,7 +54,7 @@ class ProcessingHandlers:
             return ""
         if record.record_key in self.history_record_notices:
             return self.history_record_notices[record.record_key]
-        if record.status == HistoryStatus.ERROR and record.record_key not in self.dismissed_history_notice_ids:
+        if record.last_error and record.record_key not in self.dismissed_history_notice_ids:
             return "出现异常，点击查看详情"
         return ""
 
@@ -67,7 +64,7 @@ class ProcessingHandlers:
 
     def _dismiss_history_notice(self, record: HistoryRecord) -> None:
         self.history_record_notices.pop(record.record_key, None)
-        if record.status == HistoryStatus.ERROR:
+        if record.last_error:
             self.dismissed_history_notice_ids.add(record.record_key)
 
     def _add_history_notice_if_unselected(self, record: HistoryRecord | None, text: str) -> None:
@@ -160,9 +157,6 @@ class ProcessingHandlers:
     def _set_processing_ui(self, processing: bool) -> None:
         self.record_button.setEnabled(not processing and bool(self.recorder))
         self._sync_sidebar_actions()
-
-    def _set_action_buttons(self, visible: bool) -> None:
-        self.manual_summary_button.setVisible(visible)
 
     def _finish_processing(self, record: HistoryRecord | None, status: str) -> None:
         was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)

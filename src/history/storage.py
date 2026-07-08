@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .types import HistoryRecord, HistoryStatus
+from .types import HistoryRecord
 
 
 class HistoryStorageMixin:
@@ -45,7 +45,7 @@ class HistoryStorageMixin:
             "transcript_file": existing.get("transcript_file") or record.transcript_path.name,
             "summary_file": record.summary_path.name,
             "markdown_file": existing.get("markdown_file") or record.markdown_path.name,
-            "status": record.status.value,
+            "last_error": self._normalized_last_error(existing.get("last_error"), existing.get("error_message")),
             "processing": self._default_processing_metadata(existing.get("processing")),
         }
         for key in (
@@ -69,10 +69,6 @@ class HistoryStorageMixin:
         ):
             if key in existing:
                 metadata[key] = existing[key]
-        if record.status == HistoryStatus.ERROR and record.error_message:
-            metadata["error_message"] = record.error_message
-        elif existing.get("error_message"):
-            metadata["error_message"] = existing["error_message"]
         return metadata
 
     def _record_metadata(self, record: HistoryRecord) -> dict[str, Any]:
@@ -111,40 +107,43 @@ class HistoryStorageMixin:
     def _metadata_needs_refresh(self, metadata: dict[str, Any]) -> bool:
         if metadata.get("version") != self.METADATA_VERSION:
             return True
+        if "status" in metadata or "last_error" not in metadata:
+            return True
         processing = metadata.get("processing")
         if not isinstance(processing, dict):
             return True
         return any(step not in processing for step in self.PROCESSING_STEPS)
 
-    def _has_failed_processing_step(self, metadata: dict[str, Any]) -> bool:
-        processing = metadata.get("processing")
-        if not isinstance(processing, dict):
-            return False
-        for step in self.PROCESSING_STEPS:
-            step_data = processing.get(step)
-            if isinstance(step_data, dict) and step_data.get("status") == "failed":
-                return True
-        return False
+    def _normalized_last_error(self, value: Any, legacy_message: Any = None) -> dict[str, Any] | None:
+        """把历史错误字段收敛成轻量 last_error 结构。"""
+        if isinstance(value, dict):
+            message = str(value.get("message") or "").strip()
+            if not message:
+                return None
+            return {
+                "stage": str(value.get("stage") or "general"),
+                "message": message,
+                "details": str(value.get("details") or ""),
+            }
+        message = str(legacy_message or "").strip()
+        if not message:
+            return None
+        return {"stage": "general", "message": message, "details": ""}
 
-    def _status_for_paths(
-        self,
-        audio_path: Path,
-        transcript_path: Path,
-        summary_path: Path,
-        markdown_path: Path,
-        metadata_status: str = "",
-    ) -> HistoryStatus:
-        if metadata_status == HistoryStatus.ERROR.value and not transcript_path.exists():
-            return HistoryStatus.ERROR
-        if markdown_path.exists():
-            return HistoryStatus.EXPORTED
-        if summary_path.exists():
-            return HistoryStatus.SUMMARIZED
-        if transcript_path.exists():
-            return HistoryStatus.TRANSCRIBED
-        if not audio_path.exists():
-            return HistoryStatus.MISSING_AUDIO
-        return HistoryStatus.AUDIO_ONLY
+    def _set_last_error(self, metadata: dict[str, Any], stage: str, message: str, details: str = "") -> None:
+        metadata["last_error"] = {
+            "stage": stage or "general",
+            "message": str(message or ""),
+            "details": str(details or ""),
+        }
+
+    def _clear_last_error_for_stage(self, metadata: dict[str, Any], stage: str) -> None:
+        last_error = self._normalized_last_error(metadata.get("last_error"), metadata.get("error_message"))
+        if last_error and last_error.get("stage") != stage:
+            metadata["last_error"] = last_error
+            return
+        metadata["last_error"] = None
+        metadata.pop("error_message", None)
 
     def _unique_record_id(self, base_id: str) -> str:
         safe_id = self._sanitize_record_name(base_id)

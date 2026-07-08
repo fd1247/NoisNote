@@ -9,7 +9,7 @@ from typing import Any
 
 from ..asr.timestamps import timeline_from_dicts, timeline_to_dicts, timeline_to_srt
 from ..utils.remote_urls import canonicalize_video_url
-from .types import DeleteResult, HistoryRecord, HistoryStatus, MoveRecordResult, NotebookConfig
+from .types import DeleteResult, HistoryRecord, MoveRecordResult, NotebookConfig
 from .storage import HistoryStorageMixin
 
 
@@ -162,12 +162,12 @@ class HistoryService(HistoryStorageMixin):
             "transcript_file": self.FOLDER_TRANSCRIPT,
             "summary_file": self.FOLDER_SUMMARY,
             "markdown_file": self.FOLDER_MARKDOWN,
-            "status": HistoryStatus.MISSING_AUDIO.value,
             "source_kind": "recording",
             "original_file_path": "",
             "normalized_audio_path": "",
             "audio_format": {},
             "input_error": None,
+            "last_error": None,
             "processing": self._default_processing_metadata(),
         }
         self._write_json(record_dir / self.FOLDER_METADATA, metadata)
@@ -197,7 +197,6 @@ class HistoryService(HistoryStorageMixin):
             "transcript_file": self.FOLDER_TRANSCRIPT,
             "summary_file": self.FOLDER_SUMMARY,
             "markdown_file": self.FOLDER_MARKDOWN,
-            "status": HistoryStatus.AUDIO_ONLY.value,
             "source_type": "recorded",
             "source_kind": "recording",
             "original_file_path": str(source),
@@ -208,6 +207,7 @@ class HistoryService(HistoryStorageMixin):
                 "format": target.suffix.lower().lstrip("."),
             },
             "input_error": None,
+            "last_error": None,
             "original_file_name": source.name,
             "processing": self._default_processing_metadata(),
         }
@@ -243,7 +243,6 @@ class HistoryService(HistoryStorageMixin):
             "transcript_file": self.FOLDER_TRANSCRIPT,
             "summary_file": self.FOLDER_SUMMARY,
             "markdown_file": self.FOLDER_MARKDOWN,
-            "status": HistoryStatus.AUDIO_ONLY.value,
             "source_type": "imported",
             "source_kind": source_kind or self._source_kind_for_path(source),
             "source_path": str(source),
@@ -255,6 +254,7 @@ class HistoryService(HistoryStorageMixin):
                 "format": source.suffix.lower().lstrip("."),
             },
             "input_error": None,
+            "last_error": None,
             "original_file_name": source.name,
             "storage_mode": self.STORAGE_REFERENCE,
             "import_strategy": self.STORAGE_REFERENCE,
@@ -294,7 +294,6 @@ class HistoryService(HistoryStorageMixin):
             "transcript_file": self.FOLDER_TRANSCRIPT,
             "summary_file": self.FOLDER_SUMMARY,
             "markdown_file": self.FOLDER_MARKDOWN,
-            "status": HistoryStatus.AUDIO_ONLY.value,
             "source_type": "imported",
             "source_kind": source_kind or self._source_kind_for_path(source),
             "source_path": str(source),
@@ -307,6 +306,7 @@ class HistoryService(HistoryStorageMixin):
                 "format": source.suffix.lower().lstrip("."),
             },
             "input_error": None,
+            "last_error": None,
             "original_file_name": source.name,
             "storage_mode": self.STORAGE_COPIED,
             "import_strategy": self.STORAGE_COPIED,
@@ -336,7 +336,6 @@ class HistoryService(HistoryStorageMixin):
             "summary_file": self.FOLDER_SUMMARY,
             "markdown_file": self.FOLDER_MARKDOWN,
             "external_subtitle_file": self.FOLDER_EXTERNAL_SUBTITLE,
-            "status": HistoryStatus.MISSING_AUDIO.value,
             "source_type": "remote_url",
             "source_kind": "remote_url",
             "source_path": canonical_url,
@@ -344,6 +343,7 @@ class HistoryService(HistoryStorageMixin):
             "normalized_audio_path": "",
             "audio_format": {},
             "input_error": None,
+            "last_error": None,
             "remote": {
                 "url": original_url,
                 "original_url": original_url,
@@ -376,7 +376,7 @@ class HistoryService(HistoryStorageMixin):
             "source_format": result.source_format,
         }
         metadata["input_error"] = None
-        metadata["status"] = HistoryStatus.AUDIO_ONLY.value
+        self._clear_last_error_for_stage(metadata, "input")
         self._write_json(record.metadata_path, metadata)
         self._write_folder_metadata(record.record_dir)
         return self._build_folder_record(record.record_dir) or record
@@ -385,8 +385,6 @@ class HistoryService(HistoryStorageMixin):
         """保存远程导入扩展元数据。"""
         stored = self._record_metadata(record)
         stored.update(metadata)
-        if record.transcript_path.exists() or (record.record_dir / self.FOLDER_TRANSCRIPT).exists():
-            stored["status"] = HistoryStatus.TRANSCRIBED.value
         self._write_json(record.metadata_path, stored)
         self._write_folder_metadata(record.record_dir)
         return self._build_folder_record(record.record_dir) or record
@@ -407,8 +405,8 @@ class HistoryService(HistoryStorageMixin):
         stored["duration_seconds"] = duration_seconds
         stored["audio_format"] = audio_format
         stored["normalized_audio_path"] = ""
-        stored["status"] = HistoryStatus.AUDIO_ONLY.value
         stored["input_error"] = None
+        self._clear_last_error_for_stage(stored, "input")
         self._write_json(record.metadata_path, stored)
         self._write_folder_metadata(record.record_dir)
         return self._build_folder_record(record.record_dir) or record
@@ -426,8 +424,10 @@ class HistoryService(HistoryStorageMixin):
                 "details": str(error),
             }
             message = str(error)
-        metadata["status"] = HistoryStatus.ERROR.value
-        metadata["error_message"] = message
+        details = ""
+        if isinstance(metadata.get("input_error"), dict):
+            details = str(metadata["input_error"].get("details") or "")
+        self._set_last_error(metadata, "input", message, details)
         self._write_json(record.metadata_path, metadata)
         return self._build_folder_record(record.record_dir) or record
 
@@ -470,8 +470,7 @@ class HistoryService(HistoryStorageMixin):
         if elapsed_seconds is not None:
             step_data["elapsed_seconds"] = round(max(0.0, elapsed_seconds), 3)
         step_data["error_message"] = ""
-        if not self._has_failed_processing_step(metadata):
-            metadata.pop("error_message", None)
+        self._clear_last_error_for_stage(metadata, step)
         self._write_json(record.metadata_path, metadata)
         self._write_folder_metadata(record.record_dir)
         return self._build_folder_record(record.record_dir) or record
@@ -485,9 +484,7 @@ class HistoryService(HistoryStorageMixin):
     ) -> HistoryRecord:
         """记录处理失败状态，保留错误详情用于后续排查。"""
         metadata = self._record_metadata(record)
-        if step == "transcription" or not record.transcript_path.exists():
-            metadata["status"] = HistoryStatus.ERROR.value
-        metadata["error_message"] = message
+        self._set_last_error(metadata, step or "general", message)
         if step:
             step_data = self._step_metadata(metadata, step)
             step_data["status"] = "failed"
@@ -582,7 +579,7 @@ class HistoryService(HistoryStorageMixin):
                 safe_path.unlink()
 
         metadata = self._record_metadata(record)
-        metadata["status"] = HistoryStatus.AUDIO_ONLY.value if record.audio_path.exists() else HistoryStatus.MISSING_AUDIO.value
+        metadata["last_error"] = None
         metadata.pop("error_message", None)
         metadata["processing"] = self._default_processing_metadata()
         self._write_json(record.metadata_path, metadata)
@@ -779,17 +776,10 @@ class HistoryService(HistoryStorageMixin):
             duration_seconds=duration,
             audio_size_bytes=self._file_size(audio_path),
             total_size_bytes=self._folder_size(record_dir),
-            status=self._status_for_paths(
-                audio_path,
-                transcript_path,
-                summary_path,
-                markdown_path,
-                str(metadata.get("status") or ""),
-            ),
             notebook_id=notebook.notebook_id,
             notebook_name=notebook.name,
             notebook_path=notebook.path,
-            error_message=str(metadata.get("error_message") or ""),
+            last_error=self._normalized_last_error(metadata.get("last_error"), metadata.get("error_message")),
             source_kind=str(metadata.get("source_kind") or metadata.get("source_type") or ""),
             original_file_path=source_audio_path,
             normalized_audio_path=normalized_audio_path,

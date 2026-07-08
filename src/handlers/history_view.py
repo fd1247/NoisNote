@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 
 from ..app.config import get_notebooks, normalize_notebooks, save_config
-from ..history.service import HistoryRecord, HistoryStatus
+from ..history.service import HistoryRecord
 from ..history.types import format_size
 from ..ui.dialogs.notebook import ManageNotebooksDialog, NewNotebookDialog
 
@@ -48,17 +48,13 @@ class HistoryViewHandlers:
         self.detail_duration_label.setText("--:--")
         self.detail_size_label.setText("--")
         self.detail_time_label.setText("--")
-        self.detail_status_label.setText("状态 --")
         self.detail_processing_status_label.hide()
         self._set_transcript_text("")
         self._set_timeline_items([])
-        self.timeline_tab_button.hide()
         self._set_summary_text("")
         self.transcript_status.setText("等待内容")
         self.timeline_status.setText("等待内容")
         self.summary_status.setText("等待内容")
-        self.manual_summary_button.hide()
-        self.retry_transcription_button.hide()
         if hasattr(self, "_bump_detail_revision"):
             self._bump_detail_revision()
         if hasattr(self, "_refresh_detail_payload"):
@@ -189,7 +185,8 @@ class HistoryViewHandlers:
         if not name:
             self._show_error("笔记本名称不能为空")
             return
-        if not str(path).strip():
+        path_text = str(path).strip()
+        if not path_text or path_text == ".":
             self._show_error("请选择笔记本根文件夹")
             return
         if self._notebook_path_exists(path):
@@ -293,25 +290,22 @@ class HistoryViewHandlers:
         self.page_title_label.setText(recording.record_dir.name)
         self._set_app_window_title(recording)
         self._update_detail_header(recording)
-        self.timeline_tab_button.setVisible(recording.has_timeline)
         self.playback_cc_button.setVisible(True)
         if hasattr(self, "_bump_detail_revision"):
             self._bump_detail_revision()
         if recording.input_error:
-            detail = recording.input_error.get("details") or recording.input_error.get("message") or recording.error_message
+            detail = recording.input_error.get("details") or recording.input_error.get("message") or _last_error_message(recording)
             self.transcript_status.setText(f"音频处理失败：{detail}")
-        elif recording.status == HistoryStatus.ERROR and recording.error_message:
-            self.transcript_status.setText(f"处理失败：{recording.error_message}")
+        elif _last_error_message(recording):
+            self.transcript_status.setText(f"处理失败：{_last_error_message(recording)}")
         else:
-            self.transcript_status.setText("已加载转录" if recording.has_transcript else "暂无转录")
-        self.summary_status.setText("已加载总结" if recording.has_summary else "暂无总结")
-        self.timeline_status.setText("已加载逐句时间轴" if recording.has_timeline else "暂无逐句时间轴")
+            self.transcript_status.setText("已加载转录" if recording.has_transcript else "")
+        self.summary_status.setText("已加载总结" if recording.has_summary else "")
+        self.timeline_status.setText("已加载逐句时间轴" if recording.has_timeline else "")
         if self.active_result_tab != "transcript":
             self._set_result_tab("transcript")
         else:
             self._ensure_transcript_loaded()
-        self.manual_summary_button.setVisible(recording.has_transcript and not recording.has_summary)
-        self._update_retry_transcription_button(recording)
         self._set_playback_source(recording)
         self._sync_detail_processing_view()
         if hasattr(self, "_refresh_detail_payload"):
@@ -410,7 +404,6 @@ class HistoryViewHandlers:
         self.detail_duration_label.setText(record.duration_text)
         self.detail_size_label.setText(format_size(record.total_size_bytes))
         self.detail_time_label.setText(record.created_at.strftime("%Y-%m-%d %H:%M"))
-        self.detail_status_label.setText(record.status_text)
 
     def _set_detail_title(self, title: str) -> None:
         """设置详情标题，超长记录名用省略号避免撑宽布局。"""
@@ -497,3 +490,10 @@ class HistoryViewHandlers:
     def _records_for_keys(self, record_keys: list[str]) -> list[HistoryRecord]:
         ordered_keys = {str(key) for key in record_keys if key}
         return [record for record in self.all_history_items if record.record_key in ordered_keys]
+
+
+def _last_error_message(record: HistoryRecord) -> str:
+    last_error = record.last_error if isinstance(record.last_error, dict) else None
+    if not last_error:
+        return ""
+    return str(last_error.get("message") or "").strip()

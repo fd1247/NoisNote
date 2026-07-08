@@ -426,7 +426,6 @@ class RecordingHandlers:
             self.timeline_status.setText("等待内容")
         self.summary_status.setText("等待内容")
         self.detail_processing_status_label.hide()
-        self.manual_summary_button.hide()
         self.record_button.setText("开始录音")
         self.record_button.setObjectName("RecordButton")
         self.record_button.style().unpolish(self.record_button)

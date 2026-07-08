@@ -5,7 +5,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 
-from src.history.types import HistoryRecord, HistoryStatus
+from src.history.types import HistoryRecord
 from src.ui.detail.models import (
     build_detail_payload,
     build_metadata_fields,
@@ -30,7 +30,6 @@ def _record(tmp_path: Path, **overrides) -> HistoryRecord:
         "duration_seconds": 61.2,
         "audio_size_bytes": 1024,
         "total_size_bytes": 2 * 1024 * 1024,
-        "status": HistoryStatus.TRANSCRIBED,
         "source_kind": "remote_url",
     }
     values.update(overrides)
@@ -119,14 +118,60 @@ def test_metadata_fields_include_remote_url_and_model_names(tmp_path: Path) -> N
         "转录耗时",
         "ASR模型",
         "总结模型",
-        "状态",
+        "last_error",
     ]
     assert by_label["来源"] == "视频链接"
     assert by_label["网址"] == "https://example.com/watch"
     assert by_label["创建日期"] == "2026-07-06 12:00:00"
     assert by_label["ASR模型"] == "Qwen3-ASR-1.7B GGUF"
     assert by_label["总结模型"] == "gpt-4.1"
-    assert by_label["状态"] == "已转录"
+    assert by_label["last_error"] == "None"
+
+
+def test_metadata_fields_show_last_error_as_final_item(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(
+        json.dumps(
+            {
+                "last_error": {
+                    "stage": "summary",
+                    "message": "API Key 无效",
+                    "details": "HTTP 401",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fields = build_metadata_fields(record)
+    labels = [field["label"] for field in fields]
+    by_label = {field["label"]: field["value"] for field in fields}
+
+    assert "状态" not in labels
+    assert labels[-1] == "last_error"
+    assert by_label["last_error"] == "总结失败：API Key 无效或未配置，请在设置中检查 LLM 配置。"
+
+
+def test_metadata_fields_map_raw_summary_http_last_error_to_friendly_text(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(
+        json.dumps(
+            {
+                "last_error": {
+                    "stage": "summary",
+                    "message": "Client error '400 Bad Request' for url 'https://api.deepseek.com/chat/completions'",
+                    "details": "",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
+
+    assert fields["last_error"] == "总结失败：LLM API 返回错误，请检查模型名、Base URL 和服务状态。"
 
 
 def test_metadata_summary_model_requires_completed_summary(tmp_path: Path) -> None:
@@ -173,7 +218,7 @@ def test_metadata_fields_prefer_remote_canonical_url(tmp_path: Path) -> None:
     assert fields["网址"] == "https://www.bilibili.com/video/BV1d6KS6SEwU"
 
 
-def test_metadata_fields_include_transcription_elapsed_before_status(tmp_path: Path) -> None:
+def test_metadata_fields_include_transcription_elapsed_before_last_error(tmp_path: Path) -> None:
     record = _record(tmp_path)
     record.record_dir.mkdir(parents=True)
     record.metadata_path.write_text(
@@ -186,7 +231,7 @@ def test_metadata_fields_include_transcription_elapsed_before_status(tmp_path: P
     by_label = {field["label"]: field["value"] for field in fields}
 
     assert by_label["转录耗时"] == "01:02"
-    assert labels[-1] == "状态"
+    assert labels[-1] == "last_error"
 
 
 def test_metadata_fields_recovers_partial_qwen_asr_model_display_name(tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from PySide6.QtCore import QMimeData, Qt, QUrl
 
 from src.audio.preprocess import AudioInputError, AudioPreprocessResult
 from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
-from src.history.service import HistoryService, HistoryStatus
+from src.history.service import HistoryService
 from src.app.main_window import MainWindow
 from src.asr.engine import TranscriptionProgress
 
@@ -206,8 +206,29 @@ def test_input_error_is_visible_in_history_detail(monkeypatch, tmp_path: Path) -
 
         window._load_history_record(record)
 
-        assert record.status == HistoryStatus.ERROR
+        assert record.last_error == {"stage": "input", "message": "转码失败。", "details": "stderr"}
         assert "音频处理失败：stderr" == window.transcript_status.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_audio_preprocess_failure_shows_blocking_dialog(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window._on_audio_preprocess_failed(record, AudioInputError("transcode_failed", "转码失败。", "stderr"))
+
+        assert messages == ["音频处理失败：转码失败。请检查文件是否可播放，或确认 ffmpeg 可用。"]
+        assert service.scan()[0].last_error == {"stage": "input", "message": "转码失败。", "details": "stderr"}
     finally:
         window.close()
         app.processEvents()
@@ -339,7 +360,8 @@ def test_video_import_with_auto_transcribe_off_does_not_preprocess(monkeypatch, 
         window._handle_audio_record_ready(record, "已导入视频", source="import")
 
         assert preprocess_calls == []
-        assert window.retry_transcription_button.text() == "开始转录"
+        assert not hasattr(window, "retry_transcription_button")
+        assert window.status_label.text() == "已导入视频，等待手动转录"
         assert not (record.record_dir / "audio.normalized.wav").exists()
     finally:
         window.close()

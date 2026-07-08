@@ -6,7 +6,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from src.history.service import HistoryRecord, HistoryService, HistoryStatus
+from src.history.service import HistoryRecord, HistoryService
 from src.history.types import format_duration_seconds
 
 
@@ -466,7 +466,7 @@ def test_scan_folder_record(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0].layout == "folder"
     assert items[0].record_id == "20260618_120000"
-    assert items[0].status == HistoryStatus.TRANSCRIBED
+    assert items[0].has_transcript
     assert items[0].duration_seconds == 1
     assert items[0].audio_size_bytes > 0
 
@@ -481,7 +481,6 @@ def test_scan_organizes_flat_record_into_folder(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0].layout == "folder"
     assert items[0].record_id == "20260618_120000"
-    assert items[0].status == HistoryStatus.TRANSCRIBED
     assert items[0].has_transcript
     assert not items[0].has_summary
     assert items[0].audio_path == tmp_path / "20260618_120000" / "audio.wav"
@@ -505,7 +504,7 @@ def test_save_text_for_folder_records(tmp_path: Path) -> None:
     assert service.read_summary(folder_record) == "folder summary"
     assert folder_record.summary_path == folder / "summary.md"
     assert (folder / "summary.md").read_text(encoding="utf-8") == "folder summary"
-    assert folder_record.status == HistoryStatus.SUMMARIZED
+    assert folder_record.has_summary
     assert (folder / "metadata.json").exists()
 
 
@@ -538,7 +537,7 @@ def test_scan_ignores_corrupt_metadata_and_rewrites_defaults(tmp_path: Path) -> 
     assert metadata["processing"]["summary"]["status"] == "pending"
 
 
-def test_mark_error_persists_failure_message(tmp_path: Path) -> None:
+def test_mark_error_persists_last_error(tmp_path: Path) -> None:
     service = HistoryService(tmp_path)
     folder = tmp_path / "20260618_120000"
     write_wav(folder / "audio.wav")
@@ -547,11 +546,11 @@ def test_mark_error_persists_failure_message(tmp_path: Path) -> None:
     failed = service.mark_error(record, "模型加载失败")
     scanned = service.scan()[0]
 
-    assert failed.status == HistoryStatus.ERROR
-    assert scanned.status == HistoryStatus.ERROR
-    assert scanned.error_message == "模型加载失败"
-    assert '"status": "error"' in (folder / "metadata.json").read_text(encoding="utf-8")
-    assert "模型加载失败" in (folder / "metadata.json").read_text(encoding="utf-8")
+    metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+    assert failed.last_error == {"stage": "general", "message": "模型加载失败", "details": ""}
+    assert scanned.last_error == {"stage": "general", "message": "模型加载失败", "details": ""}
+    assert "status" not in metadata
+    assert metadata["last_error"]["message"] == "模型加载失败"
 
 
 def test_mark_error_survives_rescan_with_processing_step(tmp_path: Path) -> None:
@@ -564,8 +563,11 @@ def test_mark_error_survives_rescan_with_processing_step(tmp_path: Path) -> None
     scanned = HistoryService(tmp_path).scan()[0]
     metadata = json.loads(scanned.metadata_path.read_text(encoding="utf-8"))
 
-    assert scanned.status == HistoryStatus.ERROR
-    assert scanned.error_message == "未识别到有效语音内容"
+    assert scanned.last_error == {
+        "stage": "transcription",
+        "message": "未识别到有效语音内容",
+        "details": "",
+    }
     assert metadata["processing"]["transcription"]["status"] == "failed"
     assert metadata["processing"]["transcription"]["error_message"] == "未识别到有效语音内容"
 
@@ -594,7 +596,7 @@ def test_processing_metadata_records_context_and_elapsed(tmp_path: Path) -> None
     assert step["error_message"] == ""
 
 
-def test_processing_success_clears_previous_error(tmp_path: Path) -> None:
+def test_processing_success_clears_matching_last_error(tmp_path: Path) -> None:
     service = HistoryService(tmp_path)
     folder = tmp_path / "20260618_120000"
     write_wav(folder / "audio.wav")
@@ -605,9 +607,23 @@ def test_processing_success_clears_previous_error(tmp_path: Path) -> None:
     completed = service.mark_processing_completed(failed, "transcription", 0.25)
     metadata = json.loads(completed.metadata_path.read_text(encoding="utf-8"))
 
-    assert "error_message" not in metadata
+    assert metadata["last_error"] is None
     assert metadata["processing"]["transcription"]["status"] == "completed"
     assert metadata["processing"]["transcription"]["error_message"] == ""
+
+
+def test_processing_success_keeps_unrelated_last_error(tmp_path: Path) -> None:
+    service = HistoryService(tmp_path)
+    folder = tmp_path / "20260618_120000"
+    write_wav(folder / "audio.wav")
+    record = service.scan()[0]
+
+    failed = service.mark_error(record, "总结失败", step="summary", elapsed_seconds=0.5)
+    completed = service.mark_processing_completed(failed, "transcription", 0.25)
+    metadata = json.loads(completed.metadata_path.read_text(encoding="utf-8"))
+
+    assert metadata["last_error"]["stage"] == "summary"
+    assert metadata["last_error"]["message"] == "总结失败"
 
 
 def test_asr_metadata_is_preserved_after_refresh(tmp_path: Path) -> None:
@@ -650,8 +666,7 @@ def test_clear_generated_results_keeps_audio_and_metadata(tmp_path: Path) -> Non
     assert not cleared.transcript_path.exists()
     assert not cleared.summary_path.exists()
     assert not cleared.markdown_path.exists()
-    assert cleared.status == HistoryStatus.AUDIO_ONLY
-    assert "error_message" not in metadata
+    assert metadata["last_error"] is None
     assert metadata["processing"]["transcription"]["status"] == "pending"
     assert metadata["processing"]["summary"]["status"] == "pending"
 
@@ -671,7 +686,6 @@ def test_clear_generated_results_rejects_record_root(tmp_path: Path) -> None:
         duration_seconds=None,
         audio_size_bytes=0,
         total_size_bytes=0,
-        status=HistoryStatus.AUDIO_ONLY,
     )
 
     try:
@@ -905,9 +919,12 @@ def test_scans_existing_copied_import_records(tmp_path: Path) -> None:
     (record_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
     record = HistoryService(tmp_path / "records").scan()[0]
+    rewritten = json.loads((record_dir / "metadata.json").read_text(encoding="utf-8"))
 
     assert record.audio_path == record_dir / "audio.wav"
     assert record.storage_mode == "copied"
+    assert "status" not in rewritten
+    assert rewritten["last_error"] is None
 
 
 def test_rename_record_updates_folder_and_metadata(tmp_path: Path) -> None:
@@ -979,7 +996,6 @@ def test_delete_rejects_unsafe_paths(tmp_path: Path) -> None:
         duration_seconds=None,
         audio_size_bytes=outside.stat().st_size,
         total_size_bytes=outside.stat().st_size,
-        status=HistoryStatus.AUDIO_ONLY,
     )
 
     result = service.delete_record(unsafe)
@@ -1001,7 +1017,6 @@ def test_delete_rejects_unsafe_paths(tmp_path: Path) -> None:
         duration_seconds=None,
         audio_size_bytes=0,
         total_size_bytes=0,
-        status=HistoryStatus.MISSING_AUDIO,
     )
 
     root_result = service.delete_record(root_record)

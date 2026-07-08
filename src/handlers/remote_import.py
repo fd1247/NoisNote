@@ -191,7 +191,6 @@ class RemoteImportHandlers:
         if record and self.config["audio"].get("auto_summarize", True) and getattr(result, "transcript_text", "").strip():
             self.start_summarization(getattr(result, "transcript_text"), record)
             return
-        self.manual_summary_button.setVisible(bool(record and record.has_transcript and not record.has_summary))
         self._set_status("已导入链接字幕" if mode == "subtitle" else "链接导入完成")
 
     def _on_remote_import_failed(self, error: object) -> None:

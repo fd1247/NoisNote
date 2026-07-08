@@ -158,7 +158,7 @@ def test_remote_subtitle_record_disables_playback(monkeypatch, tmp_path: Path) -
         assert window.current_record is not None
         assert not window.current_record.audio_path.exists()
         assert window.current_record.has_transcript
-        assert not window.playback_play_button.isEnabled()
+        assert window.playback_play_button.isEnabled()
         assert window.transcript_text.toPlainText() == "字幕文本"
     finally:
         window.close()

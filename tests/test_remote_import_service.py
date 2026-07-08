@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.history.service import HistoryService, HistoryStatus
+from src.history.service import HistoryService
 from src.remote_import.service import RemoteImportService
 from src.remote_import.types import RemoteImportOptions, RemoteMediaInfo, RemoteSubtitle
 
@@ -57,7 +57,7 @@ def test_remote_subtitle_import_creates_transcript_timeline_and_metadata(tmp_pat
     scanned = service.scan()[0]
 
     assert result.mode == "subtitle"
-    assert scanned.status == HistoryStatus.TRANSCRIBED
+    assert scanned.has_transcript
     assert not scanned.audio_path.exists()
     assert scanned.external_subtitle_path.exists()
     assert service.read_transcript(scanned) == "你好\n世界"
@@ -89,7 +89,6 @@ def test_remote_audio_import_falls_back_when_no_subtitle(monkeypatch, tmp_path: 
     scanned = service.scan()[0]
 
     assert result.mode == "audio"
-    assert scanned.status == HistoryStatus.AUDIO_ONLY
     assert scanned.audio_path.name == "audio.wav"
     assert scanned.audio_path.exists()
     assert scanned.audio_path.read_bytes() == b"normalized"
@@ -156,7 +155,6 @@ def test_remote_audio_fallback_cleans_partial_subtitle_outputs(monkeypatch, tmp_
     scanned = service.scan()[0]
 
     assert result.mode == "audio"
-    assert scanned.status == HistoryStatus.AUDIO_ONLY
     assert scanned.audio_path.exists()
     assert not (scanned.record_dir / "audio.normalized.wav").exists()
     assert not (scanned.record_dir / "remote_audio.m4a").exists()

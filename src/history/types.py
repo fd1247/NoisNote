@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -41,17 +40,6 @@ class MoveRecordResult:
     message: str
 
 
-class HistoryStatus(str, Enum):
-    """历史记录处理状态。"""
-
-    AUDIO_ONLY = "audio_only"
-    TRANSCRIBED = "transcribed"
-    SUMMARIZED = "summarized"
-    EXPORTED = "exported"
-    MISSING_AUDIO = "missing_audio"
-    ERROR = "error"
-
-
 @dataclass(frozen=True)
 class DeleteResult:
     """历史记录删除结果。"""
@@ -78,11 +66,10 @@ class HistoryRecord:
     duration_seconds: float | None
     audio_size_bytes: int
     total_size_bytes: int
-    status: HistoryStatus
     notebook_id: str = "default"
     notebook_name: str = "默认笔记本"
     notebook_path: Path | None = None
-    error_message: str = ""
+    last_error: dict[str, Any] | None = None
     source_kind: str = ""
     original_file_path: Path | None = None
     normalized_audio_path: Path | None = None
@@ -103,26 +90,11 @@ class HistoryRecord:
 
     @property
     def display_subtitle(self) -> str:
-        return (
-            f"{self.duration_text} · {format_size(self.total_size_bytes)} · "
-            f"{self.status_text}"
-        )
+        return f"{self.duration_text} · {format_size(self.total_size_bytes)}"
 
     @property
     def duration_text(self) -> str:
         return format_duration_seconds(self.duration_seconds)
-
-    @property
-    def status_text(self) -> str:
-        labels = {
-            HistoryStatus.AUDIO_ONLY: "仅录音",
-            HistoryStatus.TRANSCRIBED: "已转录",
-            HistoryStatus.SUMMARIZED: "已总结",
-            HistoryStatus.EXPORTED: "已导出",
-            HistoryStatus.MISSING_AUDIO: "缺少录音",
-            HistoryStatus.ERROR: "记录异常",
-        }
-        return labels.get(self.status, "未知状态")
 
     @property
     def size_mb(self) -> float:

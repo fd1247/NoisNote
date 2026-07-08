@@ -337,7 +337,20 @@ class ImportHandlers:
         self.load_recordings()
         if was_selected:
             self._select_record_by_key(record.record_key)
-        self._set_status(error.message)
+            self._show_error(self._audio_preprocess_failure_message(record, error))
+        else:
+            self._set_status(error.message)
+
+    def _audio_preprocess_failure_message(self, record: HistoryRecord, error: AudioInputError) -> str:
+        """把音视频预处理错误转为用户当下可操作的提示。"""
+        reason = (error.message or "处理失败").rstrip("。")
+        if error.kind == "transcode_failed":
+            if record.source_kind == "local_video":
+                return f"视频音轨提取失败：{reason}。请换一个视频文件或检查 ffmpeg。"
+            return f"音频处理失败：{reason}。请检查文件是否可播放，或确认 ffmpeg 可用。"
+        if error.kind == "no_audio_stream":
+            return "音频处理失败：文件中没有可转录的音轨。"
+        return f"音频处理失败：{reason}。请换一个文件，或检查 ffmpeg/ffprobe 是否可用。"
 
     def _handle_audio_record_ready(self, record: HistoryRecord, status: str, source: str = "manual") -> None:
         """音频进入历史记录后，按配置决定是否自动转录。"""
@@ -356,5 +369,4 @@ class ImportHandlers:
         self.recording_hint_label.setText("音频已保存，可手动转录")
         self._set_processing_ui(False)
         self._update_recording_entry()
-        self._update_retry_transcription_button(record)
         self._set_status(f"{status}，等待手动转录")

@@ -363,7 +363,6 @@ class MainWindow(
         self.detail_title_label = controls.detail_title_label
         self.detail_duration_label = controls.detail_duration_label
         self.detail_size_label = controls.detail_size_label
-        self.detail_status_label = controls.detail_status_label
         self.detail_time_label = controls.detail_time_label
         self.detail_processing_status_label = controls.detail_processing_status_label
         self.detail_metadata_button = controls.detail_metadata_button
@@ -372,6 +371,7 @@ class MainWindow(
         self.detail_copy_button = controls.detail_copy_button
         self.detail_search_button = controls.detail_search_button
         self.detail_edit_toggle_button = controls.detail_edit_toggle_button
+        self.detail_copy_notice_label = controls.detail_copy_notice_label
         self.detail_search_bar = controls.detail_search_bar
         self.detail_search_input = controls.detail_search_input
         self.detail_search_count_label = controls.detail_search_count_label
@@ -386,14 +386,15 @@ class MainWindow(
         self.transcript_status = controls.transcript_status
         self.transcript_text = controls.transcript_text
         self.transcript_copy_button = controls.transcript_copy_button
-        self.retry_transcription_button = controls.retry_transcription_button
+        self.transcript_copy_notice_label = controls.transcript_copy_notice_label
         self.timeline_status = controls.timeline_status
         self.timeline_text = controls.timeline_text
         self.timeline_copy_button = controls.timeline_copy_button
+        self.timeline_copy_notice_label = controls.timeline_copy_notice_label
         self.summary_status = controls.summary_status
         self.summary_text = controls.summary_text
         self.summary_copy_button = controls.summary_copy_button
-        self.manual_summary_button = controls.manual_summary_button
+        self.summary_copy_notice_label = controls.summary_copy_notice_label
         self.playback_widget = controls.playback_widget
         self.playback_separator = controls.playback_separator
         self.playback_back_button = controls.playback_back_button
@@ -401,6 +402,7 @@ class MainWindow(
         self.playback_forward_button = controls.playback_forward_button
         self.playback_position_label = controls.playback_position_label
         self.playback_duration_label = controls.playback_duration_label
+        self.playback_notice_label = controls.playback_notice_label
         self.playback_slider = controls.playback_slider
         self.playback_rate_combo = controls.playback_rate_combo
         self.playback_cc_button = controls.playback_cc_button
@@ -450,20 +452,15 @@ class MainWindow(
             return
         record = self.current_record
         has_record = record is not None
-        can_transcribe = bool(record and record.audio_path.exists() and not self.is_processing)
-        self.detail_more_button.setEnabled(has_record)
+        self.detail_more_button.setEnabled(True)
         self.detail_metadata_button.setEnabled(has_record)
         if not has_record:
             self.detail_metadata_expanded = False
             self.detail_metadata_button.setChecked(False)
             self._set_detail_metadata_panel_expanded(False, animate=False)
             self.detail_header.show()
-        self.detail_transcribe_action.setEnabled(can_transcribe)
-        self.detail_summary_action.setEnabled(
-            bool(has_record and record.has_transcript and not record.has_summary and not self.is_processing)
-        )
-        self.detail_open_folder_action.setEnabled(has_record)
-        self.detail_delete_action.setEnabled(has_record)
+        for action in self.detail_action_menu.actions():
+            action.setEnabled(True)
 
     def show_metadata_details(self) -> None:
         """展开或收起当前历史记录的内联元数据区域。"""
@@ -589,10 +586,7 @@ class MainWindow(
             value.setWordWrap(False)
             value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             value_alignment = Qt.AlignmentFlag.AlignLeft
-            if field_label == "状态":
-                value.setObjectName("DetailStatusPill")
-                value.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-            elif field_label == "网址" and field_value != "--":
+            if field_label == "网址" and field_value != "--":
                 safe_url = escape(field_value, quote=True)
                 safe_display = escape(display_value)
                 value.setText(
@@ -809,7 +803,7 @@ class MainWindow(
     def open_current_record_folder(self) -> None:
         """在系统文件管理器中打开当前历史记录文件夹。"""
         if not self.current_record:
-            self._set_status("请先选择一条历史记录")
+            self._show_error("请先选择一条历史记录")
             return
         folder = self.current_record.record_dir
         if not folder.exists():
@@ -833,6 +827,7 @@ class MainWindow(
         if not self.current_record:
             self._set_status("请先选择一条历史记录")
             return
+        notice_kind = "detail" if kind == "active" else kind
         if kind == "active":
             kind = self.active_result_tab
         if kind == "transcript":
@@ -846,10 +841,32 @@ class MainWindow(
             label = "总结内容"
 
         if not text.strip():
-            self._set_status(f"{label}为空，无法复制")
+            message = f"{label}为空，无法复制"
+            self._set_status(message)
+            self._show_copy_notice(notice_kind, message)
             return
         QApplication.clipboard().setText(text)
-        self._set_status(f"已复制{label}")
+        message = f"{label}已复制"
+        self._set_status(message)
+        self._show_copy_notice(notice_kind, message)
+
+    def _show_copy_notice(self, kind: str, message: str) -> None:
+        label = {
+            "transcript": getattr(self, "transcript_copy_notice_label", None),
+            "timeline": getattr(self, "timeline_copy_notice_label", None),
+            "summary": getattr(self, "summary_copy_notice_label", None),
+            "detail": getattr(self, "detail_copy_notice_label", None),
+        }.get(kind)
+        if label is None:
+            return
+        label.setText(message)
+        label.show()
+
+        def hide_if_current() -> None:
+            if label.text() == message:
+                label.hide()
+
+        QTimer.singleShot(2000, hide_if_current)
 
     def toggle_detail_search(self) -> None:
         visible = self.detail_search_bar.isHidden()

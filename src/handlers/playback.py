@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit
@@ -22,6 +22,7 @@ class PlaybackHandlers:
         self.media_player.positionChanged.connect(self._on_playback_position_changed)
         self.media_player.durationChanged.connect(self._on_playback_duration_changed)
         self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self.media_player.errorOccurred.connect(self._on_playback_error)
         self._reset_playback_ui()
 
     def _playback_source_for_record(self, record: HistoryRecord) -> Path | None:
@@ -36,18 +37,18 @@ class PlaybackHandlers:
     def _set_playback_source(self, record: HistoryRecord) -> None:
         source = self._playback_source_for_record(record)
         if self.playback_record_id == record.record_key:
-            self._sync_playback_buttons(bool(source))
+            self._sync_playback_buttons(bool(source), has_record=True)
             return
         self.stop_playback()
         self.playback_record_id = record.record_key
         self.playback_duration_ms = int(max(0.0, record.duration_seconds or 0.0) * 1000)
         self.playback_slider.setRange(0, max(0, self.playback_duration_ms))
         self.playback_duration_label.setText(_format_playback_ms(self.playback_duration_ms))
-        self._sync_playback_buttons(bool(source))
+        self._sync_playback_buttons(bool(source), has_record=True)
 
-    def _sync_playback_buttons(self, enabled: bool) -> None:
+    def _sync_playback_buttons(self, enabled: bool, *, has_record: bool = False) -> None:
         self.playback_back_button.setEnabled(enabled)
-        self.playback_play_button.setEnabled(enabled)
+        self.playback_play_button.setEnabled(enabled or has_record)
         self.playback_forward_button.setEnabled(enabled)
         self.playback_slider.setEnabled(enabled)
         self.playback_rate_combo.setEnabled(enabled)
@@ -60,6 +61,7 @@ class PlaybackHandlers:
             self.playback_slider.setRange(0, 0)
             self.playback_slider.setValue(0)
             self._sync_playback_buttons(False)
+            self._hide_playback_notice()
 
     def stop_playback(self) -> None:
         if self.media_player:
@@ -80,13 +82,46 @@ class PlaybackHandlers:
             return
         source = self._playback_source_for_record(self.current_record)
         if not source:
-            self._set_status("当前记录没有可播放的音频")
+            self._show_playback_notice("缺少可播放的音频")
             return
         if self.playback_loaded_record_id != self.current_record.record_key:
             self.media_player.setSource(QUrl.fromLocalFile(str(source)))
             self.media_player.setPlaybackRate(self.playback_rate)
             self.playback_loaded_record_id = self.current_record.record_key
         self.media_player.play()
+
+    def _show_playback_notice(self, message: str) -> None:
+        self._set_status(message)
+        label = getattr(self, "playback_notice_label", None)
+        if label is None:
+            return
+        label.setText(message)
+        label.adjustSize()
+        self._position_playback_notice()
+        label.show()
+        label.raise_()
+
+        def hide_if_current() -> None:
+            if label.text() == message:
+                label.hide()
+
+        QTimer.singleShot(2000, hide_if_current)
+
+    def _position_playback_notice(self) -> None:
+        label = getattr(self, "playback_notice_label", None)
+        button = getattr(self, "playback_play_button", None)
+        parent = getattr(self, "playback_widget", None)
+        if label is None or button is None or parent is None:
+            return
+        top_left = button.mapTo(parent, button.rect().topLeft())
+        x = top_left.x() + (button.width() - label.width()) // 2
+        y = max(0, top_left.y() - label.height() - 2)
+        label.move(x, y)
+
+    def _hide_playback_notice(self) -> None:
+        label = getattr(self, "playback_notice_label", None)
+        if label is not None:
+            label.hide()
 
     def seek_playback_backward(self) -> None:
         self._seek_playback_relative(-15_000)
@@ -140,6 +175,11 @@ class PlaybackHandlers:
         else:
             self.playback_play_button.setIcon(make_action_icon("play"))
         self._update_detail_playback()
+
+    def _on_playback_error(self, error, error_string: str = "") -> None:
+        if error == QMediaPlayer.Error.NoError:
+            return
+        self._show_playback_notice("音频播放失败，当前系统可能不支持该格式。")
 
     def _init_playback_shortcuts(self) -> None:
         """注册播放快捷键，避免焦点落在子控件时主窗口收不到按键。"""

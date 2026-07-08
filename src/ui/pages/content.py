@@ -129,7 +129,6 @@ class ContentTabsControls:
     detail_title_label: QLabel
     detail_duration_label: QLabel
     detail_size_label: QLabel
-    detail_status_label: QLabel
     detail_time_label: QLabel
     detail_processing_status_label: QLabel
     detail_metadata_button: QToolButton
@@ -138,6 +137,7 @@ class ContentTabsControls:
     detail_copy_button: QToolButton
     detail_search_button: QToolButton
     detail_edit_toggle_button: QToolButton
+    detail_copy_notice_label: QLabel
     detail_search_bar: QFrame
     detail_search_input: QLineEdit
     detail_search_count_label: QLabel
@@ -152,14 +152,15 @@ class ContentTabsControls:
     transcript_status: QLabel
     transcript_text: QPlainTextEdit
     transcript_copy_button: QPushButton
-    retry_transcription_button: QPushButton
+    transcript_copy_notice_label: QLabel
     timeline_status: QLabel
     timeline_text: QTextBrowser
     timeline_copy_button: QPushButton
+    timeline_copy_notice_label: QLabel
     summary_status: QLabel
     summary_text: QTextBrowser
     summary_copy_button: QPushButton
-    manual_summary_button: QPushButton
+    summary_copy_notice_label: QLabel
     playback_widget: QFrame
     playback_separator: QFrame
     playback_back_button: QPushButton
@@ -167,6 +168,7 @@ class ContentTabsControls:
     playback_forward_button: QPushButton
     playback_position_label: QLabel
     playback_duration_label: QLabel
+    playback_notice_label: QLabel
     playback_slider: QSlider
     playback_rate_combo: QComboBox
     playback_cc_button: QPushButton
@@ -207,8 +209,6 @@ def build_history_page(
     meta_row.setSpacing(8)
     detail_duration_label = _build_meta_label("--:--")
     detail_size_label = _build_meta_label("--")
-    detail_status_label = _build_meta_label("状态 --")
-    detail_status_label.setObjectName("DetailStatusPill")
     detail_time_label = _build_meta_label("--")
     detail_processing_status_label = QLabel("")
     detail_processing_status_label.setObjectName("DetailProcessingStatus")
@@ -230,7 +230,6 @@ def build_history_page(
     meta_row.addWidget(detail_size_label)
     meta_row.addWidget(_build_meta_separator())
     meta_row.addWidget(detail_time_label)
-    meta_row.addWidget(detail_status_label)
     meta_row.addWidget(detail_metadata_button)
     meta_row.addStretch(1)
     meta_row.addWidget(detail_processing_status_label)
@@ -293,10 +292,12 @@ def build_history_page(
     tab_row.addStretch(1)
     detail_copy_button = _build_detail_tool_button("复制.svg", "复制")
     detail_copy_button.clicked.connect(lambda checked=False: callbacks.copy_panel_text("active"))
+    detail_copy_notice_label = _build_copy_notice_label()
     detail_search_button = _build_detail_tool_button("查找.svg", "查找")
     detail_search_button.clicked.connect(lambda checked=False: callbacks.toggle_detail_search())
     detail_edit_toggle_button = _build_detail_tool_button("编辑.svg", "编辑")
     detail_edit_toggle_button.clicked.connect(lambda checked=False: callbacks.toggle_detail_edit_mode())
+    tab_row.addWidget(detail_copy_notice_label)
     tab_row.addWidget(detail_copy_button)
     tab_row.addWidget(detail_search_button)
     tab_row.addWidget(detail_edit_toggle_button)
@@ -340,20 +341,14 @@ def build_history_page(
     result_stack = QStackedWidget()
     transcript_page, transcript_controls = _build_result_page(
         "transcript",
-        callbacks.manual_summarize,
-        callbacks.retry_transcription,
         callbacks.copy_panel_text,
     )
     summary_page, summary_controls = _build_result_page(
         "summary",
-        callbacks.manual_summarize,
-        callbacks.retry_transcription,
         callbacks.copy_panel_text,
     )
     timeline_page, timeline_controls = _build_result_page(
         "timeline",
-        callbacks.manual_summarize,
-        callbacks.retry_transcription,
         callbacks.copy_panel_text,
     )
     result_stack.addWidget(transcript_page)
@@ -392,6 +387,7 @@ def build_history_page(
         playback_duration_label,
         playback_rate_combo,
         playback_cc_button,
+        playback_notice_label,
     ) = playback_bar
     playback_separator = QFrame()
     playback_separator.setObjectName("PlaybackSeparator")
@@ -412,7 +408,6 @@ def build_history_page(
         detail_title_label=detail_title_label,
         detail_duration_label=detail_duration_label,
         detail_size_label=detail_size_label,
-        detail_status_label=detail_status_label,
         detail_time_label=detail_time_label,
         detail_processing_status_label=detail_processing_status_label,
         detail_metadata_button=detail_metadata_button,
@@ -421,6 +416,7 @@ def build_history_page(
         detail_copy_button=detail_copy_button,
         detail_search_button=detail_search_button,
         detail_edit_toggle_button=detail_edit_toggle_button,
+        detail_copy_notice_label=detail_copy_notice_label,
         detail_search_bar=detail_search_bar,
         detail_search_input=detail_search_input,
         detail_search_count_label=detail_search_count_label,
@@ -435,14 +431,15 @@ def build_history_page(
         transcript_status=transcript_controls.status_label,
         transcript_text=cast(QPlainTextEdit, transcript_controls.text_edit),
         transcript_copy_button=transcript_controls.copy_button,
-        retry_transcription_button=transcript_controls.action_button,
+        transcript_copy_notice_label=transcript_controls.copy_notice_label,
         timeline_status=timeline_controls.status_label,
         timeline_text=cast(QTextBrowser, timeline_controls.text_edit),
         timeline_copy_button=timeline_controls.copy_button,
+        timeline_copy_notice_label=timeline_controls.copy_notice_label,
         summary_status=summary_controls.status_label,
         summary_text=cast(QTextBrowser, summary_controls.text_edit),
         summary_copy_button=summary_controls.copy_button,
-        manual_summary_button=summary_controls.action_button,
+        summary_copy_notice_label=summary_controls.copy_notice_label,
         playback_widget=playback_widget,
         playback_separator=playback_separator,
         playback_back_button=playback_back_button,
@@ -450,6 +447,7 @@ def build_history_page(
         playback_forward_button=playback_forward_button,
         playback_position_label=playback_position_label,
         playback_duration_label=playback_duration_label,
+        playback_notice_label=playback_notice_label,
         playback_slider=playback_slider,
         playback_rate_combo=playback_rate_combo,
         playback_cc_button=playback_cc_button,
@@ -464,7 +462,7 @@ class _ResultPageControls:
     status_label: QLabel
     text_edit: QPlainTextEdit | QTextBrowser
     copy_button: QPushButton
-    action_button: QPushButton
+    copy_notice_label: QLabel
 
 
 def _build_result_tab_button(
@@ -496,8 +494,6 @@ def _build_detail_tool_button(icon_name: str, tooltip: str) -> QToolButton:
 
 def _build_result_page(
     kind: str,
-    manual_summarize: Callable[[], None],
-    retry_transcription: Callable[[], None],
     copy_panel_text: Callable[[str], None],
 ) -> tuple[QWidget, _ResultPageControls]:
     """创建转录或总结结果页。"""
@@ -512,24 +508,12 @@ def _build_result_page(
     header.addWidget(status_label)
     header.addItem(QSpacerItem(20, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
-    if kind == "summary":
-        action_button = QPushButton("手动总结")
-        action_button.setObjectName("SuccessButton")
-        action_button.clicked.connect(manual_summarize)
-    elif kind == "transcript":
-        action_button = QPushButton("重新转录")
-        action_button.setObjectName("SmallButton")
-        action_button.clicked.connect(retry_transcription)
-    else:
-        action_button = QPushButton("")
-        action_button.setObjectName("SmallButton")
-    action_button.hide()
-    header.addWidget(action_button)
-
     copy_button = QPushButton("复制")
     copy_button.setObjectName("SmallButton")
     copy_button.clicked.connect(lambda: copy_panel_text(kind))
     copy_button.hide()
+    copy_notice_label = _build_copy_notice_label()
+    header.addWidget(copy_notice_label)
     header.addWidget(copy_button)
 
     if kind == "summary":
@@ -553,8 +537,15 @@ def _build_result_page(
         status_label=status_label,
         text_edit=text_edit,
         copy_button=copy_button,
-        action_button=action_button,
+        copy_notice_label=copy_notice_label,
     )
+
+
+def _build_copy_notice_label() -> QLabel:
+    label = QLabel("")
+    label.setObjectName("CopyNotice")
+    label.hide()
+    return label
 
 
 def _build_meta_label(text: str) -> QLabel:
@@ -576,12 +567,12 @@ def _build_playback_bar(
     seek_playback: Callable[[int], None],
     set_playback_rate: Callable[[str], None],
     switch_to_timeline: Callable[[], None],
-) -> tuple[QFrame, QPushButton, QPushButton, QPushButton, QLabel, QSlider, QLabel, QComboBox, QPushButton]:
+) -> tuple[QFrame, QPushButton, QPushButton, QPushButton, QLabel, QSlider, QLabel, QComboBox, QPushButton, QLabel]:
     bar = QFrame()
     bar.setObjectName("PlayerBar")
     bar.setFixedHeight(70)
     layout = QHBoxLayout(bar)
-    layout.setContentsMargins(14, 14, 14, 8)
+    layout.setContentsMargins(14, 24, 14, 6)
     layout.setSpacing(6)
 
     back_button = QPushButton()
@@ -647,6 +638,10 @@ def _build_playback_bar(
     transport_layout.setContentsMargins(0, 0, 0, 0)
     transport_layout.setSpacing(6)
     transport_layout.addWidget(back_button)
+    notice_label = QLabel("", bar)
+    notice_label.setObjectName("PlayerNotice")
+    notice_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    notice_label.hide()
     transport_layout.addWidget(play_button)
     transport_layout.addWidget(forward_button)
 
@@ -664,7 +659,7 @@ def _build_playback_bar(
     layout.addWidget(slider, stretch=1)
     layout.addWidget(duration_label)
     layout.addWidget(playback_options)
-    return bar, back_button, play_button, forward_button, position_label, slider, duration_label, rate_combo, cc_button
+    return bar, back_button, play_button, forward_button, position_label, slider, duration_label, rate_combo, cc_button, notice_label
 
 
 def _asset_icon(name: str) -> QIcon:

@@ -72,8 +72,6 @@ class TranscriptionHandlers:
         if self._is_current_record_processing():
             self._set_transcript_text("")
             self._set_summary_text("")
-        self._set_action_buttons(False)
-        self.retry_transcription_button.hide()
         log_event(
             "asr.transcribe.started",
             module="asr",
@@ -153,7 +151,6 @@ class TranscriptionHandlers:
             self.start_summarization(text, record)
         else:
             self._finish_processing(record, "转录完成")
-            self.manual_summary_button.setVisible(bool(text.strip()))
 
     def _on_transcription_failed(self, error: str, diagnostics: dict | None = None) -> None:
         record = self.processing_record
@@ -206,7 +203,33 @@ class TranscriptionHandlers:
             self.load_recordings()
             if was_selected:
                 self._select_record_by_key(record.record_key)
-        self._set_status("转录失败")
+        dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
+        if dialog_message:
+            self._show_error(dialog_message)
+        elif error == "未识别到有效语音内容":
+            self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
+        else:
+            self._show_error("转录失败，请查看日志或尝试更换设备。")
+
+    def _transcription_failure_dialog_message(self, error: str, diagnostics: dict | None = None) -> str:
+        error_type = str(((diagnostics or {}).get("error") or {}).get("error_type") or "")
+        if error == "未识别到有效语音内容":
+            return ""
+        if error_type == "MissingModelDirectory" or "模型未下载" in error:
+            return "转录失败：模型未下载，请先在设置 > 模型中下载 ASR 模型。"
+        if error_type == "MissingModelFile" or "模型文件不完整" in error:
+            return "转录失败：模型文件不完整，请在设置 > 模型中删除后重新下载。"
+        if error_type in {"MissingGgufToolDir", "MissingRuntimeDependency"} or "运行时依赖" in error:
+            return "转录失败：缺少 ASR 运行环境，请重新安装应用或修复运行环境。"
+        if error_type == "ImportFailed" or "推理组件加载失败" in error:
+            return "转录失败：ASR 推理组件加载失败，请重新安装应用或检查运行环境。"
+        if error_type in {"ProcessExited", "WorkerExited"} or "异常退出" in error:
+            return "转录失败：转录进程异常退出，请重试；如果持续失败，请查看日志。"
+        if error_type in {"InvalidModelName", "InvalidAsrModel"} or ("ASR 模型" in error and "不可用" in error):
+            return "转录失败：当前 ASR 模型不可用，请在设置中重新选择模型。"
+        if "音频文件不存在" in error:
+            return "转录失败：音频文件不存在，无法转录。"
+        return ""
 
     def _normalize_transcription_error(self, error: str) -> str:
         """把常见空语音错误归一为用户可理解文案。"""
@@ -217,21 +240,16 @@ class TranscriptionHandlers:
             return "未识别到有效语音内容"
         return value
 
-    def _update_retry_transcription_button(self, record: HistoryRecord | None) -> None:
-        """根据历史记录状态更新转录入口文案。"""
-        if not record or not record.audio_path.exists() or self.is_processing:
-            self.retry_transcription_button.hide()
-            return
-        self.retry_transcription_button.setText("重新转录" if record.has_transcript else "开始转录")
-        self.retry_transcription_button.show()
-
     def retry_transcription(self) -> None:
         """重新转录当前历史记录中的录音文件。"""
         if self.is_processing:
-            self._set_status("正在处理中，请稍后重试")
+            self._show_error("正在处理中，请稍后重试")
             return
-        if not self.current_record or not self.current_record.audio_path.exists():
-            self._show_error("当前记录没有可转录的录音文件")
+        if not self.current_record:
+            self._show_error("请先选择一条历史记录")
+            return
+        if not self.current_record.audio_path.exists():
+            self._show_error("当前记录没有可转录的音频文件")
             return
         if self.current_record.has_transcript and not self._confirm_retranscription(self.current_record):
             self._set_status("已取消重新转录")
@@ -244,7 +262,6 @@ class TranscriptionHandlers:
                 return
             self.load_recordings()
             self._select_record_by_key(self.current_record.record_key)
-        self.retry_transcription_button.hide()
         self.start_transcription(self.current_record.audio_path, self.current_record, source="manual")
 
     def _confirm_retranscription(self, record: HistoryRecord) -> bool:

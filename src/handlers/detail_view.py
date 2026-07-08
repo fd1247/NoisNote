@@ -90,9 +90,16 @@ class DetailViewHandlers:
         if command.command == "copy":
             text = str(command.payload.get("text") or "")
             if not text.strip():
+                message = "详情内容为空，无法复制"
+                self._set_status(message)
+                if hasattr(self, "_show_copy_notice"):
+                    self._show_copy_notice("detail", message)
                 return
             QApplication.clipboard().setText(text)
-            self._set_status("已复制详情内容")
+            message = "详情内容已复制"
+            self._set_status(message)
+            if hasattr(self, "_show_copy_notice"):
+                self._show_copy_notice("detail", message)
             return
 
         if command.command == "contentChanged":
