@@ -298,15 +298,28 @@ class TaskQueueHandlers:
             return
         task_queue_store.save(task_manager.queued_tasks())
 
+    def _history_interruption_target(self, stage: TaskStage) -> tuple[str | None, bool]:
+        """根据当前任务阶段选择最贴近的历史记录写入方式。"""
+        if stage is TaskStage.SUMMARIZING:
+            return "summary", False
+        if stage is TaskStage.PREPROCESSING:
+            return None, True
+        return "transcription", False
+
     def prepare_task_queue_for_close(self) -> None:
         running = self.task_manager.running_process_task()
         if running is not None:
+            stage = running.stage
             worker = getattr(self, "transcription_worker", None)
             if worker is not None and hasattr(worker, "request_cancel"):
                 worker.request_cancel()
             self.task_manager.interrupt_running(running.task_id, "应用退出，任务已中断")
             if self.processing_record:
-                self.history_service.mark_error(self.processing_record, "应用退出，任务已中断", step="transcription")
+                step, use_input_error = self._history_interruption_target(stage)
+                if use_input_error:
+                    self.history_service.mark_input_error(self.processing_record, "应用退出，任务已中断")
+                elif step is not None:
+                    self.history_service.mark_error(self.processing_record, "应用退出，任务已中断", step=step)
         self._persist_queued_tasks()
 
     def _active_queue_task(self) -> AppTask | None:

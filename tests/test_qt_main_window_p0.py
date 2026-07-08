@@ -3873,6 +3873,91 @@ def test_close_with_queued_tasks_prompts_and_persists(monkeypatch, tmp_path: Pat
         app.processEvents()
 
 
+def test_close_with_running_summary_task_marks_summary_failed(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+
+        def fake_execute(task) -> None:
+            window.current_processing_task = task
+            window.processing_record = window.history_service.mark_processing_started(record, "summary")
+            window.processing_source = "import"
+            window.task_manager.mark_running(task.task_id, TaskStage.SUMMARIZING, "正在总结")
+
+        monkeypatch.setattr(window, "_execute_processing_task", fake_execute)
+        window.enqueue_record_processing(record, source="import", summary_only=True)
+        assert window.current_processing_task is not None
+        assert window.current_processing_task.stage == TaskStage.SUMMARIZING
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        event = Event()
+        window.closeEvent(event)
+
+        metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+        assert event.accepted is True
+        assert metadata["processing"]["summary"]["status"] == "failed"
+        assert metadata["processing"]["transcription"]["status"] != "failed"
+        assert metadata["last_error"]["stage"] == "summary"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_running_preprocess_task_uses_input_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+
+        def fake_execute(task) -> None:
+            window.current_processing_task = task
+            window.processing_record = record
+            window.processing_source = "preprocess"
+            window.task_manager.mark_running(task.task_id, TaskStage.PREPROCESSING, "正在处理音频")
+
+        monkeypatch.setattr(window, "_execute_processing_task", fake_execute)
+        window.enqueue_record_processing(record, source="import")
+        assert window.current_processing_task is not None
+        assert window.current_processing_task.stage == TaskStage.PREPROCESSING
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        event = Event()
+        window.closeEvent(event)
+
+        metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+        assert event.accepted is True
+        assert metadata["input_error"]["message"] == "应用退出，任务已中断"
+        assert metadata["last_error"]["stage"] == "input"
+        assert metadata["processing"]["transcription"]["status"] == "pending"
+        assert metadata["processing"]["summary"]["status"] == "pending"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_task_panel_has_three_sections(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
