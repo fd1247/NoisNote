@@ -155,7 +155,7 @@ class ProcessingHandlers:
         return time.perf_counter() - started_at
 
     def _set_processing_ui(self, processing: bool) -> None:
-        self.record_button.setEnabled(not processing and bool(self.recorder))
+        self.record_button.setEnabled(bool(self.recorder))
         self._sync_sidebar_actions()
 
     def _finish_processing(self, record: HistoryRecord | None, status: str) -> None:

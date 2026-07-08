@@ -408,7 +408,7 @@ class RecordingHandlers:
             self.show_recording_dialog()
             return
         if self.is_processing:
-            self._set_status("正在处理中，请稍后重试")
+            self.show_recording_dialog()
             return
         if hasattr(self, "stop_playback"):
             self.stop_playback()

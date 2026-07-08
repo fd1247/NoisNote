@@ -24,14 +24,6 @@ class ImportHandlers:
 
     def import_audio_recording(self) -> None:
         """导入本地音视频文件并创建历史记录。"""
-        if self.is_recording:
-            self.show_recording_dialog()
-            self._set_status("正在录音，完成后再导入")
-            return
-        if self.is_processing:
-            self._set_status("正在处理中，请稍后重试")
-            return
-
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "导入本地音视频",
@@ -44,14 +36,6 @@ class ImportHandlers:
 
     def _import_media_path(self, file_path: Path) -> None:
         """导入单个本地音视频文件，供按钮和拖拽复用。"""
-        if self.is_recording:
-            self.show_recording_dialog()
-            self._set_status("正在录音，完成后再导入")
-            return
-        if self.is_processing:
-            self._set_status("正在处理中，请稍后重试")
-            return
-
         path = file_path.expanduser()
         if not path.exists() or not path.is_file():
             log_event(

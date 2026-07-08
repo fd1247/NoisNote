@@ -215,6 +215,79 @@ def test_recording_task_button_opens_dialog_without_switching_main_page(monkeypa
         app.processEvents()
 
 
+def test_import_entry_allowed_while_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.is_processing = True
+        selected = tmp_path / "clip.wav"
+        write_wav(selected)
+        imported: list[Path] = []
+        monkeypatch.setattr(
+            "src.handlers.media_import.QFileDialog.getOpenFileName",
+            lambda *args, **kwargs: (str(selected), ""),
+        )
+        monkeypatch.setattr(window, "_import_media_path", lambda path: imported.append(path))
+
+        window.import_audio_recording()
+
+        assert imported == [selected]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_remote_entry_allowed_while_recording(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.is_recording = True
+        started: list[str] = []
+        monkeypatch.setattr(
+            "src.handlers.remote_import.prompt_text_without_icon",
+            lambda *args, **kwargs: ("https://example.com/video", True),
+        )
+        monkeypatch.setattr(window, "_start_remote_import", lambda url: started.append(url))
+
+        window.import_remote_url()
+
+        assert started == ["https://example.com/video"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_new_recording_entry_allowed_while_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.is_processing = True
+        shown: list[bool] = []
+        monkeypatch.setattr(window, "show_recording_dialog", lambda: shown.append(True))
+
+        window.new_recording()
+
+        assert shown == [True]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_processing_ui_keeps_record_button_enabled_when_recorder_exists(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.recorder is not None
+        window.record_button.setEnabled(False)
+
+        window._set_processing_ui(True)
+
+        assert window.record_button.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_main_workbench_starts_on_history_detail(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
