@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import wave
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -52,6 +53,16 @@ def make_window(monkeypatch, tmp_path: Path) -> MainWindow:
     window = MainWindow()
     app.processEvents()
     return window
+
+
+def _write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(rate)
+        wav_file.writeframes(b"\0\0" * frames)
+    return path
 
 
 def wait_for_workers(window: MainWindow, timeout_ms: int = 1000) -> None:
@@ -133,6 +144,26 @@ def test_remote_import_create_record_failure_is_handled(monkeypatch, tmp_path: P
         assert window.processing_record is None
         assert "remote_import" not in window.active_task_ids
         assert errors and "bad record name" in errors[-1]
+    finally:
+        window.close()
+
+
+def test_remote_audio_completion_enqueues_processing(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "remote.wav"))
+        window.config["audio"]["auto_transcribe"] = True
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, **kwargs: enqueued.append(record.record_key),
+        )
+        result = type("Result", (), {"record": record, "mode": "audio"})()
+
+        window._on_remote_import_completed(result)
+
+        assert enqueued == [record.record_key]
     finally:
         window.close()
 

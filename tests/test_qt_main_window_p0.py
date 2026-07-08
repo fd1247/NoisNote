@@ -2209,6 +2209,59 @@ def test_queued_transcription_failure_does_not_show_modal(monkeypatch, tmp_path:
         app.processEvents()
 
 
+def test_retry_transcription_queues_when_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: None)
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(record.record_key),
+        )
+
+        window.retry_transcription()
+
+        assert enqueued == [record.record_key]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_retry_transcription_busy_missing_audio_shows_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        record.audio_path.unlink()
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(record.record_key),
+        )
+
+        window.retry_transcription()
+
+        assert messages == ["当前记录没有可转录的音频文件"]
+        assert enqueued == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -3013,6 +3066,59 @@ def test_manual_summary_uses_cached_or_record_transcript(monkeypatch, tmp_path: 
         window.manual_summarize()
 
         assert started == ["record transcript"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_manual_summarize_queues_when_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        record.transcript_path.write_text("hello", encoding="utf-8")
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: None)
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(f"{record.record_key}:{summary_only}"),
+        )
+
+        window.manual_summarize()
+
+        assert enqueued == [f"{record.record_key}:True"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_manual_summarize_busy_missing_transcript_shows_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(record.record_key),
+        )
+
+        window.manual_summarize()
+
+        assert messages == ["当前记录没有可总结的转录文本"]
+        assert enqueued == []
     finally:
         window.close()
         app.processEvents()

@@ -146,7 +146,38 @@ class SummaryHandlers:
 
     def manual_summarize(self) -> None:
         if self.is_processing:
-            self._show_error("正在处理中，请稍后重试")
+            if not self.current_record:
+                self._show_error("请先选择一条历史记录")
+                return
+            text = str(getattr(self, "transcript_plain_text", "") or "")
+            if not text.strip() and self.current_record:
+                text = self.history_service.read_transcript(self.current_record)
+                self.transcript_plain_text = text
+                self.transcript_loaded_record_id = self.current_record.record_key
+                if hasattr(self, "_sync_legacy_transcript_widgets"):
+                    self._sync_legacy_transcript_widgets(text)
+            if not text.strip():
+                self._show_error("当前记录没有可总结的转录文本")
+                return
+            if self.current_record.has_summary:
+                accepted = confirm_without_icon(
+                    self,
+                    "生成总结",
+                    "当前记录已有总结内容，是否覆盖",
+                    confirm_text="覆盖",
+                    cancel_text="取消",
+                )
+                if not accepted:
+                    self._set_status("已取消生成总结")
+                    return
+            self.enqueue_record_processing(
+                self.current_record,
+                source="manual",
+                overwrite_existing=False,
+                manual=True,
+                summary_only=True,
+            )
+            self._set_status("已加入处理队列")
             return
         if not self.current_record:
             self._show_error("请先选择一条历史记录")

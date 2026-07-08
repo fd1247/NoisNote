@@ -317,7 +317,22 @@ class TranscriptionHandlers:
     def retry_transcription(self) -> None:
         """重新转录当前历史记录中的录音文件。"""
         if self.is_processing:
-            self._show_error("正在处理中，请稍后重试")
+            if not self.current_record:
+                self._show_error("请先选择一条历史记录")
+                return
+            if not self.current_record.audio_path.exists():
+                self._show_error("当前记录没有可转录的音频文件")
+                return
+            if self.current_record.has_transcript and not self._confirm_retranscription(self.current_record):
+                self._set_status("已取消重新转录")
+                return
+            self.enqueue_record_processing(
+                self.current_record,
+                source="manual",
+                overwrite_existing=True,
+                manual=True,
+            )
+            self._set_status("已加入处理队列")
             return
         if not self.current_record:
             self._show_error("请先选择一条历史记录")
