@@ -92,6 +92,9 @@ def test_remote_audio_import_falls_back_when_no_subtitle(monkeypatch, tmp_path: 
     assert scanned.status == HistoryStatus.AUDIO_ONLY
     assert scanned.audio_path.name == "audio.wav"
     assert scanned.audio_path.exists()
+    assert scanned.audio_path.read_bytes() == b"normalized"
+    assert not (scanned.record_dir / "audio.normalized.wav").exists()
+    assert not (scanned.record_dir / "remote_audio.m4a").exists()
     assert scanned.source_kind == "remote_audio"
 
 
@@ -120,6 +123,8 @@ def test_remote_audio_import_falls_back_when_subtitle_download_fails(monkeypatch
 
     assert result.mode == "audio"
     assert result.record.audio_path.exists()
+    assert not (result.record.record_dir / "audio.normalized.wav").exists()
+    assert not (result.record.record_dir / "remote_audio.m4a").exists()
     assert "subtitle_error" in metadata_text
 
 
@@ -153,6 +158,8 @@ def test_remote_audio_fallback_cleans_partial_subtitle_outputs(monkeypatch, tmp_
     assert result.mode == "audio"
     assert scanned.status == HistoryStatus.AUDIO_ONLY
     assert scanned.audio_path.exists()
+    assert not (scanned.record_dir / "audio.normalized.wav").exists()
+    assert not (scanned.record_dir / "remote_audio.m4a").exists()
     assert not scanned.transcript_path.exists()
     assert not scanned.timeline_path.exists()
     assert not scanned.external_subtitle_path.exists()

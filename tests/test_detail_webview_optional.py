@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QTextBrowser  # noqa: E402
+from PySide6.QtWidgets import QApplication, QTextBrowser, QWidget  # noqa: E402
 
 
 def _app() -> QApplication:
@@ -26,6 +26,35 @@ def test_detail_webview_uses_vnote_read_mode_zoom_factor() -> None:
 
     assert "_VNOTE_READ_MODE_ZOOM_FACTOR = 1.1" in source
     assert "setZoomFactor(_VNOTE_READ_MODE_ZOOM_FACTOR)" in source
+
+
+def test_detail_webview_forces_white_webengine_background() -> None:
+    source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "webview.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "QColor" in source
+    assert 'setBackgroundColor(QColor("#ffffff"))' in source
+    assert 'background-color: #ffffff;' in source
+
+
+def test_detail_webview_layout_transition_cover_can_cover_whole_view() -> None:
+    from src.ui.detail.webview import DetailWebView
+
+    app = _app()
+    view = DetailWebView()
+    try:
+        view.resize(320, 180)
+
+        view.cover_for_layout_transition(1)
+        app.processEvents()
+
+        cover = view.findChild(QWidget, "DetailWebViewLayoutTransitionCover")
+        assert cover is not None
+        assert cover.geometry() == view.rect()
+    finally:
+        view.close()
+        app.processEvents()
 
 
 def test_bridge_post_message_emits_dict_and_json_string() -> None:
@@ -345,10 +374,19 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert "#vx-content" in css_text
     assert "padding: 10px 30px 40px;" in css_text
     assert "padding: 0 0 12px;" in css_text
-    assert "font-size: 18px;" in css_text
+    assert "html, body {" in css_text
+    assert "min-height: 100%;" in css_text
+    assert ".detail-shell,\n.content-panel," in css_text
+    assert "min-height: 100vh;" in css_text
+    assert "font-size: 17px;" in css_text
     assert "line-height: 1.5;" in css_text
     assert "#timelinePanel span.vx-search-match" in css_text
     assert "#timelinePanel span.vx-current-search-match" in css_text
+
+    js_text = js.read_text(encoding="utf-8")
+    assert 'window.addEventListener("scroll", handleScrollState' in js_text
+    assert 'document.addEventListener("wheel"' not in js_text
+    assert "handleWheelState" not in js_text
     assert "[hidden]" in css_text
     assert ".timeline-list[hidden]" in css_text
     assert "width:100%;" in css_text
@@ -374,17 +412,17 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     assert 'return "";' in script
     assert 'command: "scrollState"' in script
     assert "window.addEventListener(\"scroll\"" in script
-    assert "document.addEventListener(\"wheel\"" in script
-    assert "emitScrollState(false, true)" in script
-    assert "wheelDelta < 0" in script
-    assert "emitScrollState(true, true)" in script
+    assert "document.addEventListener(\"wheel\"" not in script
+    assert "emitScrollState(false, true)" not in script
+    assert "wheelDelta < 0" not in script
+    assert "emitScrollState(true, true)" not in script
     assert "setEditMode" in script
     assert "editorPanel" in script
     assert 'Boolean(state.editMode) && selected !== "timeline"' in script
     assert '$("timelinePanel").hidden = selected !== "timeline";' in script
     assert 'command: "contentChanged"' in script
-    assert "event.ctrlKey" in script
-    assert "canScrollDown" in script
+    assert "event.ctrlKey" not in script
+    assert "canScrollDown" not in script
     assert "renderTimelineTokens" in script
     assert "timeline-token" in script
     assert "data-token-index" in script
@@ -408,6 +446,19 @@ def test_detail_viewer_assets_exist_and_export_expected_symbols() -> None:
     markdown_text = markdown.read_text(encoding="utf-8")
     assert "markdown-it 14.1.0" in markdown_text
     assert "compatibility" not in markdown_text.lower()
+
+
+def test_detail_viewer_short_content_does_not_hide_header_on_wheel() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "ui" / "detail" / "assets"
+    css_text = (root / "detail-viewer.css").read_text(encoding="utf-8")
+    script = (root / "detail-viewer.js").read_text(encoding="utf-8")
+
+    assert "#vx-content,\n#timelinePanel,\n.markdown-editor {\n    box-sizing: border-box;\n}" in css_text
+    assert "function isPageMeaningfullyScrollable()" in script
+    assert "DETAIL_SCROLL_OVERFLOW_THRESHOLD" in script
+    assert "node.scrollTop = 0;" in script
+    assert "emitScrollState(true, false);" in script
+    assert "if (!isPageMeaningfullyScrollable())" in script
 
 
 def test_detail_viewer_sanitizes_inline_styles_under_strict_csp() -> None:

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.history.service import HistoryRecord, HistoryService, HistoryStatus
+from src.history.types import format_duration_seconds
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -16,6 +17,12 @@ def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
         wav_file.setsampwidth(2)
         wav_file.setframerate(rate)
         wav_file.writeframes(b"\0\0" * frames)
+
+
+def test_format_duration_seconds_matches_history_record_duration_text() -> None:
+    assert format_duration_seconds(None) == "--:--"
+    assert format_duration_seconds(62.3456) == "01:02"
+    assert format_duration_seconds(3661) == "01:01:01"
 
 
 def test_notebook_defaults_include_existing_data_dir(tmp_path: Path) -> None:
@@ -823,6 +830,54 @@ def test_create_remote_record_sanitizes_long_windows_title(tmp_path: Path) -> No
     assert record.record_dir.exists()
     assert len(record.record_id) <= 80
     assert not any(ch in record.record_id for ch in '<>:"/\\|?*')
+
+
+def test_create_remote_record_stores_original_and_canonical_bilibili_url(tmp_path: Path) -> None:
+    service = HistoryService(tmp_path / "records")
+    raw_url = "https://www.bilibili.com/video/BV1d6KS6SEwU/?spm_id_from=333.1007.tianma.1-2-2.click"
+    info = type(
+        "RemoteInfo",
+        (),
+        {
+            "title": "Bilibili Demo",
+            "duration_seconds": 12.0,
+            "webpage_url": raw_url,
+            "url": raw_url,
+            "extractor": "bilibili",
+            "video_id": "BV1d6KS6SEwU",
+        },
+    )()
+
+    record = service.create_remote_record(info)
+    metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+
+    assert metadata["remote"]["original_url"] == raw_url
+    assert metadata["remote"]["canonical_url"] == "https://www.bilibili.com/video/BV1d6KS6SEwU"
+    assert metadata["source_path"] == "https://www.bilibili.com/video/BV1d6KS6SEwU"
+
+
+def test_create_remote_record_stores_original_and_canonical_youtube_url(tmp_path: Path) -> None:
+    service = HistoryService(tmp_path / "records")
+    raw_url = "https://www.youtube.com/watch?v=qWFo8GKXHq8&si=shared-from-user&feature=youtu.be"
+    info = type(
+        "RemoteInfo",
+        (),
+        {
+            "title": "YouTube Demo",
+            "duration_seconds": 12.0,
+            "webpage_url": raw_url,
+            "url": raw_url,
+            "extractor": "youtube",
+            "video_id": "qWFo8GKXHq8",
+        },
+    )()
+
+    record = service.create_remote_record(info)
+    metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+
+    assert metadata["remote"]["original_url"] == raw_url
+    assert metadata["remote"]["canonical_url"] == "https://www.youtube.com/watch?v=qWFo8GKXHq8"
+    assert metadata["source_path"] == "https://www.youtube.com/watch?v=qWFo8GKXHq8"
 
 
 def test_scans_existing_copied_import_records(tmp_path: Path) -> None:

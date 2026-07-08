@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
+from src.app.config import DEFAULT_MODEL_CATALOG
 from src.asr.timestamps import format_display_time
-from src.history.types import format_size
+from src.history.types import format_duration_seconds, format_size
 
 
 _VALID_MODES = {"transcript", "timeline", "summary"}
@@ -97,19 +98,35 @@ def build_metadata_fields(record: Any) -> list[dict[str, str]]:
     """构建详情弹窗中展示的元数据字段。"""
 
     metadata = _read_metadata(record)
+    source_label = _source_label(str(getattr(record, "source_kind", "") or ""))
     fields = [
         {"label": "音频时长", "value": str(getattr(record, "duration_text", _MISSING) or _MISSING)},
         {"label": "文件大小", "value": format_size(int(getattr(record, "total_size_bytes", 0) or 0))},
         {"label": "创建日期", "value": _format_created_at(getattr(record, "created_at", None))},
-        {"label": "状态", "value": str(getattr(record, "status_text", _MISSING) or _MISSING)},
-        {"label": "来源", "value": _source_label(str(getattr(record, "source_kind", "") or ""))},
-        {"label": "本地音视频所在路径", "value": _local_media_path(record)},
-        {"label": "转录模型", "value": _metadata_first(metadata, ("processing", "transcription", "model"), ("asr", "model"))},
-        {"label": "总结模型", "value": _metadata_first(metadata, ("processing", "summary", "model"), ("llm", "model"))},
+        {"label": "来源", "value": source_label},
     ]
-    remote_url = _remote_url(record, metadata)
-    if remote_url != _MISSING:
-        fields.insert(6, {"label": "视频链接", "value": remote_url})
+    if source_label == "视频链接":
+        remote_url = _remote_url(record, metadata)
+        if remote_url != _MISSING:
+            fields.append({"label": "网址", "value": remote_url})
+    if source_label == "本地文件":
+        fields.append({"label": "文件路径", "value": _local_media_path(record)})
+    fields.extend(
+        [
+            {"label": "转录耗时", "value": _transcription_elapsed_text(metadata)},
+            {
+                "label": "ASR模型",
+                "value": _model_display_name(
+                    _metadata_first(metadata, ("processing", "transcription", "model"), ("asr", "model"))
+                ),
+            },
+            {
+                "label": "总结模型",
+                "value": _summary_model(metadata),
+            },
+            {"label": "状态", "value": str(getattr(record, "status_text", _MISSING) or _MISSING)},
+        ]
+    )
     return fields
 
 
@@ -186,6 +203,8 @@ def parse_detail_command(value: Any, current_record_key: str, current_revision: 
         return DetailCommand(command="renderError", payload={"message": str(message or "")})
 
     if command == "scrollState":
+        if not _is_current_message(value, current_record_key, current_revision):
+            return None
         return DetailCommand(command="scrollState", payload={"atTop": bool(value.get("atTop"))})
 
     if command == "searchChanged":
@@ -260,7 +279,7 @@ def _local_media_path(record: Any) -> str:
                 return str(value)
         return _MISSING
 
-    for name in ("normalized_audio_path", "original_file_path", "audio_path"):
+    for name in ("original_file_path", "source_path", "normalized_audio_path", "audio_path"):
         value = getattr(record, name, None)
         if value and not _is_url_like_path(value):
             return str(value)
@@ -285,6 +304,7 @@ def _remote_url(record: Any, metadata: dict[str, Any]) -> str:
         return _MISSING
 
     for value in (
+        _metadata_value(metadata, ("remote", "canonical_url")),
         _metadata_value(metadata, ("remote", "webpage_url")),
         _metadata_value(metadata, ("remote", "url")),
         _metadata_value(metadata, ("source_path",)),
@@ -311,6 +331,47 @@ def _metadata_value(metadata: dict[str, Any], path: tuple[str, ...]) -> Any:
             return None
         value = value[key]
     return value
+
+
+def _summary_model(metadata: dict[str, Any]) -> str:
+    if _metadata_value(metadata, ("processing", "summary", "status")) != "completed":
+        return _MISSING
+    return _metadata_first(metadata, ("processing", "summary", "model"), ("llm", "model"))
+
+
+def _model_display_name(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw or raw == _MISSING:
+        return _MISSING
+    normalized = raw.casefold()
+    for item in DEFAULT_MODEL_CATALOG:
+        candidates = {
+            str(item.get("name") or "").casefold(),
+            str(item.get("alias") or "").casefold(),
+            str(item.get("display_name") or "").casefold(),
+        }
+        if normalized in candidates:
+            return str(item.get("display_name") or raw)
+    for item in DEFAULT_MODEL_CATALOG:
+        display_name = str(item.get("display_name") or "")
+        if display_name and normalized.startswith(display_name.casefold().removesuffix(" gguf")):
+            return display_name
+    return raw
+
+
+def _format_elapsed_seconds(value: Any) -> str:
+    parsed = _maybe_float(value)
+    if parsed is None:
+        return _MISSING
+    return format_duration_seconds(parsed)
+
+
+def _transcription_elapsed_text(metadata: dict[str, Any]) -> str:
+    for path in (("processing", "transcription", "elapsed_seconds"), ("asr", "timings", "transcribe_seconds")):
+        text = _format_elapsed_seconds(_metadata_value(metadata, path))
+        if text != _MISSING:
+            return text
+    return _MISSING
 
 
 def _format_created_at(value: Any) -> str:

@@ -8,6 +8,19 @@ from pathlib import Path
 from typing import Any
 
 
+def format_duration_seconds(seconds: float | int | None) -> str:
+    """按历史记录音频时长格式展示秒数。"""
+    if seconds is None:
+        return "--:--"
+    total = max(0, int(round(seconds)))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    seconds_part = total % 60
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds_part:02d}"
+    return f"{minutes:02d}:{seconds_part:02d}"
+
+
 @dataclass(frozen=True)
 class NotebookConfig:
     """历史笔记本配置。"""
@@ -97,15 +110,7 @@ class HistoryRecord:
 
     @property
     def duration_text(self) -> str:
-        if self.duration_seconds is None:
-            return "--:--"
-        total = max(0, int(round(self.duration_seconds)))
-        hours = total // 3600
-        minutes = (total % 3600) // 60
-        seconds = total % 60
-        if hours:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
+        return format_duration_seconds(self.duration_seconds)
 
     @property
     def status_text(self) -> str:

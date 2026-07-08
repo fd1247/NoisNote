@@ -22,7 +22,6 @@ class SummaryHandlers:
             self.processing_record = self.history_service.mark_processing_started(
                 self.processing_record,
                 "summary",
-                self._summary_processing_context(),
             )
         task_id = self._new_task_id("summary")
         self.active_task_ids["summary"] = task_id

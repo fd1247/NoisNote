@@ -1,3 +1,13 @@
+html, body {
+    min-height: 100%;
+    background-color: #ffffff;
+}
+
+html {
+    margin: 0;
+    padding: 0;
+}
+
 body {
     margin: 0 auto;
     font-family: "YaHei Consolas Hybrid", "Noto Sans", "Helvetica Neue", "Segoe UI", Helvetica, Tahoma, Arial, Geneva, Georgia, Palatino, "Times New Roman", "冬青黑体", "Microsoft YaHei", "微软雅黑", "Microsoft YaHei UI", "WenQuanYi Micro Hei", "文泉驿雅黑", Dengxian, "等线体", STXihei, "华文细黑", "Liberation Sans", "Droid Sans", NSimSun, "新宋体", SimSun, "宋体", "Apple Color Emoji", "Segoe UI Emoji";
@@ -289,6 +299,12 @@ div.vx-plantuml-graph {
     padding: 10px 30px 40px;
 }
 
+#vx-content,
+#timelinePanel,
+.markdown-editor {
+    box-sizing: border-box;
+}
+
 /* 宽度设定 */
 @media screen and (min-width: 1180px) {
     #vx-content {
@@ -383,14 +399,23 @@ div.vx-plantuml-graph {
 .detail-shell {
     margin: 0;
     padding: 0;
+    background: #ffffff;
 }
 
 .content-panel {
     padding: 0;
+    background: #ffffff;
+}
+
+.detail-shell,
+.content-panel,
+#body-container,
+#vx-content,
+#timelinePanel {
+    min-height: 100vh;
 }
 
 .markdown-editor {
-    box-sizing: border-box;
     display: block;
     width: 100%;
     min-height: calc(100vh - 20px);
@@ -473,7 +498,7 @@ div.vx-plantuml-graph {
     display: block;
     min-width: 0;
     color: #222222;
-    font-size: 18px;
+    font-size: 17px;
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
@@ -501,7 +526,7 @@ a:focus-visible,
     }
 
     .timeline-text {
-        font-size: 16px;
+        font-size: 15px;
         line-height: 1.45;
     }
 }

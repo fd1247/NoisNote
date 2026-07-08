@@ -99,7 +99,7 @@ def test_metadata_fields_include_remote_url_and_model_names(tmp_path: Path) -> N
                 "remote": {"webpage_url": "https://example.com/watch"},
                 "processing": {
                     "transcription": {"model": "Qwen3-ASR-1.7B-GGUF"},
-                    "summary": {"model": "gpt-4.1"},
+                    "summary": {"status": "completed", "model": "gpt-4.1"},
                 },
             }
         ),
@@ -114,17 +114,123 @@ def test_metadata_fields_include_remote_url_and_model_names(tmp_path: Path) -> N
         "音频时长",
         "文件大小",
         "创建日期",
-        "状态",
         "来源",
-        "本地音视频所在路径",
-        "视频链接",
-        "转录模型",
+        "网址",
+        "转录耗时",
+        "ASR模型",
         "总结模型",
+        "状态",
     ]
     assert by_label["来源"] == "视频链接"
-    assert by_label["视频链接"] == "https://example.com/watch"
-    assert by_label["转录模型"] == "Qwen3-ASR-1.7B-GGUF"
+    assert by_label["网址"] == "https://example.com/watch"
+    assert by_label["创建日期"] == "2026-07-06 12:00:00"
+    assert by_label["ASR模型"] == "Qwen3-ASR-1.7B GGUF"
     assert by_label["总结模型"] == "gpt-4.1"
+    assert by_label["状态"] == "已转录"
+
+
+def test_metadata_summary_model_requires_completed_summary(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(
+        json.dumps(
+            {
+                "processing": {
+                    "summary": {
+                        "status": "failed",
+                        "model": "gpt-4o-mini",
+                    },
+                },
+                "llm": {"model": "legacy-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
+
+    assert fields["总结模型"] == "--"
+
+
+def test_metadata_fields_prefer_remote_canonical_url(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(
+        json.dumps(
+            {
+                "remote": {
+                    "original_url": "https://www.bilibili.com/video/BV1d6KS6SEwU/?spm_id_from=333.1007",
+                    "canonical_url": "https://www.bilibili.com/video/BV1d6KS6SEwU",
+                    "webpage_url": "https://www.bilibili.com/video/BV1d6KS6SEwU/?spm_id_from=333.1007",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
+
+    assert fields["网址"] == "https://www.bilibili.com/video/BV1d6KS6SEwU"
+
+
+def test_metadata_fields_include_transcription_elapsed_before_status(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(
+        json.dumps({"processing": {"transcription": {"elapsed_seconds": 62.3456}}}),
+        encoding="utf-8",
+    )
+
+    fields = build_metadata_fields(record)
+    labels = [field["label"] for field in fields]
+    by_label = {field["label"]: field["value"] for field in fields}
+
+    assert by_label["转录耗时"] == "01:02"
+    assert labels[-1] == "状态"
+
+
+def test_metadata_fields_recovers_partial_qwen_asr_model_display_name(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.record_dir.mkdir(parents=True)
+    record.metadata_path.write_text(
+        json.dumps({"processing": {"transcription": {"model": "Qwen3-ASR-0.6B-"}}}),
+        encoding="utf-8",
+    )
+
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
+
+    assert fields["ASR模型"] == "Qwen3-ASR-0.6B GGUF"
+
+
+def test_scroll_state_command_rejects_stale_record_revision() -> None:
+    assert (
+        parse_detail_command(
+            {
+                "command": "scrollState",
+                "atTop": False,
+                "recordKey": "old:record",
+                "revision": 1,
+            },
+            current_record_key="current:record",
+            current_revision=2,
+        )
+        is None
+    )
+
+    command = parse_detail_command(
+        {
+            "command": "scrollState",
+            "atTop": False,
+            "recordKey": "current:record",
+            "revision": 2,
+        },
+        current_record_key="current:record",
+        current_revision=2,
+    )
+
+    assert command is not None
+    assert command.command == "scrollState"
+    assert command.payload == {"atTop": False}
 
 
 def test_metadata_fields_maps_remote_audio_to_video_link(tmp_path: Path) -> None:
@@ -169,9 +275,9 @@ def test_metadata_fields_hide_remote_url_as_local_path_and_use_remote_audio_file
     remote_audio_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_audio_record)}
     remote_subtitle_fields = {field["label"]: field["value"] for field in build_metadata_fields(remote_subtitle_record)}
 
-    assert remote_url_fields["本地音视频所在路径"] == "--"
-    assert remote_audio_fields["本地音视频所在路径"] == str(remote_audio_path)
-    assert remote_subtitle_fields["本地音视频所在路径"] == "--"
+    assert "文件路径" not in remote_url_fields
+    assert "文件路径" not in remote_audio_fields
+    assert "文件路径" not in remote_subtitle_fields
 
 
 def test_metadata_fields_hide_local_source_path_as_remote_url(tmp_path: Path) -> None:
@@ -181,7 +287,7 @@ def test_metadata_fields_hide_local_source_path_as_remote_url(tmp_path: Path) ->
 
     fields = {field["label"]: field["value"] for field in build_metadata_fields(record)}
 
-    assert "视频链接" not in fields
+    assert "网址" not in fields
 
 
 def test_metadata_fields_use_local_and_recording_labels_and_local_path_fallback(tmp_path: Path) -> None:
@@ -197,9 +303,26 @@ def test_metadata_fields_use_local_and_recording_labels_and_local_path_fallback(
     recording_fields = {field["label"]: field["value"] for field in build_metadata_fields(recording_record)}
 
     assert local_fields["来源"] == "本地文件"
-    assert local_fields["本地音视频所在路径"] == "D:\\media\\source.mp4"
+    assert local_fields["文件路径"] == "D:\\media\\source.mp4"
     assert recording_fields["来源"] == "录音"
-    assert recording_fields["本地音视频所在路径"].endswith("audio.wav")
+    assert "文件路径" not in recording_fields
+
+
+def test_metadata_fields_use_original_local_file_path_before_normalized_audio(tmp_path: Path) -> None:
+    normalized_path = tmp_path / "record" / "audio.normalized.wav"
+    normalized_path.parent.mkdir(parents=True)
+    normalized_path.write_bytes(b"audio")
+    local_record = _record(
+        tmp_path,
+        source_kind="local_video",
+        normalized_audio_path=normalized_path,
+        original_file_path=Path("D:/media/source.mp4"),
+        audio_path=normalized_path.parent / "audio.wav",
+    )
+
+    fields = {field["label"]: field["value"] for field in build_metadata_fields(local_record)}
+
+    assert fields["文件路径"] == "D:\\media\\source.mp4"
 
 
 def test_timeline_active_segment_and_display_text() -> None:
@@ -371,7 +494,7 @@ def test_parse_detail_command_accepts_current_seek() -> None:
 
 def test_parse_detail_command_accepts_scroll_state() -> None:
     command = parse_detail_command(
-        {"command": "scrollState", "atTop": False},
+        {"command": "scrollState", "atTop": False, "recordKey": "record:1", "revision": 2},
         "record:1",
         2,
     )

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..asr.timestamps import timeline_from_dicts, timeline_to_dicts, timeline_to_srt
+from ..utils.remote_urls import canonicalize_video_url
 from .types import DeleteResult, HistoryRecord, HistoryStatus, MoveRecordResult, NotebookConfig
 from .storage import HistoryStorageMixin
 
@@ -319,6 +320,9 @@ class HistoryService(HistoryStorageMixin):
         """为远程链接创建历史记录。"""
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         title = str(getattr(info, "title", "") or "remote-video")
+        original_url = str(getattr(info, "url", "") or getattr(info, "webpage_url", ""))
+        webpage_url = str(getattr(info, "webpage_url", "") or original_url)
+        canonical_url = canonicalize_video_url(webpage_url or original_url) or webpage_url or original_url
         record_id = self._unique_record_id(title or datetime.now().strftime("%Y%m%d_%H%M%S"))
         record_dir = self.recordings_dir / record_id
         record_dir.mkdir(parents=True, exist_ok=False)
@@ -335,14 +339,16 @@ class HistoryService(HistoryStorageMixin):
             "status": HistoryStatus.MISSING_AUDIO.value,
             "source_type": "remote_url",
             "source_kind": "remote_url",
-            "source_path": str(getattr(info, "webpage_url", "") or getattr(info, "url", "")),
-            "original_file_path": str(getattr(info, "webpage_url", "") or getattr(info, "url", "")),
+            "source_path": canonical_url,
+            "original_file_path": original_url,
             "normalized_audio_path": "",
             "audio_format": {},
             "input_error": None,
             "remote": {
-                "url": getattr(info, "url", ""),
-                "webpage_url": getattr(info, "webpage_url", ""),
+                "url": original_url,
+                "original_url": original_url,
+                "webpage_url": webpage_url,
+                "canonical_url": canonical_url,
                 "extractor": getattr(info, "extractor", ""),
                 "title": title,
                 "video_id": getattr(info, "video_id", ""),

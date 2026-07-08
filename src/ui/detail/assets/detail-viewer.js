@@ -15,6 +15,8 @@
     search: { query: "", index: 0, matches: [] }
   };
 
+  var DETAIL_SCROLL_OVERFLOW_THRESHOLD = 24;
+
   var headerIds = [new Set(), new Set()];
   var renderer = window.markdownit ? window.markdownit({
     html: true,
@@ -449,20 +451,34 @@
     });
   }
 
+  function scrollNode() {
+    return document.scrollingElement || document.documentElement || document.body;
+  }
+
   function isScrolledToTop() {
-    var node = document.scrollingElement || document.documentElement || document.body;
+    var node = scrollNode();
     return !node || Number(node.scrollTop || 0) <= 1;
   }
 
-  function canScrollDown() {
-    var node = document.scrollingElement || document.documentElement || document.body;
+  function isPageMeaningfullyScrollable() {
+    var node = scrollNode();
     if (!node) {
       return false;
     }
-    var scrollTop = Number(node.scrollTop || 0);
-    var scrollHeight = Number(node.scrollHeight || 0);
-    var clientHeight = Number(node.clientHeight || 0);
-    return scrollHeight - clientHeight - scrollTop > 1;
+    var overflow = Number(node.scrollHeight || 0) - Number(node.clientHeight || 0);
+    return overflow > DETAIL_SCROLL_OVERFLOW_THRESHOLD;
+  }
+
+  function syncScrollState(force) {
+    var node = scrollNode();
+    if (!isPageMeaningfullyScrollable()) {
+      if (node && Number(node.scrollTop || 0) > 0) {
+        node.scrollTop = 0;
+      }
+      emitScrollState(true, Boolean(force));
+      return;
+    }
+    emitScrollState(isScrolledToTop(), Boolean(force));
   }
 
   function emitScrollState(atTop, force) {
@@ -475,19 +491,15 @@
   }
 
   function handleScrollState() {
-    emitScrollState(isScrolledToTop(), false);
-  }
-
-  function handleWheelState(event) {
-    if (event && event.ctrlKey) {
+    if (!isPageMeaningfullyScrollable()) {
+      var node = scrollNode();
+      if (node && Number(node.scrollTop || 0) > 0) {
+        node.scrollTop = 0;
+      }
+      emitScrollState(true, false);
       return;
     }
-    var wheelDelta = event ? Number(event.deltaY || 0) : 0;
-    if (wheelDelta > 0 && canScrollDown()) {
-      emitScrollState(false, true);
-    } else if (wheelDelta < 0 && isScrolledToTop()) {
-      emitScrollState(true, true);
-    }
+    emitScrollState(isScrolledToTop(), false);
   }
 
   function showError(error) {
@@ -652,7 +664,7 @@
       }
       applySearchState();
       window.requestAnimationFrame(function () {
-        emitScrollState(isScrolledToTop(), true);
+        syncScrollState(true);
       });
     } catch (error) {
       showError(error);
@@ -852,7 +864,6 @@
   };
 
   window.addEventListener("scroll", handleScrollState, { passive: true });
-  document.addEventListener("wheel", handleWheelState, { passive: true });
   document.addEventListener("DOMContentLoaded", function () {
     initEditor();
     initBridge();

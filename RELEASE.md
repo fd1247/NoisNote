@@ -66,11 +66,11 @@ python scripts/release.py --version 0.2.0
 
 ```
 1. 检查 Git 工作目录是否干净
-2. 更新 src/version.py 中的版本号
+2. 更新 src/app/version.py 和 file_version_info.txt 中的版本号
 3. 提交版本号变更 (git commit)
 4. 创建 Git tag (git tag v0.2.0)
 5. 推送到 GitHub (git push)
-6. 执行 build.py 生成发布产物
+6. 执行 scripts/build.py 生成发布产物
 7. 生成 release notes 模板
 8. 调用 gh CLI 创建 GitHub Release
 9. 上传 zip 和 SHA256 校验文件
@@ -108,11 +108,11 @@ python scripts/build.py
 
 ```
 build.py
-  +-- 读取 version.py 获取版本号
+  +-- 读取 src/app/version.py 获取版本号
   +-- 生成 file_version_info.txt（Windows exe 版本信息）
   +-- 调用 PyInstaller 执行 build.spec
-  |     +-- 收集依赖（PySide6、numpy、scipy、onnxruntime）
-  |     +-- 收集资源（assets、ffmpeg、vendor/qwen3-asr-gguf）
+  |     +-- 收集依赖（PySide6、numpy、scipy、onnxruntime、soundfile）
+  |     +-- 收集资源（src/assets、src/ui/detail/assets、ffmpeg、vendor/qwen3-asr-gguf）
   |     +-- 生成 dist/NoisNote/ 目录
   +-- 创建 zip 压缩包
   +-- 生成 SHA256 校验文件
@@ -124,6 +124,7 @@ build.py
 |------|---------|-----------|
 | 应用代码 | `src/` | `_internal/src/` |
 | 应用资源 | `src/assets/` | `_internal/src/assets/` |
+| 详情 WebView 资源 | `src/ui/detail/assets/` | `_internal/src/ui/detail/assets/` |
 | ffmpeg | `vendor/ffmpeg/` | `_internal/src/vendor/ffmpeg/` |
 | GGUF 推理工具 | `vendor/qwen3-asr-gguf/` | `_internal/vendor/qwen3-asr-gguf/` |
 | PySide6 插件 | 自动收集 | `_internal/PySide6/` |
@@ -131,11 +132,14 @@ build.py
 | onnxruntime | 自动收集 | `_internal/onnxruntime/` |
 | soundfile | 自动收集 | `_internal/soundfile/` |
 
+`src/ui/detail/assets/vendor/` 中的 Markdown 渲染库会随详情 WebView 一起打包，应用运行时不依赖 CDN 或公网加载这些前端资源。
+
 ### 不包含的内容
 
 - ASR 模型文件（用户通过应用内下载）
 - 开发工具（pytest、pylint 等）
 - 测试文件
+- 用户数据目录（配置、历史记录、模型、日志、cookies）
 
 ### 打包体积参考
 

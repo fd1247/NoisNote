@@ -1,12 +1,12 @@
 """远程链接导入主流程。"""
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import Any
 
 from ..audio.preprocess import AudioInputError, AudioPreprocessRequest, normalize_audio
 from ..history.service import HistoryRecord, HistoryService
+from ..utils.remote_urls import canonicalize_video_url
 from .errors import RemoteImportError, RemoteImportErrorKind, message_for_kind, remote_error_from_exception
 from .subtitles import normalize_subtitle_file, parse_srt_to_transcript_and_timeline, select_preferred_subtitle
 from .types import RemoteImportOptions, RemoteImportResult, RemoteMediaInfo
@@ -91,7 +91,7 @@ class RemoteImportService:
             raise remote_error_from_exception(exc) from exc
 
         audio_path = record.record_dir / self.history_service.FOLDER_AUDIO
-        shutil.copy2(result.normalized_audio_path, audio_path)
+        _move_normalized_audio(result.normalized_audio_path, audio_path)
         metadata = _remote_metadata(info, "audio", None)
         if subtitle_error:
             metadata["remote"]["subtitle_error"] = subtitle_error
@@ -107,15 +107,21 @@ class RemoteImportService:
             },
             metadata=metadata,
         )
+        _cleanup_downloaded_audio(downloaded_audio, record.record_dir, audio_path)
         _emit(progress_callback, "音频已导入", 100)
         return RemoteImportResult(mode="audio", record=refreshed, audio_path=audio_path, metadata=metadata)
 
 
 def _remote_metadata(info: RemoteMediaInfo, strategy: str, subtitle: Any | None) -> dict[str, Any]:
+    original_url = info.url or info.webpage_url
+    webpage_url = info.webpage_url or original_url
+    canonical_url = canonicalize_video_url(webpage_url or original_url) or webpage_url or original_url
     data: dict[str, Any] = {
         "remote": {
-            "url": info.url,
-            "webpage_url": info.webpage_url,
+            "url": original_url,
+            "original_url": original_url,
+            "webpage_url": webpage_url,
+            "canonical_url": canonical_url,
             "extractor": info.extractor,
             "title": info.title,
             "video_id": info.video_id,
@@ -160,3 +166,29 @@ def _cleanup_failed_subtitle_import(record: HistoryRecord, *paths: Path) -> None
                 target.unlink()
             except OSError:
                 continue
+
+
+def _move_normalized_audio(source: Path, target: Path) -> None:
+    source_path = Path(source)
+    target_path = Path(target)
+    if source_path.resolve(strict=False) == target_path.resolve(strict=False):
+        return
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.replace(target_path)
+
+
+def _cleanup_downloaded_audio(path: Path, record_dir: Path, final_audio_path: Path) -> None:
+    target = Path(path).resolve(strict=False)
+    root = record_dir.resolve(strict=False)
+    final_audio = final_audio_path.resolve(strict=False)
+    if target == final_audio:
+        return
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return
+    if target.exists() and target.is_file():
+        try:
+            target.unlink()
+        except OSError:
+            return

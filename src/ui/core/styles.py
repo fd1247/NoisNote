@@ -175,6 +175,7 @@ QLabel#DetailMetadataLabel {
 QLabel#DetailMetadataValue {
     color: #111827;
     font-size: 13px;
+    max-height: 20px;
 }
 QLabel#PlayerTime {
     color: #6b7280;
@@ -684,6 +685,7 @@ QTextBrowser#TimelineView {
     border: 1px solid #d1d5db;
     border-radius: 6px;
     padding: 6px;
+    font-size: 12px;
 }
 QLineEdit#HotwordSearchBox {
     background: #ffffff;

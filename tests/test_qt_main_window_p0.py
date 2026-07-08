@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import shutil
 import wave
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
+from PySide6.QtCore import QElapsedTimer, QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton
 from PySide6.QtWidgets import QDialog
@@ -391,11 +392,29 @@ def test_show_metadata_details_toggles_inline_panel_and_scroll_state(monkeypatch
         assert not window.detail_header.isHidden()
         assert window.detail_metadata_panel.isHidden()
 
-        window._on_detail_web_command({"command": "scrollState", "atTop": False})
+        window._on_detail_web_command(
+            {
+                "command": "scrollState",
+                "atTop": False,
+                "recordKey": window.current_record.record_key,
+                "revision": window.detail_revision,
+            }
+        )
+        QTest.qWait(140)
+        app.processEvents()
 
         assert window.detail_header.isHidden()
 
-        window._on_detail_web_command({"command": "scrollState", "atTop": True})
+        window._on_detail_web_command(
+            {
+                "command": "scrollState",
+                "atTop": True,
+                "recordKey": window.current_record.record_key,
+                "revision": window.detail_revision,
+            }
+        )
+        QTest.qWait(140)
+        app.processEvents()
 
         assert not window.detail_header.isHidden()
 
@@ -404,6 +423,7 @@ def test_show_metadata_details_toggles_inline_panel_and_scroll_state(monkeypatch
         assert not window.detail_header.isHidden()
         assert not window.detail_metadata_panel.isHidden()
         assert window.detail_metadata_button.isChecked()
+        assert window.detail_metadata_panel.maximumHeight() >= 0
         labels = [label.text() for label in window.detail_metadata_panel.findChildren(QLabel)]
         assert "音频时长" in labels
         assert "状态" in labels
@@ -413,21 +433,293 @@ def test_show_metadata_details_toggles_inline_panel_and_scroll_state(monkeypatch
         assert len(metadata_status_values) == 1
         assert metadata_status_values[0].sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
 
-        window._on_detail_web_command({"command": "scrollState", "atTop": False})
+        window._on_detail_web_command(
+            {
+                "command": "scrollState",
+                "atTop": False,
+                "recordKey": window.current_record.record_key,
+                "revision": window.detail_revision,
+            }
+        )
+        QTest.qWait(140)
+        app.processEvents()
 
         assert window.detail_header.isHidden()
         assert not window.detail_metadata_panel.isHidden()
         assert window.detail_metadata_button.isChecked()
 
-        window._on_detail_web_command({"command": "scrollState", "atTop": True})
+        window._on_detail_web_command(
+            {
+                "command": "scrollState",
+                "atTop": True,
+                "recordKey": window.current_record.record_key,
+                "revision": window.detail_revision,
+            }
+        )
+        QTest.qWait(140)
+        app.processEvents()
 
         assert not window.detail_header.isHidden()
         assert not window.detail_metadata_panel.isHidden()
 
         window.show_metadata_details()
+        QTest.qWait(220)
+        app.processEvents()
 
         assert window.detail_metadata_panel.isHidden()
         assert not window.detail_metadata_button.isChecked()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_scroll_state_defers_header_resize(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+
+        assert not window.detail_header.isHidden()
+
+        window._on_detail_web_command(
+            {
+                "command": "scrollState",
+                "atTop": False,
+                "recordKey": window.current_record.record_key,
+                "revision": window.detail_revision,
+            }
+        )
+        app.processEvents()
+
+        assert not window.detail_header.isHidden()
+
+        QTest.qWait(140)
+        app.processEvents()
+
+        assert window.detail_header.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_layout_resize_covers_webview_bottom(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        cover_calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(
+            window.detail_webview,
+            "cover_bottom_for_layout_transition",
+            lambda height=180, duration_ms=220: cover_calls.append((height, duration_ms)),
+        )
+
+        window.show_metadata_details()
+        QTest.qWait(220)
+        app.processEvents()
+        cover_calls.clear()
+
+        window.show_metadata_details()
+
+        assert cover_calls
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_workbench_side_panel_toggle_covers_detail_webview_width_resize(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        cover_calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(
+            window.detail_webview,
+            "cover_for_layout_transition",
+            lambda duration_ms=220: cover_calls.append((duration_ms, window.detail_webview.width())),
+            raising=False,
+        )
+
+        window._set_history_panel_visible(False)
+        window._set_task_panel_visible(False)
+
+        assert len(cover_calls) == 2
+        assert all(duration_ms >= 220 for duration_ms, _width in cover_calls)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_animation_keeps_header_summary_stable(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.resize(1000, 700)
+        window.show()
+        app.processEvents()
+
+        window.show_metadata_details()
+        title_positions: set[tuple[int, int]] = set()
+        title_sizes: set[tuple[int, int]] = set()
+        title_heights: set[int] = set()
+        meta_tops: set[int] = set()
+        meta_heights: set[int] = set()
+        timer = QElapsedTimer()
+        timer.start()
+        while timer.elapsed() < 220:
+            app.processEvents()
+            title_pos = window.detail_title_label.mapTo(window, window.detail_title_label.rect().topLeft())
+            title_positions.add((title_pos.x(), title_pos.y()))
+            title_sizes.add((window.detail_title_label.geometry().width(), window.detail_title_label.geometry().height()))
+            title_heights.add(window.detail_title_label.geometry().height())
+            meta_tops.add(window.detail_duration_label.geometry().y())
+            meta_heights.add(window.detail_duration_label.geometry().height())
+            QTest.qWait(10)
+
+        final_title_pos = window.detail_title_label.mapTo(window, window.detail_title_label.rect().topLeft())
+        assert title_positions == {(final_title_pos.x(), final_title_pos.y())}
+        assert title_sizes == {
+            (window.detail_title_label.geometry().width(), window.detail_title_label.geometry().height())
+        }
+        assert title_heights == {window.detail_title_label.geometry().height()}
+        assert meta_tops == {window.detail_duration_label.geometry().y()}
+        assert meta_heights == {window.detail_duration_label.geometry().height()}
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_refresh_does_not_detach_visible_widgets_as_windows(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.resize(1000, 700)
+        window.show()
+        app.processEvents()
+
+        window.show_metadata_details()
+        QTest.qWait(220)
+        app.processEvents()
+        old_widgets = list(window.detail_metadata_panel.findChildren(QLabel))
+
+        assert old_widgets
+        assert all(not widget.isWindow() for widget in old_widgets)
+
+        record = service.mark_processing_completed(
+            record,
+            "transcription",
+            2.0,
+            {"model": "Qwen3-ASR-0.6B-GGUF"},
+        )
+        window._update_detail_header(record)
+
+        top_level_widgets = set(QApplication.topLevelWidgets())
+        assert not any(widget in top_level_widgets for widget in old_widgets)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_refresh_keeps_visible_rows_when_panel_is_expanded(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.resize(1000, 700)
+        window.show()
+        app.processEvents()
+
+        window.show_metadata_details()
+        QTest.qWait(220)
+        app.processEvents()
+
+        record = service.mark_processing_started(
+            record,
+            "transcription",
+            {"model": "Qwen3-ASR-0.6B-GGUF"},
+        )
+        window.current_record = record
+        window._update_detail_header(record)
+        app.processEvents()
+
+        visible_values = [
+            label
+            for label in window.detail_metadata_panel.findChildren(QLabel)
+            if label.objectName() in {"DetailMetadataValue", "DetailStatusPill"} and label.isVisible()
+        ]
+
+        assert visible_values
+        assert window.detail_metadata_panel.maximumHeight() >= window.detail_metadata_panel.sizeHint().height()
+        assert all(label.height() > 0 for label in visible_values)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_panel_uses_available_header_width(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        record_dir = tmp_path / "records" / "remote"
+        write_wav(record_dir / "audio.wav")
+        record = service.scan()[0]
+        record.metadata_path.write_text(
+            json.dumps(
+                {
+                    "source_kind": "remote_url",
+                    "remote": {"webpage_url": "https://www.bilibili.com/video/BV1d6KS6SEwU"},
+                    "processing": {
+                        "transcription": {
+                            "model": "Qwen3-ASR-0.6B-GGUF",
+                            "elapsed_seconds": 33,
+                            "status": "completed",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+        window.resize(1127, 700)
+        window.show()
+        app.processEvents()
+
+        window.show_metadata_details()
+        QTest.qWait(220)
+        app.processEvents()
+
+        assert window.detail_metadata_panel.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+        assert window.detail_metadata_panel.width() > window.detail_metadata_panel.sizeHint().width()
+        asr_value = next(
+            label
+            for label in window.detail_metadata_panel.findChildren(QLabel)
+            if label.objectName() == "DetailMetadataValue" and label.text() == "Qwen3-ASR-0.6B GGUF"
+        )
+        assert asr_value.width() >= asr_value.sizeHint().width()
     finally:
         window.close()
         app.processEvents()
@@ -465,11 +757,83 @@ def test_metadata_video_link_opens_external_url(monkeypatch, tmp_path: Path) -> 
             if label.objectName() == "DetailMetadataValue" and "https://example.com/watch?v=demo" in label.text()
         ]
         assert len(link_values) == 1
+        assert 'href="https://example.com/watch?v=demo"' in link_values[0].text()
+        assert "color:#2563eb" in link_values[0].text()
         assert link_values[0].openExternalLinks() is False
+        assert "mousePressEvent" not in link_values[0].__dict__
+        assert link_values[0].focusPolicy() == Qt.FocusPolicy.NoFocus
 
         link_values[0].linkActivated.emit("https://example.com/watch?v=demo")
 
         assert opened == ["https://example.com/watch?v=demo"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_long_values_are_single_line_elided_with_tooltips(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "remote" / "audio.wav")
+        long_url = "https://example.com/watch?v=demo&list=" + "a" * 80
+        record = service.scan()[0]
+        record.metadata_path.write_text(
+            json.dumps(
+                {
+                    "source_kind": "remote_url",
+                    "remote": {"webpage_url": long_url},
+                }
+            ),
+            encoding="utf-8",
+        )
+        record = service.scan()[0]
+        window.history_service = service
+        window._load_history_record(record)
+
+        window.show_metadata_details()
+
+        values = [
+            label
+            for label in window.detail_metadata_panel.findChildren(QLabel)
+            if label.objectName() == "DetailMetadataValue"
+        ]
+        url_label = next(label for label in values if label.toolTip() == long_url)
+
+        assert "..." in url_label.text()
+        assert url_label.wordWrap() is False
+        assert "<a " in url_label.text()
+        assert "color:#2563eb" in url_label.text()
+
+        write_wav(tmp_path / "records" / "local" / "audio.wav")
+        local_record = next(item for item in service.scan() if item.record_id == "local")
+        long_path = tmp_path / "media" / "projects" / "nested-folder" / "nested-folder" / "nested-folder"
+        long_path = long_path / "nested-folder" / "nested-folder" / "nested-folder" / "meeting-source-video.wav"
+        long_path.parent.mkdir(parents=True)
+        long_path.write_bytes(b"audio")
+        local_record.metadata_path.write_text(
+            json.dumps(
+                {
+                    "source_kind": "local_video",
+                    "original_file_path": str(long_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        local_record = next(item for item in service.scan() if item.record_id == "local")
+        window._load_history_record(local_record)
+        window.detail_metadata_expanded = False
+        window.show_metadata_details()
+
+        values = [
+            label
+            for label in window.detail_metadata_panel.findChildren(QLabel)
+            if label.objectName() == "DetailMetadataValue"
+        ]
+        path_label = next(label for label in values if label.toolTip() == str(long_path))
+        assert path_label.text().endswith("...")
+        assert path_label.wordWrap() is False
     finally:
         window.close()
         app.processEvents()
@@ -1378,6 +1742,56 @@ def test_unselected_summary_failure_does_not_update_current_detail(monkeypatch, 
         app.processEvents()
 
 
+def test_summary_start_does_not_persist_model_before_success(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def emit(self) -> None:
+            for callback in list(self.callbacks):
+                callback()
+
+    class FakeSummaryWorker:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.completed = FakeSignal()
+            self.failed = FakeSignal()
+            self.finished = FakeSignal()
+
+        def start(self) -> None:
+            self.finished.emit()
+
+        def deleteLater(self) -> None:
+            return None
+
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "transcript")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        monkeypatch.setattr("src.handlers.summary.SummaryWorker", FakeSummaryWorker)
+
+        window.start_summarization("transcript", record)
+
+        metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+        summary_step = metadata["processing"]["summary"]
+        assert summary_step["status"] == "running"
+        assert "model" not in summary_step
+        assert "provider" not in summary_step
+        assert "base_url" not in summary_step
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_retry_transcription_cancel_keeps_generated_files(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -1921,8 +2335,12 @@ def test_detail_search_bar_counts_timeline_matches(monkeypatch, tmp_path: Path) 
 
 def test_detail_search_previous_button_uses_up_icon() -> None:
     source = Path(__file__).resolve().parents[1] / "src" / "ui" / "pages" / "content.py"
+    content = source.read_text(encoding="utf-8")
 
-    assert '"向上.svg"' in source.read_text(encoding="utf-8")
+    assert '"向上.svg"' in content
+    assert '"向下.svg"' in content
+    assert '"清空.svg"' in content
+    assert '"下拉.svg", "下一个"' not in content
 
 
 def test_detail_edit_content_changed_saves_active_summary(monkeypatch, tmp_path: Path) -> None:

@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QPlainTextEdit, QTextBrowser, QVBoxLayout, QWidget
 
 from .models import timeline_display_text
@@ -109,6 +110,9 @@ class DetailWebView(QWidget):
         self._bridge.commandReceived.connect(self._handle_bridge_command)
         self._web_view: Any = None
         self._fallback: QTextBrowser | QPlainTextEdit | None = None
+        self._layout_transition_cover: QWidget | None = None
+        self._layout_transition_cover_height: int | None = None
+        self._layout_transition_cover_generation = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -121,6 +125,54 @@ class DetailWebView(QWidget):
                 self._setup_fallback(layout)
         else:
             self._setup_fallback(layout)
+
+    def cover_bottom_for_layout_transition(self, height: int = 180, duration_ms: int = 220) -> None:
+        """短暂盖住 WebEngine 底部新暴露区域，避免异步合成帧露出黑底。"""
+        self._layout_transition_cover_height = max(1, int(height))
+        self._show_layout_transition_cover(duration_ms)
+
+    def cover_for_layout_transition(self, duration_ms: int = 220) -> None:
+        """短暂遮住整个 WebEngine，用于宽度突变时避免右侧黑色合成帧。"""
+        self._layout_transition_cover_height = None
+        self._show_layout_transition_cover(duration_ms)
+
+    def _show_layout_transition_cover(self, duration_ms: int) -> None:
+        cover = self._layout_transition_cover
+        if cover is None:
+            cover = QWidget(self)
+            cover.setObjectName("DetailWebViewLayoutTransitionCover")
+            cover.setStyleSheet("background-color: #ffffff;")
+            cover.hide()
+            self._layout_transition_cover = cover
+        self._position_layout_transition_cover()
+        cover.raise_()
+        cover.show()
+        self._layout_transition_cover_generation += 1
+        generation = self._layout_transition_cover_generation
+        QTimer.singleShot(max(0, int(duration_ms)), lambda: self._hide_layout_transition_cover(generation))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802, ANN001
+        super().resizeEvent(event)
+        cover = self._layout_transition_cover
+        if cover is not None and cover.isVisible():
+            self._position_layout_transition_cover()
+
+    def _hide_layout_transition_cover(self, generation: int) -> None:
+        if generation != self._layout_transition_cover_generation:
+            return
+        if self._layout_transition_cover is not None:
+            self._layout_transition_cover.hide()
+
+    def _position_layout_transition_cover(self) -> None:
+        cover = self._layout_transition_cover
+        if cover is None:
+            return
+        height = self._layout_transition_cover_height
+        if height is None:
+            cover.setGeometry(self.rect())
+            return
+        cover_height = max(1, min(max(1, int(height)), max(1, self.height())))
+        cover.setGeometry(0, max(0, self.height() - cover_height), self.width(), cover_height)
 
     def is_webengine_available(self) -> bool:
         """返回当前实例是否真实启用了 WebEngine。"""
@@ -180,10 +232,12 @@ class DetailWebView(QWidget):
     def _setup_webengine(self, layout: QVBoxLayout) -> None:
         self._web_view = QWebEngineView(self)
         page = _LocalOnlyWebEnginePage(self._web_view)
+        page.setBackgroundColor(QColor("#ffffff"))
         channel = QWebChannel(page)
         channel.registerObject("detailBridge", self._bridge)
         page.setWebChannel(channel)
         self._web_view.setPage(page)
+        self._web_view.setStyleSheet("background-color: #ffffff;")
         self._web_view.setZoomFactor(_VNOTE_READ_MODE_ZOOM_FACTOR)
         self._web_view.loadFinished.connect(self._handle_load_finished)
         self._web_view.load(QUrl.fromLocalFile(str(_INDEX_HTML)))

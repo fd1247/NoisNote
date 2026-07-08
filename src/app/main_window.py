@@ -9,7 +9,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QCloseEvent,
     QDesktopServices,
@@ -48,6 +48,7 @@ from ..history.service import HistoryRecord, HistoryService
 from ..model_registry.downloader import ModelDownloadManager
 from ..ui.pages.settings import SettingsPanel
 from ..ui.pages.content import HistoryPageCallbacks, build_history_page
+from ..ui.detail.formatting import elide_metadata_value
 from ..ui.detail.models import build_metadata_fields
 from ..ui.pages.sidebar import build_history_sidebar
 from ..ui.core.icons import make_action_icon, make_app_icon
@@ -60,6 +61,12 @@ from ..utils.logging import log_event, record_context
 if TYPE_CHECKING:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
+
+_DETAIL_METADATA_ANIMATION_MS = 140
+_DETAIL_WEBVIEW_RESIZE_COVER_HEIGHT = 180
+_DETAIL_WEBVIEW_RESIZE_COVER_MS = 220
+_DETAIL_WEBVIEW_WIDTH_RESIZE_COVER_MS = 260
+_DETAIL_SCROLL_STATE_DELAY_MS = 80
 
 class MainWindow(
     ImportHandlers,
@@ -126,6 +133,13 @@ class MainWindow(
         self._updating_playback_slider = False
         self.settings_dialog: SettingsDialog | None = None
         self.recording_dialog = None
+        self.detail_metadata_expanded = False
+        self._detail_metadata_animation: QPropertyAnimation | None = None
+        self._detail_metadata_discard_parent: QWidget | None = None
+        self._pending_detail_scroll_at_top: bool | None = None
+        self._detail_scroll_state_timer = QTimer(self)
+        self._detail_scroll_state_timer.setSingleShot(True)
+        self._detail_scroll_state_timer.timeout.connect(self._apply_pending_detail_scroll_state)
 
         self.setWindowTitle("NoisNote")
         self.setWindowIcon(make_app_icon())
@@ -228,6 +242,8 @@ class MainWindow(
         self.quick_toolbar.setVisible(visible)
 
     def _set_history_panel_visible(self, visible: bool) -> None:
+        if hasattr(self, "sidebar_stack") and self.sidebar_stack.isHidden() == visible:
+            self._cover_detail_webview_width_resize()
         self.sidebar_stack.setVisible(visible)
 
     def _set_playback_panel_visible(self, visible: bool) -> None:
@@ -237,6 +253,8 @@ class MainWindow(
             self.playback_separator.setVisible(visible)
 
     def _set_task_panel_visible(self, visible: bool) -> None:
+        if hasattr(self, "task_panel") and self.task_panel.isHidden() == visible:
+            self._cover_detail_webview_width_resize()
         self.task_panel.setVisible(visible)
 
     def _show_update_check(self) -> None:
@@ -438,7 +456,7 @@ class MainWindow(
         if not has_record:
             self.detail_metadata_expanded = False
             self.detail_metadata_button.setChecked(False)
-            self.detail_metadata_panel.hide()
+            self._set_detail_metadata_panel_expanded(False, animate=False)
             self.detail_header.show()
         self.detail_transcribe_action.setEnabled(can_transcribe)
         self.detail_summary_action.setEnabled(
@@ -454,10 +472,87 @@ class MainWindow(
             return
         expanded = not bool(getattr(self, "detail_metadata_expanded", False))
         self.detail_metadata_expanded = expanded
+        self._set_detail_metadata_panel_expanded(expanded, animate=True)
+        self.detail_metadata_button.setChecked(expanded)
+
+    def _set_detail_metadata_panel_expanded(self, expanded: bool, *, animate: bool) -> None:
+        panel = self.detail_metadata_panel
+        animation = getattr(self, "_detail_metadata_animation", None)
+        if animation is not None:
+            animation.stop()
+            self._detail_metadata_animation = None
+
         if expanded:
             self._populate_detail_metadata_panel()
-        self.detail_metadata_panel.setVisible(expanded)
-        self.detail_metadata_button.setChecked(expanded)
+            panel.setVisible(True)
+            target_height = self._detail_metadata_panel_height()
+            if not animate:
+                panel.setMaximumHeight(target_height)
+                return
+            self._cover_detail_webview_resize()
+            start_height = panel.height() if panel.maximumHeight() > target_height else panel.maximumHeight()
+            self._animate_detail_metadata_panel_height(max(0, start_height), target_height)
+            return
+
+        start_height = panel.height() if panel.isVisible() else panel.maximumHeight()
+        if not animate or start_height <= 0:
+            if panel.isVisible():
+                self._cover_detail_webview_resize()
+            panel.setMaximumHeight(0)
+            panel.hide()
+            return
+        self._cover_detail_webview_resize()
+        self._animate_detail_metadata_panel_height(start_height, 0)
+
+    def _cover_detail_webview_resize(self) -> None:
+        cover = getattr(self.detail_webview, "cover_bottom_for_layout_transition", None)
+        if callable(cover):
+            cover(_DETAIL_WEBVIEW_RESIZE_COVER_HEIGHT, _DETAIL_WEBVIEW_RESIZE_COVER_MS)
+
+    def _cover_detail_webview_width_resize(self) -> None:
+        cover = getattr(self.detail_webview, "cover_for_layout_transition", None)
+        if callable(cover):
+            cover(_DETAIL_WEBVIEW_WIDTH_RESIZE_COVER_MS)
+            return
+        self._cover_detail_webview_resize()
+
+    def _detail_metadata_panel_height(self) -> int:
+        layout = self.detail_metadata_panel.layout()
+        if layout is not None:
+            layout.activate()
+        return max(1, self.detail_metadata_panel.sizeHint().height())
+
+    def _animate_detail_metadata_panel_height(self, start: int, end: int) -> None:
+        panel = self.detail_metadata_panel
+        panel.setMaximumHeight(max(0, start))
+        animation = QPropertyAnimation(panel, b"maximumHeight", self)
+        animation.setDuration(_DETAIL_METADATA_ANIMATION_MS)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setStartValue(max(0, start))
+        animation.setEndValue(max(0, end))
+        animation.valueChanged.connect(lambda _value: self._relayout_detail_metadata_panel())
+
+        def finish() -> None:
+            self._detail_metadata_animation = None
+            if bool(getattr(self, "detail_metadata_expanded", False)):
+                panel.setVisible(True)
+                panel.setMaximumHeight(self._detail_metadata_panel_height())
+            else:
+                panel.setMaximumHeight(0)
+                panel.hide()
+
+        animation.finished.connect(finish)
+        self._detail_metadata_animation = animation
+        animation.start()
+
+    def _relayout_detail_metadata_panel(self) -> None:
+        panel = self.detail_metadata_panel
+        panel.updateGeometry()
+        for widget in (self.detail_header, self.history_page):
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
 
     def _populate_detail_metadata_panel(self) -> None:
         """将当前记录元数据填充到详情头的内联面板。"""
@@ -470,7 +565,8 @@ class MainWindow(
             item = layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                widget.hide()
+                widget.setParent(self._detail_metadata_discard_widget())
                 widget.deleteLater()
 
         fields = build_metadata_fields(self.current_record)
@@ -483,37 +579,67 @@ class MainWindow(
 
             field_label = str(field.get("label") or "")
             field_value = str(field.get("value") or "--")
+            display_value = elide_metadata_value(field_value)
             label = QLabel(field_label)
             label.setObjectName("DetailMetadataLabel")
-            value = QLabel(field_value)
+            value = QLabel(display_value)
             value.setObjectName("DetailMetadataValue")
+            if display_value != field_value:
+                value.setToolTip(field_value)
+            value.setWordWrap(False)
+            value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             value_alignment = Qt.AlignmentFlag.AlignLeft
             if field_label == "状态":
                 value.setObjectName("DetailStatusPill")
                 value.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-            elif field_label == "视频链接" and field_value != "--":
+            elif field_label == "网址" and field_value != "--":
                 safe_url = escape(field_value, quote=True)
-                value.setText(f'<a href="{safe_url}">{safe_url}</a>')
+                safe_display = escape(display_value)
+                value.setText(
+                    f'<a href="{safe_url}" style="color:#2563eb;text-decoration:none;">{safe_display}</a>'
+                )
                 value.setTextFormat(Qt.TextFormat.RichText)
                 value.setOpenExternalLinks(False)
+                value.setCursor(Qt.CursorShape.PointingHandCursor)
                 value.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
-                value.setTextInteractionFlags(
-                    Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
-                )
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+                value.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             else:
+                value.setTextFormat(Qt.TextFormat.PlainText)
                 value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            value.setWordWrap(True)
 
             layout.addWidget(label, row, label_column)
             layout.addWidget(value, row, value_column, alignment=value_alignment)
+            label.show()
+            value.show()
+
+    def _detail_metadata_discard_widget(self) -> QWidget:
+        discard = self._detail_metadata_discard_parent
+        if discard is None:
+            discard = QWidget(self.detail_metadata_panel)
+            discard.hide()
+            self._detail_metadata_discard_parent = discard
+        return discard
 
     def _set_detail_metadata_scrolled_to_top(self, at_top: bool) -> None:
         """根据正文滚动位置自动显示或隐藏整个详情头部区域。"""
         if not self.current_record:
             return
-        if at_top and self.current_record:
-            self._populate_detail_metadata_panel()
-            self.detail_metadata_panel.setVisible(bool(getattr(self, "detail_metadata_expanded", False)))
+        self._pending_detail_scroll_at_top = bool(at_top)
+        self._detail_scroll_state_timer.start(_DETAIL_SCROLL_STATE_DELAY_MS)
+
+    def _apply_pending_detail_scroll_state(self) -> None:
+        if not self.current_record:
+            return
+        at_top = bool(self._pending_detail_scroll_at_top)
+        self._pending_detail_scroll_at_top = None
+        if at_top:
+            self._set_detail_metadata_panel_expanded(
+                bool(getattr(self, "detail_metadata_expanded", False)),
+                animate=False,
+            )
+        if self.detail_header.isVisible() != bool(at_top):
+            self._cover_detail_webview_resize()
         self.detail_header.setVisible(bool(at_top))
         self.detail_metadata_button.setChecked(bool(getattr(self, "detail_metadata_expanded", False)))
 
@@ -528,7 +654,7 @@ class MainWindow(
         HistoryViewHandlers._update_detail_header(self, record)
         self.detail_header.show()
         if bool(getattr(self, "detail_metadata_expanded", False)):
-            self._populate_detail_metadata_panel()
+            self._set_detail_metadata_panel_expanded(True, animate=False)
         self._sync_detail_action_menu()
 
     def _clear_missing_current_record(self, *, clear_persisted_selection: bool = True) -> None:
@@ -539,7 +665,7 @@ class MainWindow(
         )
         self.detail_metadata_expanded = False
         self.detail_metadata_button.setChecked(False)
-        self.detail_metadata_panel.hide()
+        self._set_detail_metadata_panel_expanded(False, animate=False)
         self._bump_detail_revision()
         self._refresh_detail_payload()
         self._sync_detail_action_menu()
