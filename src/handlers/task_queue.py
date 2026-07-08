@@ -76,6 +76,13 @@ class TaskQueueHandlers:
             self.task_manager.fail_running(task.task_id, "历史记录不存在")
             self._start_next_processing_task()
             return
+        if not task.options.summary_only and task.options.overwrite_existing:
+            try:
+                record = self.history_service.clear_generated_results(record)
+            except Exception as exc:
+                self.task_manager.fail_running(task.task_id, f"清理旧结果失败：{exc}")
+                self._start_next_processing_task()
+                return
         self.current_processing_task = task
         self.processing_record = record
         self.processing_source = task.source

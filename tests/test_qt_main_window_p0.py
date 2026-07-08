@@ -2298,6 +2298,50 @@ def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tm
         app.processEvents()
 
 
+def test_queued_retry_transcription_clears_generated_files_before_start(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "old transcript")
+        service.save_summary(record, "old summary")
+        record.markdown_path.write_text("old markdown", encoding="utf-8")
+        record.record_dir.joinpath("timeline.json").write_text("[]", encoding="utf-8")
+        record.record_dir.joinpath("transcript.srt").write_text("1", encoding="utf-8")
+        record = service.scan()[0]
+        window.history_service = service
+
+        started: list[tuple[Path, str]] = []
+
+        def fake_start(audio_file, record=None, source="manual") -> None:
+            assert record is not None
+            assert not record.transcript_path.exists()
+            assert not record.summary_path.exists()
+            assert not record.markdown_path.exists()
+            assert not record.record_dir.joinpath("timeline.json").exists()
+            assert not record.record_dir.joinpath("transcript.srt").exists()
+            started.append((audio_file, source))
+
+        monkeypatch.setattr(window, "start_transcription", fake_start)
+
+        task = window.task_manager.enqueue_process_record(
+            record,
+            source="manual",
+            auto_summarize=False,
+            overwrite_existing=True,
+            manual=True,
+        )
+
+        window._execute_processing_task(task)
+
+        assert started == [(record.audio_path, "manual")]
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_transcription_empty_result_becomes_no_valid_speech_error(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)

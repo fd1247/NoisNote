@@ -168,6 +168,27 @@ def test_remote_audio_completion_enqueues_processing(monkeypatch, tmp_path: Path
         window.close()
 
 
+def test_remote_subtitle_completion_does_not_enqueue_processing(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "subtitle.wav"))
+        window.config["audio"]["auto_transcribe"] = True
+        window.config["audio"]["auto_summarize"] = False
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, **kwargs: enqueued.append(record.record_key),
+        )
+        result = type("Result", (), {"record": record, "mode": "subtitle", "transcript_text": "subtitle text"})()
+
+        window._on_remote_import_completed(result)
+
+        assert enqueued == []
+    finally:
+        window.close()
+
+
 def test_remote_subtitle_record_disables_playback(monkeypatch, tmp_path: Path) -> None:
     window = make_window(monkeypatch, tmp_path)
     try:

@@ -61,6 +61,8 @@ class TaskQueueStore:
         record = history_service.get_record_by_key(task.record_key)
         if record is None:
             return False
+        if task.options.summary_only:
+            return record.has_transcript
         if not record.audio_path.exists():
             return False
         if record.has_transcript and not task.options.overwrite_existing:

@@ -16,14 +16,15 @@ class FakeHistoryService:
         return self.records.get(record_key)
 
 
-def _record(tmp_path: Path, record_id: str, *, transcript: bool = False) -> HistoryRecord:
+def _record(tmp_path: Path, record_id: str, *, transcript: bool = False, audio: bool = True) -> HistoryRecord:
     record_dir = tmp_path / record_id
     record_dir.mkdir()
     audio = record_dir / "audio.wav"
     transcript_path = record_dir / "transcript.txt"
     summary = record_dir / "summary.md"
     metadata = record_dir / "metadata.json"
-    audio.write_bytes(b"fake")
+    if audio:
+        audio.write_bytes(b"fake")
     if transcript:
         transcript_path.write_text("done", encoding="utf-8")
     metadata.write_text("{}", encoding="utf-8")
@@ -45,7 +46,13 @@ def _record(tmp_path: Path, record_id: str, *, transcript: bool = False) -> Hist
     )
 
 
-def _task(record: HistoryRecord, *, overwrite: bool = False, status: TaskStatus = TaskStatus.QUEUED) -> AppTask:
+def _task(
+    record: HistoryRecord,
+    *,
+    overwrite: bool = False,
+    summary_only: bool = False,
+    status: TaskStatus = TaskStatus.QUEUED,
+) -> AppTask:
     return AppTask(
         task_id=f"task-{record.record_id}",
         kind=TaskKind.PROCESS_RECORD,
@@ -57,7 +64,7 @@ def _task(record: HistoryRecord, *, overwrite: bool = False, status: TaskStatus 
         title=record.display_name,
         created_at="2026-07-08T12:00:00",
         queued_at="2026-07-08T12:00:00",
-        options=TaskOptions(overwrite_existing=overwrite),
+        options=TaskOptions(overwrite_existing=overwrite, summary_only=summary_only),
     )
 
 
@@ -102,6 +109,18 @@ def test_store_keeps_overwrite_task_for_finished_record(tmp_path: Path) -> None:
 
     assert len(loaded) == 1
     assert loaded[0].options.overwrite_existing is True
+
+
+def test_store_round_trips_summary_only_task_without_audio(tmp_path: Path) -> None:
+    record = _record(tmp_path, "a", transcript=True, audio=False)
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+
+    store.save([_task(record, summary_only=True)])
+    loaded = store.load(FakeHistoryService({record.record_key: record}))
+
+    assert len(loaded) == 1
+    assert loaded[0].record_key == record.record_key
+    assert loaded[0].options.summary_only is True
 
 
 def test_store_saves_only_queued_tasks(tmp_path: Path) -> None:
