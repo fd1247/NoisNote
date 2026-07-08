@@ -301,7 +301,7 @@ class ImportHandlers:
         self.processing_record = None
         self._set_processing_ui(False)
         self.current_record = record
-        if source == "manual":
+        if source == "manual" or self._queue_task_for_record(record):
             self.start_transcription(record.audio_path, record, source=source)
             return
         self._handle_audio_record_ready(record, status_after_success, source=source)
@@ -340,6 +340,8 @@ class ImportHandlers:
             self._show_error(self._audio_preprocess_failure_message(record, error))
         else:
             self._set_status(error.message)
+        if self._queue_task_for_record(record):
+            self._finish_queue_task_failed(error.message)
 
     def _audio_preprocess_failure_message(self, record: HistoryRecord, error: AudioInputError) -> str:
         """把音视频预处理错误转为用户当下可操作的提示。"""

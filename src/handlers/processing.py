@@ -36,7 +36,7 @@ class ProcessingHandlers:
             )
         percent = self.latest_transcription_percent if self.latest_transcription_percent is not None else 0
         text = f"正在转录: {percent}%"
-        if self.config.get("audio", {}).get("auto_summarize", True):
+        if self._current_task_auto_summarize_enabled():
             return (
                 f'<span style="color:#374151;">{escape(text)}</span>'
                 '<span style="color:#9ca3af;"> → </span>'

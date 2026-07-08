@@ -167,7 +167,8 @@ class MainWindow(
         self._init_task_queue()
         self._import_demo_audio_if_empty()
         self._restore_last_selected_record()
-        self._set_status("")
+        if not self.status_label.text():
+            self._set_status("")
         log_event(
             "app.window.ready",
             module="ui",

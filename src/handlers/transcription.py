@@ -147,7 +147,7 @@ class TranscriptionHandlers:
                 "asr": self._asr_processing_context(diagnostics),
             },
         )
-        if text.strip() and self.config["audio"].get("auto_summarize", True):
+        if text.strip() and self._current_task_auto_summarize_enabled():
             self.start_summarization(text, record)
         else:
             self._finish_processing(record, "转录完成")

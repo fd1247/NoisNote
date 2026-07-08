@@ -118,3 +118,17 @@ class TaskQueueHandlers:
         if task_manager is None:
             return None
         return task_manager.running_process_task()
+
+    def _queue_task_for_record(self, record: HistoryRecord | None) -> AppTask | None:
+        task = self._active_queue_task()
+        if task is None or record is None:
+            return None
+        if task.record_key != record.record_key:
+            return None
+        return task
+
+    def _current_task_auto_summarize_enabled(self) -> bool:
+        task = self._active_queue_task()
+        if task is not None:
+            return bool(task.options.auto_summarize)
+        return bool(self.config.get("audio", {}).get("auto_summarize", True))

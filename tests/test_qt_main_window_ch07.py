@@ -16,6 +16,7 @@ from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.history.service import HistoryService
 from src.app.main_window import MainWindow
 from src.asr.engine import TranscriptionProgress
+from src.tasks.types import AppTask, TaskKind, TaskOptions, TaskStage, TaskStatus
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -581,6 +582,173 @@ def test_finish_queue_task_starts_next(monkeypatch, tmp_path: Path) -> None:
 
         assert started[-1] == second.record_key
         assert window.task_manager.snapshot().running[0].record_key == second.record_key
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_preprocess_completion_continues_same_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "screen.mp4"
+        source.write_bytes(b"fake mp4")
+        service = HistoryService(tmp_path / "records")
+        record = service.import_audio_file(source)
+        window.history_service = service
+        preprocess_calls: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "_start_audio_preprocess",
+            lambda record, source, status_after_success: preprocess_calls.append(record.record_key),
+        )
+
+        window.enqueue_record_processing(record, source="import")
+
+        running_before = window.task_manager.snapshot().running[0]
+        result = AudioPreprocessResult(
+            normalized_audio_path=record.record_dir / "audio.normalized.wav",
+            original_path=record.audio_path,
+            duration_seconds=12.0,
+            sample_rate=16000,
+            channels=1,
+            source_format="mp4",
+        )
+        result.normalized_audio_path.write_bytes(b"wav")
+        continued: list[tuple[Path, str]] = []
+        monkeypatch.setattr(
+            window,
+            "start_transcription",
+            lambda audio_file, record=None, source="manual": continued.append((audio_file, source)),
+        )
+
+        window._on_audio_preprocess_completed(record, result, "import", "已提取视频音轨")
+
+        snapshot = window.task_manager.snapshot()
+        assert preprocess_calls == [record.record_key]
+        assert continued == [(result.normalized_audio_path, "import")]
+        assert [task.task_id for task in snapshot.running] == [running_before.task_id]
+        assert snapshot.queued == ()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_preprocess_failure_marks_failed_and_advances_queue(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "meeting.mp3"
+        source.write_bytes(b"fake mp3")
+        next_source = tmp_path / "next.wav"
+        write_wav(next_source)
+        service = HistoryService(tmp_path / "records")
+        record = service.import_audio_file(
+            source,
+            duration_seconds=49.2,
+            audio_format={"sample_rate": 44100, "channels": 2, "format": "mp3", "source_format": "mp3"},
+            source_kind="local_audio",
+        )
+        next_record = service.adopt_audio_file(next_source)
+        window.history_service = service
+        monkeypatch.setattr(window, "_start_audio_preprocess", lambda *args, **kwargs: None)
+
+        window.enqueue_record_processing(record, source="import")
+
+        started: list[str] = []
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: started.append(task.record_key))
+        window.enqueue_record_processing(next_record, source="import")
+
+        window._on_audio_preprocess_failed(record, AudioInputError("transcode_failed", "转码失败。", "stderr"))
+
+        snapshot = window.task_manager.snapshot()
+        assert started == [next_record.record_key]
+        assert [task.record_key for task in snapshot.running] == [next_record.record_key]
+        assert snapshot.completed[0].record_key == record.record_key
+        assert snapshot.completed[0].status is TaskStatus.FAILED
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_transcription_completion_uses_task_auto_summarize_false(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "ready.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.config["audio"]["auto_summarize"] = False
+        monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": None)
+
+        window.enqueue_record_processing(record, source="import")
+
+        window.config["audio"]["auto_summarize"] = True
+        summaries: list[str] = []
+        monkeypatch.setattr(window, "start_summarization", lambda text, record=None: summaries.append(text))
+
+        window._on_transcription_completed("Generated transcript.")
+
+        assert summaries == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_transcription_completion_uses_task_auto_summarize_true(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "ready.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.config["audio"]["auto_summarize"] = True
+        monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": None)
+
+        window.enqueue_record_processing(record, source="import")
+
+        window.config["audio"]["auto_summarize"] = False
+        summaries: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            window,
+            "start_summarization",
+            lambda text, record=None: summaries.append((text, record.record_key if record else "")),
+        )
+
+        window._on_transcription_completed("Generated transcript.")
+
+        assert summaries == [("Generated transcript.", record.record_key)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_restored_queue_status_survives_startup_clear(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "restored.wav"
+    write_wav(source)
+    record = HistoryService(tmp_path / "records").adopt_audio_file(source)
+    restored_task = AppTask(
+        task_id="task-restored",
+        kind=TaskKind.PROCESS_RECORD,
+        status=TaskStatus.QUEUED,
+        stage=TaskStage.WAITING,
+        record_key=record.record_key,
+        notebook_id=record.notebook_id,
+        record_id=record.record_id,
+        source="import",
+        title=record.display_name,
+        message="等待处理",
+        created_at="2026-07-08T12:00:00",
+        queued_at="2026-07-08T12:00:00",
+        options=TaskOptions(auto_summarize=False),
+    )
+    monkeypatch.setattr("src.handlers.task_queue.TaskQueueStore.load", lambda self, history_service: [restored_task])
+    monkeypatch.setattr("src.handlers.task_queue.TaskQueueHandlers._start_next_processing_task", lambda self: None)
+
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.status_label.text() == "已恢复 1 个待处理任务"
     finally:
         window.close()
         app.processEvents()
