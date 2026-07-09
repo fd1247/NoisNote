@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from ..history.service import HistoryRecord
-from ..tasks import AppTask, QueueFullError, TaskManager, TaskQueueStore, TaskSnapshot, TaskStage, TaskStatus
+from ..tasks import AppTask, QueueFullError, TaskKind, TaskManager, TaskQueueStore, TaskSnapshot, TaskStage, TaskStatus
 
 
 class TaskQueueHandlers:
@@ -28,8 +28,10 @@ class TaskQueueHandlers:
         self.task_manager.task_ready.connect(lambda task: self._execute_processing_task(task))
         restored = self.task_queue_store.load(self.history_service)
         if restored:
-            self.task_manager.load_queued(restored)
-            self._set_status(f"已恢复 {len(restored)} 个待处理任务")
+            self.task_manager.load_tasks(restored)
+            queued_count = len([task for task in restored if task.status is TaskStatus.QUEUED])
+            if queued_count:
+                self._set_status(f"已恢复 {queued_count} 个待处理任务")
         self._refresh_task_panel(self.task_manager.snapshot())
         self._start_next_processing_task()
 
@@ -236,7 +238,10 @@ class TaskQueueHandlers:
         actions.setSpacing(4)
 
         if running:
-            actions.addWidget(self._task_action_button("取消", lambda: self.cancel_processing_task(task.task_id)))
+            if task.kind is TaskKind.RECORDING:
+                actions.addWidget(self._task_action_button("停止", lambda: self.stop_recording()))
+            else:
+                actions.addWidget(self._task_action_button("取消", lambda: self.cancel_processing_task(task.task_id)))
         if queued:
             actions.addWidget(self._task_action_button("上移", lambda: self._move_queued_task(task.task_id, -1)))
             actions.addWidget(self._task_action_button("下移", lambda: self._move_queued_task(task.task_id, 1)))
@@ -289,6 +294,16 @@ class TaskQueueHandlers:
             return
         record = self.history_service.get_record_by_key(record_key)
         if record is not None:
+            retried = self.task_manager.retry_completed(record_key)
+            if retried is not None:
+                retried.source = "manual"
+                retried.options.overwrite_existing = True
+                retried.options.manual = True
+                retried.options.summary_only = False
+                self._persist_queued_tasks()
+                if not getattr(self, "_closing_for_exit", False):
+                    self._start_next_processing_task()
+                return
             self.enqueue_record_processing(record, source="manual", overwrite_existing=True, manual=True)
 
     def _clear_nested_layout(self, layout: QVBoxLayout | QHBoxLayout) -> None:
@@ -306,7 +321,19 @@ class TaskQueueHandlers:
         task_queue_store = getattr(self, "task_queue_store", None)
         if task_manager is None or task_queue_store is None:
             return
-        task_queue_store.save(task_manager.queued_tasks())
+        task_queue_store.save(task_manager.all_persistable_tasks())
+
+    def _sync_running_task_stage(
+        self,
+        stage: TaskStage,
+        message: str,
+        progress_percent: int | None = None,
+    ) -> None:
+        task = self._active_queue_task()
+        task_manager = getattr(self, "task_manager", None)
+        if task is None or task_manager is None:
+            return
+        task_manager.mark_running(task.task_id, stage, message, progress_percent)
 
     def _history_interruption_target(self, stage: TaskStage) -> tuple[str | None, bool]:
         """根据当前任务阶段选择最贴近的历史记录写入方式。"""

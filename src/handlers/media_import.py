@@ -257,6 +257,8 @@ class ImportHandlers:
 
     def _on_audio_preprocess_progress(self, text: str, percent: int | None = None) -> None:
         message = (text or "处理音频").strip()
+        if hasattr(self, "_sync_running_task_stage"):
+            self._sync_running_task_stage(TaskStage.PREPROCESSING, message, percent)
         self._set_status(message)
         self._refresh_history_status_indicators()
         self._sync_detail_processing_view()

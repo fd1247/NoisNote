@@ -229,6 +229,9 @@ class RecordingHandlers:
         try:
             self.recorder.configure(self._capture_settings_from_config())
             self.recorder.start_recording()
+            if getattr(self, "task_manager", None) is not None:
+                recording_task = self.task_manager.start_recording("录音")
+                task_id = recording_task.task_id
             self.active_task_ids["recording"] = task_id
             self.is_recording = True
             self.record_button.setText("停止录音")
@@ -280,6 +283,7 @@ class RecordingHandlers:
         try:
             output_file = self.recorder.stop_recording()
         except Exception as exc:
+            self._finish_recording_task(task_id)
             self.record_button.setText("开始录音")
             self.recording_hint_label.setText("准备捕获系统声音")
             self._set_processing_ui(False)
@@ -299,6 +303,7 @@ class RecordingHandlers:
             self._show_error(f"停止录音失败：{exc}")
             return
 
+        self._finish_recording_task(task_id)
         if not output_file:
             self.record_button.setText("开始录音")
             self.duration_label.setText("00:00:00")
@@ -335,6 +340,10 @@ class RecordingHandlers:
         )
         self._handle_audio_record_ready(self.current_record, "已保存录音", source="recording")
 
+    def _finish_recording_task(self, task_id: str) -> None:
+        if task_id and getattr(self, "task_manager", None) is not None:
+            self.task_manager.finish_recording(task_id)
+
     def _refresh_recording_state(self) -> None:
         if not self.recorder:
             return
@@ -346,6 +355,9 @@ class RecordingHandlers:
         minutes = int((duration % 3600) // 60)
         seconds = int(duration % 60)
         self.duration_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        task_id = self.active_task_ids.get("recording", "")
+        if task_id and getattr(self, "task_manager", None) is not None:
+            self.task_manager.update_recording(task_id, f"已录制 {hours:02d}:{minutes:02d}:{seconds:02d}")
         level = int(self.recorder.get_rms_level())
         self.level_bar.setValue(level)
         self.level_text_label.setText(self._recording_level_text(level, int(duration * 4)))

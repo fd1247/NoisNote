@@ -8,6 +8,14 @@ from typing import Protocol
 from .types import AppTask, TaskKind, TaskStatus
 
 
+TERMINAL_STATUSES = {
+    TaskStatus.COMPLETED,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+    TaskStatus.INTERRUPTED,
+}
+
+
 class RecordLookup(Protocol):
     def get_record_by_key(self, record_key: str): ...
 
@@ -42,24 +50,29 @@ class TaskQueueStore:
         return restored
 
     def save(self, tasks: list[AppTask]) -> None:
-        queued = [
+        persistable = [
             task.to_dict()
             for task in tasks
-            if task.kind is TaskKind.PROCESS_RECORD and task.status is TaskStatus.QUEUED
+            if task.kind is TaskKind.PROCESS_RECORD
+            and (task.status is TaskStatus.QUEUED or task.status in TERMINAL_STATUSES)
         ]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
-            json.dumps({"version": 1, "tasks": queued}, ensure_ascii=False, indent=2),
+            json.dumps({"version": 1, "tasks": persistable}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
     def _is_restoreable(self, task: AppTask, history_service: RecordLookup) -> bool:
-        if task.kind is not TaskKind.PROCESS_RECORD or task.status is not TaskStatus.QUEUED:
+        if task.kind is not TaskKind.PROCESS_RECORD:
             return False
         if not task.record_key:
             return False
         record = history_service.get_record_by_key(task.record_key)
         if record is None:
+            return False
+        if task.status in TERMINAL_STATUSES:
+            return True
+        if task.status is not TaskStatus.QUEUED:
             return False
         if task.options.summary_only:
             return record.has_transcript

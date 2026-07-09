@@ -49,6 +49,7 @@ class TaskManager(QObject):
         if len(self._queued) >= self.max_queue_size:
             raise QueueFullError(f"队列已满，最多可排队 {self.max_queue_size} 个任务")
         now = _now_text()
+        self._remove_completed_for_record(record.record_key)
         task = AppTask(
             task_id=_new_task_id("task"),
             kind=TaskKind.PROCESS_RECORD,
@@ -77,8 +78,34 @@ class TaskManager(QObject):
         self._queued = [task for task in tasks if task.status is TaskStatus.QUEUED]
         self._emit_changed()
 
+    def load_tasks(self, tasks: list[AppTask]) -> None:
+        """恢复可展示的任务状态。运行中任务不能跨启动恢复。"""
+        self._queued = [task for task in tasks if task.status is TaskStatus.QUEUED]
+        queued_record_keys = {task.record_key for task in self._queued if task.record_key}
+        terminal_statuses = {
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.INTERRUPTED,
+        }
+        completed: list[AppTask] = []
+        completed_record_keys: set[str] = set()
+        for task in tasks:
+            if task.status not in terminal_statuses:
+                continue
+            if task.record_key and task.record_key in queued_record_keys:
+                continue
+            if task.record_key and task.record_key in completed_record_keys:
+                continue
+            completed.append(task)
+            if task.record_key:
+                completed_record_keys.add(task.record_key)
+        self._completed = completed
+        del self._completed[self.completed_keep_limit :]
+        self._emit_changed()
+
     def start_next_if_idle(self) -> AppTask | None:
-        if self._paused_reason or self._running or not self._queued:
+        if self._paused_reason or self.running_process_task() is not None or not self._queued:
             return None
         task = self._queued.pop(0)
         task.status = TaskStatus.RUNNING
@@ -89,6 +116,38 @@ class TaskManager(QObject):
         self._emit_changed()
         self.task_ready.emit(task)
         return task
+
+    def start_recording(self, title: str = "录音") -> AppTask:
+        now = _now_text()
+        task = AppTask(
+            task_id=_new_task_id("record"),
+            kind=TaskKind.RECORDING,
+            status=TaskStatus.RUNNING,
+            stage=TaskStage.WAITING,
+            source="recording",
+            title=title,
+            message="正在录音",
+            created_at=now,
+            queued_at=now,
+            started_at=now,
+        )
+        self._running.append(task)
+        self._emit_changed()
+        return task
+
+    def update_recording(self, task_id: str, message: str) -> None:
+        task = self._find_running(task_id)
+        if task is None or task.kind is not TaskKind.RECORDING:
+            return
+        task.message = message
+        self._emit_changed()
+
+    def finish_recording(self, task_id: str) -> None:
+        for index, task in enumerate(self._running):
+            if task.task_id == task_id and task.kind is TaskKind.RECORDING:
+                del self._running[index]
+                self._emit_changed()
+                return
 
     def mark_running(
         self,
@@ -142,6 +201,27 @@ class TaskManager(QObject):
         task.finished_at = _now_text()
         self._push_completed(task)
         self._emit_changed()
+
+    def retry_completed(self, record_key: str) -> AppTask | None:
+        """把同一条记录的终态任务移回队列，避免面板出现重复行。"""
+        if not record_key:
+            return None
+        for index, task in enumerate(self._completed):
+            if task.record_key != record_key:
+                continue
+            retried = self._completed.pop(index)
+            retried.status = TaskStatus.QUEUED
+            retried.stage = TaskStage.WAITING
+            retried.message = "等待处理"
+            retried.progress_percent = None
+            retried.error_message = ""
+            retried.finished_at = None
+            retried.started_at = None
+            retried.queued_at = _now_text()
+            self._queued.append(retried)
+            self._emit_changed()
+            return retried
+        return None
 
     def interrupt_running(self, task_id: str, message: str = "已中断") -> None:
         task = self._pop_running(task_id)
@@ -199,6 +279,9 @@ class TaskManager(QObject):
     def queued_tasks(self) -> list[AppTask]:
         return list(self._queued)
 
+    def all_persistable_tasks(self) -> list[AppTask]:
+        return list(self._queued) + list(self._completed)
+
     def snapshot(self) -> TaskSnapshot:
         return TaskSnapshot(
             running=tuple(self._running),
@@ -220,11 +303,16 @@ class TaskManager(QObject):
         return None
 
     def _push_completed(self, task: AppTask) -> None:
+        if task.record_key:
+            self._remove_completed_for_record(task.record_key)
         self._completed.insert(0, task)
         del self._completed[self.completed_keep_limit :]
 
     def _emit_changed(self) -> None:
         self.changed.emit(self.snapshot())
+
+    def _remove_completed_for_record(self, record_key: str) -> None:
+        self._completed = [task for task in self._completed if task.record_key != record_key]
 
 
 def _new_task_id(prefix: str) -> str:

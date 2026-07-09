@@ -7,7 +7,7 @@ import pytest
 
 from src.history.service import HistoryRecord
 from src.tasks.manager import QueueFullError, TaskManager
-from src.tasks.types import TaskStage, TaskStatus
+from src.tasks.types import TaskKind, TaskStage, TaskStatus
 
 
 def _record(tmp_path: Path, record_id: str) -> HistoryRecord:
@@ -138,3 +138,50 @@ def test_resume_clears_pause_reason(tmp_path: Path) -> None:
     manager.resume()
 
     assert manager.snapshot().paused_reason == ""
+
+
+def test_retry_completed_task_moves_existing_row_back_to_queue(tmp_path: Path) -> None:
+    manager = TaskManager(max_queue_size=20, completed_keep_limit=50)
+    record = _record(tmp_path, "a")
+    task = manager.enqueue_process_record(record, source="import", auto_summarize=False)
+    manager.start_next_if_idle()
+    manager.fail_running(task.task_id, "未识别到有效语音内容")
+
+    retried = manager.retry_completed(record.record_key)
+
+    snapshot = manager.snapshot()
+    assert retried is not None
+    assert retried.task_id == task.task_id
+    assert retried.status is TaskStatus.QUEUED
+    assert retried.stage is TaskStage.WAITING
+    assert retried.error_message == ""
+    assert [item.task_id for item in snapshot.queued] == [task.task_id]
+    assert snapshot.completed == ()
+
+
+def test_enqueue_process_record_removes_old_terminal_row_for_same_record(tmp_path: Path) -> None:
+    manager = TaskManager(max_queue_size=20, completed_keep_limit=50)
+    record = _record(tmp_path, "a")
+    task = manager.enqueue_process_record(record, source="import", auto_summarize=False)
+    manager.start_next_if_idle()
+    manager.cancel_running(task.task_id, "已取消转录")
+
+    new_task = manager.enqueue_process_record(record, source="manual", auto_summarize=False, manual=True)
+
+    snapshot = manager.snapshot()
+    assert [item.task_id for item in snapshot.queued] == [new_task.task_id]
+    assert snapshot.completed == ()
+
+
+def test_recording_task_does_not_block_processing_lane(tmp_path: Path) -> None:
+    manager = TaskManager(max_queue_size=20, completed_keep_limit=50)
+    recording = manager.start_recording("录音")
+    process = manager.enqueue_process_record(_record(tmp_path, "a"), source="import", auto_summarize=False)
+
+    started = manager.start_next_if_idle()
+
+    snapshot = manager.snapshot()
+    assert started is not None
+    assert started.task_id == process.task_id
+    assert [item.kind for item in snapshot.running] == [TaskKind.RECORDING, TaskKind.PROCESS_RECORD]
+    assert recording.message == "正在录音"

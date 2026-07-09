@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 from PySide6.QtCore import QMimeData, Qt, QUrl
 
 from src.audio.preprocess import AudioInputError, AudioPreprocessResult
@@ -16,7 +16,7 @@ from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.history.service import HistoryService
 from src.app.main_window import MainWindow
 from src.asr.engine import TranscriptionProgress
-from src.tasks.types import AppTask, TaskKind, TaskOptions, TaskStage, TaskStatus
+from src.tasks.types import AppTask, TaskKind, TaskOptions, TaskSnapshot, TaskStage, TaskStatus
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -883,6 +883,169 @@ def test_queued_transcription_completion_uses_task_auto_summarize_true(monkeypat
         window._on_transcription_completed("Generated transcript.")
 
         assert summaries == [("Generated transcript.", record.record_key)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_task_updates_transcription_progress(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "ready.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": None)
+
+        window.enqueue_record_processing(record, source="import")
+        window._on_transcription_progress(
+            TranscriptionProgress(
+                stage="chunk",
+                message="正在转录第 1 段",
+                percent=37,
+                processed_seconds=12.0,
+                total_seconds=30.0,
+            )
+        )
+
+        running = window.task_manager.snapshot().running[0]
+        assert running.stage is TaskStage.TRANSCRIBING
+        assert running.message == "正在转录第 1 段"
+        assert running.progress_percent == 37
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_task_updates_summary_stage(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "ready.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": None)
+        window.enqueue_record_processing(record, source="import")
+
+        class FakeSummaryWorker:
+            def __init__(self, *_args, **_kwargs):
+                self.completed = SimpleNamespace(connect=lambda *_: None)
+                self.failed = SimpleNamespace(connect=lambda *_: None)
+                self.finished = SimpleNamespace(connect=lambda *_: None)
+
+            def start(self):
+                return None
+
+            def deleteLater(self):
+                return None
+
+        monkeypatch.setattr("src.handlers.summary.SummaryWorker", FakeSummaryWorker)
+        window.start_summarization("transcript", record)
+
+        running = window.task_manager.snapshot().running[0]
+        assert running.stage is TaskStage.SUMMARIZING
+        assert running.message == "AI总结中"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_recording_task_updates_elapsed_and_queues_saved_record(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "busy.wav"
+        write_wav(source)
+        busy_record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        window.enqueue_record_processing(busy_record, source="import")
+
+        output = tmp_path / "new-recording.wav"
+        write_wav(output)
+
+        class FakeRecorder:
+            def __init__(self):
+                self.is_recording = False
+                self.duration = 65.0
+
+            def configure(self, *_args, **_kwargs):
+                return None
+
+            def start_recording(self):
+                self.is_recording = True
+
+            def stop_recording(self):
+                self.is_recording = False
+                return str(output)
+
+            def get_device_name(self):
+                return "fake"
+
+            def capture_source_label(self):
+                return "系统声音"
+
+            def get_recording_error(self):
+                return None
+
+            def get_duration(self):
+                return self.duration
+
+            def get_rms_level(self):
+                return 0
+
+            def cleanup(self):
+                return None
+
+        window.recorder = FakeRecorder()
+        window.config["audio"]["auto_transcribe"] = True
+
+        window.start_recording()
+        window._refresh_recording_state()
+
+        running = window.task_manager.snapshot().running
+        assert [task.kind for task in running] == [TaskKind.PROCESS_RECORD, TaskKind.RECORDING]
+        assert running[1].message == "已录制 00:01:05"
+
+        window.stop_recording()
+
+        snapshot = window.task_manager.snapshot()
+        assert [task.kind for task in snapshot.running] == [TaskKind.PROCESS_RECORD]
+        assert len(snapshot.queued) == 1
+        assert snapshot.queued[0].source == "recording"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_recording_task_action_stops_recording(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="recording-1",
+                    kind=TaskKind.RECORDING,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.WAITING,
+                    title="录音",
+                    message="已录制 00:00:03",
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+        stopped: list[bool] = []
+        monkeypatch.setattr(window, "stop_recording", lambda: stopped.append(True))
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        running_item = window.running_task_list.itemAt(0).widget()
+        buttons = running_item.findChildren(QPushButton)
+        assert [button.text() for button in buttons] == ["停止"]
+        buttons[0].click()
+        assert stopped == [True]
     finally:
         window.close()
         app.processEvents()

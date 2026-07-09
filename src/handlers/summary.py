@@ -33,7 +33,7 @@ class SummaryHandlers:
         record_key = self.processing_record.record_key if self.processing_record is not None else ""
         record_for_callback = self.processing_record
         if queue_task is not None:
-            self.task_manager.mark_running(queue_task.task_id, TaskStage.SUMMARIZING, "正在总结")
+            self.task_manager.mark_running(queue_task.task_id, TaskStage.SUMMARIZING, "AI总结中")
         self.processing_started_at["summary"] = time.perf_counter()
         self.is_processing = True
         if not self.processing_source:
@@ -60,6 +60,10 @@ class SummaryHandlers:
 
         worker = SummaryWorker(text, self.config, self)
         self.summary_worker = worker
+        if hasattr(worker, "progress"):
+            worker.progress.connect(
+                lambda message, task_id=queue_task_id: self._on_summary_progress(message, task_id)
+            )
         worker.completed.connect(
             lambda summary, summary_task_id=task_id, task_id=queue_task_id, key=record_key, record=record_for_callback: self._on_summary_completed(
                 summary,
@@ -81,6 +85,14 @@ class SummaryHandlers:
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
+
+    def _on_summary_progress(self, message: str, queue_task_id: str = "") -> None:
+        if queue_task_id and getattr(self, "task_manager", None):
+            running = self.task_manager.running_process_task()
+            if running is None or running.task_id != queue_task_id:
+                return
+        if hasattr(self, "_sync_running_task_stage"):
+            self._sync_running_task_stage(TaskStage.SUMMARIZING, message.strip() or "AI总结中")
 
     def _summary_error_code(self, error: str) -> str:
         """把常见 LLM 错误映射到稳定错误码。"""

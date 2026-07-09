@@ -124,15 +124,29 @@ def test_store_round_trips_summary_only_task_without_audio(tmp_path: Path) -> No
     assert loaded[0].options.summary_only is True
 
 
-def test_store_saves_only_queued_tasks(tmp_path: Path) -> None:
+def test_store_saves_queued_and_terminal_tasks(tmp_path: Path) -> None:
     queued = _record(tmp_path, "queued")
     running = _record(tmp_path, "running")
+    failed = _record(tmp_path, "failed")
     store = TaskQueueStore(tmp_path / "task_queue.json")
 
-    store.save([_task(queued), _task(running, status=TaskStatus.RUNNING)])
-    loaded = store.load(FakeHistoryService({queued.record_key: queued, running.record_key: running}))
+    store.save([
+        _task(queued),
+        _task(running, status=TaskStatus.RUNNING),
+        _task(failed, status=TaskStatus.FAILED),
+    ])
+    loaded = store.load(
+        FakeHistoryService({
+            queued.record_key: queued,
+            running.record_key: running,
+            failed.record_key: failed,
+        })
+    )
 
-    assert [task.record_key for task in loaded] == [queued.record_key]
+    assert [(task.record_key, task.status) for task in loaded] == [
+        (queued.record_key, TaskStatus.QUEUED),
+        (failed.record_key, TaskStatus.FAILED),
+    ]
 
 
 def test_task_queue_path_uses_patched_config_dir(monkeypatch, tmp_path: Path) -> None:

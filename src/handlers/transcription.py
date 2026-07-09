@@ -8,6 +8,7 @@ from ..audio.preprocess import SilenceDetectionResult, detect_silence
 from ..ui.widgets.dialogs import confirm_without_icon
 from ..utils.logging import file_context, log_event, record_context
 from ..history.service import HistoryRecord
+from ..tasks import TaskStage
 from ..workers.transcription import TranscriptionWorker
 from ..asr.engine import TranscriptionProgress
 
@@ -64,6 +65,8 @@ class TranscriptionHandlers:
         self.latest_transcription_percent = None
         self.is_processing = True
         self.processing_source = source
+        if hasattr(self, "_sync_running_task_stage"):
+            self._sync_running_task_stage(TaskStage.TRANSCRIBING, "正在转录", 0)
         self.recording_hint_label.setText("正在转录录音")
         self._update_recording_entry()
         self._set_processing_ui(True)
@@ -99,6 +102,18 @@ class TranscriptionHandlers:
     def _on_transcription_progress(self, progress: object) -> None:
         if isinstance(progress, TranscriptionProgress):
             self.latest_transcription_percent = progress.percent
+            if hasattr(self, "_sync_running_task_stage"):
+                self._sync_running_task_stage(
+                    TaskStage.TRANSCRIBING,
+                    progress.message or "正在转录",
+                    progress.percent,
+                )
+        elif isinstance(progress, str) and hasattr(self, "_sync_running_task_stage"):
+            self._sync_running_task_stage(
+                TaskStage.TRANSCRIBING,
+                progress.strip() or "正在转录",
+                self.latest_transcription_percent,
+            )
         if self._is_current_record_processing():
             self._sync_detail_processing_view()
         self._refresh_history_status_indicators()
