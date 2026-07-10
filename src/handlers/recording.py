@@ -204,6 +204,32 @@ class RecordingHandlers:
         else:
             self.start_recording()
 
+    def pause_recording(self) -> None:
+        if not self.recorder or not self.is_recording:
+            return
+        self.recorder.pause_recording()
+        self.level_bar.setValue(0)
+        task_id = self.active_task_ids.get("recording", "")
+        if task_id and getattr(self, "task_manager", None) is not None:
+            duration = self.recorder.get_duration()
+            hours = int(duration // 3600)
+            minutes = int((duration % 3600) // 60)
+            seconds = int(duration % 60)
+            self.task_manager.update_recording(task_id, f"已录制 {hours:02d}:{minutes:02d}:{seconds:02d}")
+        self._set_status("录音已暂停")
+        self._sync_recording_dialog_state()
+        if getattr(self, "task_manager", None) is not None:
+            self._refresh_task_panel(self.task_manager.snapshot())
+
+    def resume_recording(self) -> None:
+        if not self.recorder or not self.is_recording:
+            return
+        self.recorder.resume_recording()
+        self._set_status("录音中")
+        self._sync_recording_dialog_state()
+        if getattr(self, "task_manager", None) is not None:
+            self._refresh_task_panel(self.task_manager.snapshot())
+
     def show_recording_dialog(self) -> None:
         """显示录音源和录音状态弹窗。"""
         if self.recording_dialog is None:
@@ -269,6 +295,9 @@ class RecordingHandlers:
     def stop_recording(self) -> None:
         if not self.recorder:
             return
+        if getattr(self, "_stopping_recording", False) or not self.is_recording:
+            return
+        self._stopping_recording = True
         task_id = self.active_task_ids.get("recording", "")
         self.record_timer.stop()
         self.is_recording = False
@@ -283,6 +312,7 @@ class RecordingHandlers:
         try:
             output_file = self.recorder.stop_recording()
         except Exception as exc:
+            self._stopping_recording = False
             self._finish_recording_task(task_id)
             self.record_button.setText("开始录音")
             self.recording_hint_label.setText("准备捕获系统声音")
@@ -305,6 +335,7 @@ class RecordingHandlers:
 
         self._finish_recording_task(task_id)
         if not output_file:
+            self._stopping_recording = False
             self.record_button.setText("开始录音")
             self.duration_label.setText("00:00:00")
             self.recording_hint_label.setText("准备捕获系统声音")
@@ -322,6 +353,7 @@ class RecordingHandlers:
                 context=self._capture_log_context(),
                 error_code="AUD-003",
             )
+            self._close_recording_dialog_after_stop()
             return
 
         self.current_record = self.history_service.adopt_audio_file(Path(output_file))
@@ -338,11 +370,18 @@ class RecordingHandlers:
                 "record": record_context(self.current_record),
             },
         )
+        self._stopping_recording = False
+        self._close_recording_dialog_after_stop()
         self._handle_audio_record_ready(self.current_record, "已保存录音", source="recording")
 
     def _finish_recording_task(self, task_id: str) -> None:
         if task_id and getattr(self, "task_manager", None) is not None:
             self.task_manager.finish_recording(task_id)
+
+    def _close_recording_dialog_after_stop(self) -> None:
+        dialog = getattr(self, "recording_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.close()
 
     def _refresh_recording_state(self) -> None:
         if not self.recorder:

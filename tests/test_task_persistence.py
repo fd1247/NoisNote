@@ -81,6 +81,27 @@ def test_store_round_trips_queued_tasks(tmp_path: Path) -> None:
     assert loaded[0].status is TaskStatus.QUEUED
 
 
+def test_store_replaces_snapshot_atomically(monkeypatch, tmp_path: Path) -> None:
+    record = _record(tmp_path, "a")
+    path = tmp_path / "task_queue.json"
+    store = TaskQueueStore(path)
+    path.write_text('{"version": 1, "tasks": []}', encoding="utf-8")
+    replacements: list[tuple[Path, Path]] = []
+    original_replace = Path.replace
+
+    def track_replace(source: Path, target: Path):
+        replacements.append((source, target))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", track_replace)
+
+    store.save([_task(record)])
+
+    assert replacements == [(path.with_suffix(".json.tmp"), path)]
+    assert not path.with_suffix(".json.tmp").exists()
+    assert len(store.load(FakeHistoryService({record.record_key: record}))) == 1
+
+
 def test_store_filters_missing_records(tmp_path: Path) -> None:
     record = _record(tmp_path, "a")
     store = TaskQueueStore(tmp_path / "task_queue.json")
@@ -91,14 +112,15 @@ def test_store_filters_missing_records(tmp_path: Path) -> None:
     assert loaded == []
 
 
-def test_store_filters_finished_records_without_overwrite(tmp_path: Path) -> None:
+def test_store_keeps_queued_task_with_existing_transcript_for_exit_recovery(tmp_path: Path) -> None:
     record = _record(tmp_path, "a", transcript=True)
     store = TaskQueueStore(tmp_path / "task_queue.json")
     store.save([_task(record, overwrite=False)])
 
     loaded = store.load(FakeHistoryService({record.record_key: record}))
 
-    assert loaded == []
+    assert len(loaded) == 1
+    assert loaded[0].record_key == record.record_key
 
 
 def test_store_keeps_overwrite_task_for_finished_record(tmp_path: Path) -> None:
@@ -124,7 +146,26 @@ def test_store_round_trips_summary_only_task_without_audio(tmp_path: Path) -> No
     assert loaded[0].options.summary_only is True
 
 
-def test_store_saves_queued_and_terminal_tasks(tmp_path: Path) -> None:
+def test_store_discards_queued_remote_import_without_record(tmp_path: Path) -> None:
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+    task = AppTask(
+        task_id="remote-1",
+        kind=TaskKind.REMOTE_IMPORT,
+        status=TaskStatus.QUEUED,
+        stage=TaskStage.WAITING,
+        input_url="https://example.com/video",
+        title="https://example.com/video",
+        created_at="2026-07-08T12:00:00",
+        queued_at="2026-07-08T12:00:00",
+    )
+
+    store.save([task])
+    loaded = store.load(FakeHistoryService({}))
+
+    assert loaded == []
+
+
+def test_store_saves_queued_running_and_terminal_tasks(tmp_path: Path) -> None:
     queued = _record(tmp_path, "queued")
     running = _record(tmp_path, "running")
     failed = _record(tmp_path, "failed")
@@ -145,6 +186,7 @@ def test_store_saves_queued_and_terminal_tasks(tmp_path: Path) -> None:
 
     assert [(task.record_key, task.status) for task in loaded] == [
         (queued.record_key, TaskStatus.QUEUED),
+        (running.record_key, TaskStatus.RUNNING),
         (failed.record_key, TaskStatus.FAILED),
     ]
 

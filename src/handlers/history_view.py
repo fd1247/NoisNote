@@ -107,7 +107,6 @@ class HistoryViewHandlers:
                 self.current_items,
                 self._history_subtitle_for_record,
             )
-            self.empty_history_label.setVisible(not self.current_items)
         finally:
             self.history_tree.setUpdatesEnabled(updates_enabled)
 

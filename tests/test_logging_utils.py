@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import json
 from pathlib import Path
 
 from src.utils.logging import (
+    LOG_DIR_ENV,
     file_context,
     init_logging,
     log_event,
@@ -13,6 +15,10 @@ from src.utils.logging import (
 
 def _read_json_lines(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_pytest_log_dir_is_isolated_from_user_documents(tmp_path: Path) -> None:
+    assert os.environ.get(LOG_DIR_ENV) == str(tmp_path / "logs")
 
 
 def test_log_event_writes_jsonl_and_error_file(tmp_path: Path) -> None:

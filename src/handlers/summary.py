@@ -82,7 +82,7 @@ class SummaryHandlers:
                 record,
             )
         )
-        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        worker.finished.connect(lambda qid=queue_task_id: self._cleanup_cancellable_worker(worker, qid))
         self.active_workers.append(worker)
         worker.start()
 
@@ -92,7 +92,7 @@ class SummaryHandlers:
             if running is None or running.task_id != queue_task_id:
                 return
         if hasattr(self, "_sync_running_task_stage"):
-            self._sync_running_task_stage(TaskStage.SUMMARIZING, message.strip() or "AI总结中")
+            self._sync_running_task_stage(TaskStage.SUMMARIZING, "AI总结中")
 
     def _summary_error_code(self, error: str) -> str:
         """把常见 LLM 错误映射到稳定错误码。"""
@@ -199,7 +199,7 @@ class SummaryHandlers:
             self._show_error(display_message)
 
     def _summary_callback_is_current(self, summary_task_id: str, queue_task_id: str, record_key: str) -> bool:
-        if queue_task_id and self._consume_cancelled_processing_task(queue_task_id):
+        if queue_task_id and self._finish_cancelled_queue_task_if_needed(queue_task_id):
             if summary_task_id and self.active_task_ids.get("summary", "") == summary_task_id:
                 self.active_task_ids.pop("summary", None)
             return False

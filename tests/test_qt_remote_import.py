@@ -13,10 +13,12 @@ from PySide6.QtWidgets import QApplication
 from src.app.config import DEFAULT_MODEL_CATALOG, QWEN3_ASR_GGUF_06B_ID
 from src.app.main_window import MainWindow
 from src.history.service import HistoryService
+from src.handlers.remote_import import _remote_error_text
 from src.remote_import.errors import RemoteImportErrorKind, message_for_kind
 from src.remote_import.service import RemoteImportError
+from src.remote_import import RemoteImportOptions
 from src.remote_import.types import RemoteMediaInfo
-from src.tasks import TaskStage
+from src.tasks import TaskKind, TaskStage, TaskStatus
 
 
 def make_config(root: Path) -> dict:
@@ -87,6 +89,100 @@ def test_remote_import_button_is_in_quick_toolbar(monkeypatch, tmp_path: Path) -
         window.close()
 
 
+def test_remote_import_runs_admission_probe_before_creating_task(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+    class FakeRemoteProbeWorker:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.progress = FakeSignal()
+            self.completed = FakeSignal()
+            self.failed = FakeSignal()
+            self.finished = FakeSignal()
+            self.started = False
+
+        def start(self) -> None:
+            self.started = True
+
+    try:
+        monkeypatch.setattr("src.handlers.remote_import.RemoteProbeWorker", FakeRemoteProbeWorker)
+
+        window._start_remote_import("https://example.com/video")
+
+        snapshot = window.task_manager.snapshot()
+        assert snapshot.running == ()
+        assert snapshot.queued == ()
+        assert window.history_service.scan() == []
+        assert len(window.active_remote_imports) == 1
+        assert next(iter(window.active_remote_imports.values()))["phase"] == "admission_probe"
+    finally:
+        running = window.task_manager.running_process_task()
+        if running is not None:
+            window.task_manager.cancel_running(running.task_id, "cleanup")
+        window.current_processing_task = None
+        window.processing_source = None
+        window.active_workers.clear()
+        window.active_remote_imports = {}
+        window.close()
+
+
+def test_remote_import_rejects_full_queue_without_probe_or_record(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("src.tasks.manager.MAX_QUEUE_SIZE", 0)
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        errors: list[str] = []
+        monkeypatch.setattr(window, "_show_error", lambda message: errors.append(message))
+        monkeypatch.setattr(
+            "src.handlers.remote_import.RemoteProbeWorker",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不应启动预检")),
+        )
+
+        window._start_remote_import("https://example.com/video")
+
+        assert errors == ["队列已满，请先移除任务或等待任务完成"]
+        assert window.history_service.scan() == []
+        assert window.task_manager.snapshot().queued == ()
+        assert window.task_manager.snapshot().running == ()
+    finally:
+        window.close()
+
+
+def test_remote_admission_probe_creates_record_before_enqueuing(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        info = RemoteMediaInfo(
+            url="https://www.youtube.com/watch?v=demo",
+            extractor="youtube",
+            webpage_url="https://www.youtube.com/watch?v=demo",
+            title="Remote Video",
+            duration_seconds=30,
+        )
+        options = RemoteImportOptions(url=info.url)
+        window.active_remote_imports = {"admission": {"url": info.url, "phase": "admission_probe"}}
+        enqueued = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, **kwargs: enqueued.append((record, kwargs)) or object(),
+        )
+
+        window._on_remote_admission_probe_completed(info, options, "admission")
+
+        assert len(enqueued) == 1
+        record, kwargs = enqueued[0]
+        assert record.record_key in {item.record_key for item in window.history_service.scan()}
+        assert kwargs == {"source": "remote_import", "input_url": info.url}
+    finally:
+        window.active_remote_imports = {}
+        window.close()
+
+
 def test_remote_import_over_two_hours_cancel_does_not_create_record(monkeypatch, tmp_path: Path) -> None:
     window = make_window(monkeypatch, tmp_path)
 
@@ -151,23 +247,73 @@ def test_remote_import_create_record_failure_is_handled(monkeypatch, tmp_path: P
         window.close()
 
 
-def test_remote_audio_completion_enqueues_processing(monkeypatch, tmp_path: Path) -> None:
+def test_remote_error_text_strips_ansi_escape_codes() -> None:
+    error = RemoteImportError(
+        RemoteImportErrorKind.DOWNLOAD_FAILED,
+        "下载失败",
+        "\x1b[0;31mERROR:\x1b[0m [BiliBili] Unable to download webpage",
+    )
+
+    text = _remote_error_text(error)
+
+    assert "\x1b" not in text
+    assert "[0;31m" not in text
+    assert "ERROR:" in text
+
+
+def test_remote_audio_completion_starts_transcription_in_same_task(monkeypatch, tmp_path: Path) -> None:
     window = make_window(monkeypatch, tmp_path)
     try:
         record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "remote.wav"))
         window.config["audio"]["auto_transcribe"] = True
-        enqueued: list[str] = []
-        monkeypatch.setattr(
-            window,
-            "enqueue_record_processing",
-            lambda record, source, **kwargs: enqueued.append(record.record_key),
-        )
+        task = window.task_manager.enqueue_remote_import("https://example.com/video")
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        window.task_manager.start_next_if_idle()
+        window.current_processing_task = task
+        window.active_remote_imports = {task.task_id: {"record": record}}
+        started: list[tuple[Path, str, str]] = []
+        monkeypatch.setattr(window, "start_transcription", lambda audio, record=None, source="manual": started.append((audio, record.record_key, source)))
         result = type("Result", (), {"record": record, "mode": "audio"})()
 
-        window._on_remote_import_completed(result)
+        window._on_remote_import_completed(result, task.task_id)
 
-        assert enqueued == [record.record_key]
+        assert started == [(record.audio_path, record.record_key, "remote_import")]
+        assert window.task_manager.snapshot().running[0].task_id == task.task_id
     finally:
+        running = window.task_manager.running_process_task()
+        if running is not None:
+            window.task_manager.cancel_running(running.task_id, "cleanup")
+        window.close()
+
+
+def test_remote_audio_transcription_completion_uses_auto_summarize_option(monkeypatch, tmp_path: Path) -> None:
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "remote-auto-summary.wav"))
+        window.config["audio"]["auto_summarize"] = True
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        task = window.enqueue_remote_import_task("https://example.com/video")
+        assert task is not None
+        window.current_processing_task = task
+        window.processing_record = record
+        window.processing_source = "remote_import"
+        summaries: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            window,
+            "start_summarization",
+            lambda text, record=None: summaries.append((text, record.record_key if record else "")),
+        )
+
+        window._on_transcription_completed("remote transcript")
+
+        assert summaries == [("remote transcript", record.record_key)]
+    finally:
+        running = window.task_manager.running_process_task()
+        if running is not None:
+            window.task_manager.cancel_running(running.task_id, "cleanup")
+        window.current_processing_task = None
+        window.processing_record = None
+        window.processing_source = None
         window.close()
 
 
@@ -192,35 +338,19 @@ def test_remote_subtitle_completion_does_not_enqueue_processing(monkeypatch, tmp
         window.close()
 
 
-def test_remote_subtitle_completion_enqueues_summary_only_when_queue_busy(monkeypatch, tmp_path: Path) -> None:
+def test_remote_subtitle_completion_starts_summary_in_same_task(monkeypatch, tmp_path: Path) -> None:
     window = make_window(monkeypatch, tmp_path)
-    running_task = None
     try:
-        busy_record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "busy.wav"))
         subtitle_record = window.history_service.adopt_audio_file(_write_wav(tmp_path / "subtitle-summary.wav"))
         window.config["audio"]["auto_summarize"] = True
-
-        def fake_execute(task) -> None:
-            window.current_processing_task = task
-            window.processing_record = busy_record
-            window.processing_source = "import"
-            window.is_processing = True
-            window.task_manager.mark_running(task.task_id, TaskStage.TRANSCRIBING, "busy")
-
-        monkeypatch.setattr(window, "_execute_processing_task", fake_execute)
-        running_task = window.enqueue_record_processing(busy_record, source="import")
-        assert running_task is not None
+        task = window.task_manager.enqueue_remote_import("https://example.com/video")
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        window.task_manager.start_next_if_idle()
+        window.current_processing_task = task
+        window.active_remote_imports = {task.task_id: {"record": subtitle_record}}
         assert window.current_processing_task is not None
 
-        enqueued: list[tuple[str, bool, str]] = []
         started: list[str] = []
-        monkeypatch.setattr(
-            window,
-            "enqueue_record_processing",
-            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(
-                (record.record_key, summary_only, source)
-            ),
-        )
         monkeypatch.setattr(window, "start_summarization", lambda text, record=None: started.append(text))
         result = type(
             "Result",
@@ -228,13 +358,16 @@ def test_remote_subtitle_completion_enqueues_summary_only_when_queue_busy(monkey
             {"record": subtitle_record, "mode": "subtitle", "transcript_text": "subtitle text"},
         )()
 
-        window._on_remote_import_completed(result)
+        window._on_remote_import_completed(result, task.task_id)
 
-        assert enqueued == [(subtitle_record.record_key, True, "remote_import")]
-        assert started == []
+        assert started == ["subtitle text"]
+        running = window.task_manager.snapshot().running[0]
+        assert running.task_id == task.task_id
+        assert running.record_key == subtitle_record.record_key
     finally:
-        if running_task is not None:
-            window.task_manager.cancel_running(running_task.task_id, "cleanup")
+        running = window.task_manager.running_process_task()
+        if running is not None:
+            window.task_manager.cancel_running(running.task_id, "cleanup")
         window.current_processing_task = None
         window.processing_record = None
         window.processing_source = None
@@ -275,7 +408,7 @@ def test_two_remote_imports_complete_and_fail_with_separate_records(monkeypatch,
         window.close()
 
 
-def test_remote_import_limit_rejects_new_task(monkeypatch, tmp_path: Path) -> None:
+def test_remote_import_ignores_stale_remote_import_limit(monkeypatch, tmp_path: Path) -> None:
     config = make_config(tmp_path)
     config["tasks"] = {"max_remote_imports": 1}
     monkeypatch.setattr("src.app.main_window.get_config", lambda: config)
@@ -310,8 +443,9 @@ def test_remote_import_limit_rejects_new_task(monkeypatch, tmp_path: Path) -> No
 
         window._start_remote_import("https://example.com/new")
 
-        assert errors
-        assert window.active_remote_imports == {"remote-existing": {"url": "https://example.com/old"}}
+        assert errors == []
+        assert len(window.active_remote_imports) == 2
+        assert any(task.get("url") == "https://example.com/new" for task in window.active_remote_imports.values())
     finally:
         window.active_workers.clear()
         window.close()

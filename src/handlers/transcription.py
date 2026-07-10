@@ -65,8 +65,6 @@ class TranscriptionHandlers:
         self.latest_transcription_percent = None
         self.is_processing = True
         self.processing_source = source
-        if hasattr(self, "_sync_running_task_stage"):
-            self._sync_running_task_stage(TaskStage.TRANSCRIBING, "正在转录", 0)
         self.recording_hint_label.setText("正在转录录音")
         self._update_recording_entry()
         self._set_processing_ui(True)
@@ -100,19 +98,26 @@ class TranscriptionHandlers:
         worker.start()
 
     def _on_transcription_progress(self, progress: object) -> None:
+        active_task = getattr(self, "current_processing_task", None)
+        if active_task is not None and active_task.task_id in getattr(self, "_cancelled_processing_task_ids", set()):
+            return
         if isinstance(progress, TranscriptionProgress):
-            self.latest_transcription_percent = progress.percent
+            is_loading_model = progress.stage == "loading_asr_model"
+            if not is_loading_model:
+                self.latest_transcription_percent = progress.percent
             if hasattr(self, "_sync_running_task_stage"):
                 self._sync_running_task_stage(
                     TaskStage.TRANSCRIBING,
-                    progress.message or "正在转录",
-                    progress.percent,
+                    "正在加载ASR模型" if is_loading_model else "转录中",
+                    None if is_loading_model else progress.percent,
                 )
         elif isinstance(progress, str) and hasattr(self, "_sync_running_task_stage"):
+            message = progress.strip() or "正在转录"
+            is_loading_model = "加载" in message and "模型" in message
             self._sync_running_task_stage(
                 TaskStage.TRANSCRIBING,
-                progress.strip() or "正在转录",
-                self.latest_transcription_percent,
+                "正在加载ASR模型" if is_loading_model else "转录中",
+                None if is_loading_model else self.latest_transcription_percent,
             )
         if self._is_current_record_processing():
             self._sync_detail_processing_view()
@@ -225,6 +230,7 @@ class TranscriptionHandlers:
             if was_selected:
                 self._select_record_by_key(record.record_key)
         is_queue_task = self._active_queue_task() is not None
+        pause_queue = is_queue_task and self._is_systemic_transcription_error(error, diagnostics)
         if not is_queue_task:
             dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
             if dialog_message:
@@ -233,10 +239,14 @@ class TranscriptionHandlers:
                 self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
             else:
                 self._show_error("转录失败，请查看日志或尝试更换设备。")
+        elif pause_queue:
+            dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
+            if self.task_manager.snapshot().queued:
+                dialog_message = f"{dialog_message}\n\n修复后可手动恢复排队任务。"
+            self._show_error(dialog_message or "转录失败，请修复 ASR 配置后重试。")
         else:
             self._set_status(f"任务失败：{error}")
         if is_queue_task:
-            pause_queue = self._is_systemic_transcription_error(error, diagnostics)
             self._finish_queue_task_failed(error, pause_queue=pause_queue)
 
     def _on_transcription_cancelled(self, message: str, diagnostics: dict | None = None) -> None:
@@ -282,6 +292,8 @@ class TranscriptionHandlers:
                 self._select_record_by_key(record.record_key)
         if getattr(self, "current_processing_task", None):
             task = self.current_processing_task
+            if hasattr(self, "_cancelled_processing_task_ids"):
+                self._cancelled_processing_task_ids.discard(task.task_id)
             self.current_processing_task = None
             self.task_manager.cancel_running(task.task_id, message or "已取消转录")
             self._persist_queued_tasks()
@@ -331,24 +343,6 @@ class TranscriptionHandlers:
 
     def retry_transcription(self) -> None:
         """重新转录当前历史记录中的录音文件。"""
-        if self.is_processing:
-            if not self.current_record:
-                self._show_error("请先选择一条历史记录")
-                return
-            if not self.current_record.audio_path.exists():
-                self._show_error("当前记录没有可转录的音频文件")
-                return
-            if self.current_record.has_transcript and not self._confirm_retranscription(self.current_record):
-                self._set_status("已取消重新转录")
-                return
-            self.enqueue_record_processing(
-                self.current_record,
-                source="manual",
-                overwrite_existing=True,
-                manual=True,
-            )
-            self._set_status("已加入处理队列")
-            return
         if not self.current_record:
             self._show_error("请先选择一条历史记录")
             return
@@ -358,15 +352,14 @@ class TranscriptionHandlers:
         if self.current_record.has_transcript and not self._confirm_retranscription(self.current_record):
             self._set_status("已取消重新转录")
             return
-        if self.current_record.has_transcript:
-            try:
-                self.current_record = self.history_service.clear_generated_results(self.current_record)
-            except Exception as exc:
-                self._show_error(f"清理旧结果失败：{exc}")
-                return
-            self.load_recordings()
-            self._select_record_by_key(self.current_record.record_key)
-        self.start_transcription(self.current_record.audio_path, self.current_record, source="manual")
+        task = self.enqueue_record_processing(
+            self.current_record,
+            source="manual",
+            overwrite_existing=True,
+            manual=True,
+        )
+        if task is not None:
+            self._set_status("已加入处理队列")
 
     def _confirm_retranscription(self, record: HistoryRecord) -> bool:
         """确认重新转录会覆盖当前生成结果。"""

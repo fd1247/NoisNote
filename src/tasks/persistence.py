@@ -53,31 +53,21 @@ class TaskQueueStore:
         persistable = [
             task.to_dict()
             for task in tasks
-            if task.kind is TaskKind.PROCESS_RECORD
-            and (task.status is TaskStatus.QUEUED or task.status in TERMINAL_STATUSES)
+            if task.kind in {TaskKind.PROCESS_RECORD, TaskKind.REMOTE_IMPORT}
+            and task.record_key
+            and (task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING} or task.status in TERMINAL_STATUSES)
         ]
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
+        temporary_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+        temporary_path.write_text(
             json.dumps({"version": 1, "tasks": persistable}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        temporary_path.replace(self.path)
 
     def _is_restoreable(self, task: AppTask, history_service: RecordLookup) -> bool:
-        if task.kind is not TaskKind.PROCESS_RECORD:
+        if task.kind not in {TaskKind.PROCESS_RECORD, TaskKind.REMOTE_IMPORT}:
             return False
         if not task.record_key:
             return False
-        record = history_service.get_record_by_key(task.record_key)
-        if record is None:
-            return False
-        if task.status in TERMINAL_STATUSES:
-            return True
-        if task.status is not TaskStatus.QUEUED:
-            return False
-        if task.options.summary_only:
-            return record.has_transcript
-        if not record.audio_path.exists():
-            return False
-        if record.has_transcript and not task.options.overwrite_existing:
-            return False
-        return True
+        return history_service.get_record_by_key(task.record_key) is not None

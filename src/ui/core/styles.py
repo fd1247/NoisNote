@@ -905,6 +905,18 @@ QFrame#TaskPanel {
     background: #f8fafc;
     border-left: 1px solid #e5e7eb;
 }
+QToolButton#TaskSectionActionButton {
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 4px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+}
+QToolButton#TaskSectionActionButton:hover {
+    background: #eff6ff;
+}
 QScrollArea#TaskPanelScroll,
 QScrollArea#TaskPanelScroll > QWidget#qt_scrollarea_viewport,
 QWidget#TaskPanelContent {
@@ -919,20 +931,86 @@ QFrame#TaskSectionBody {
     background: transparent;
     border: none;
 }
-QLabel#TaskSectionTitle {
+QToolButton#TaskSectionTitle {
     color: #374151;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
+    border: none;
+    background: transparent;
+    padding: 2px 0;
+    text-align: left;
+}
+QToolButton#TaskSectionTitle:hover {
+    color: #111827;
 }
 QFrame#TaskItem {
     background: #ffffff;
     border: 1px solid #e5e7eb;
     border-radius: 6px;
 }
+QFrame#TaskItem:hover {
+    border: 2px solid #2563eb;
+}
+QFrame#TaskItem[dragging="true"] {
+    background: #f8fafc;
+    border: 1px solid #bfdbfe;
+}
+QFrame#TaskDragPreview {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+}
+QLabel#TaskDragPreviewIcon {
+    background: transparent;
+    border: none;
+}
+QFrame#TaskDropPlaceholder {
+    background: transparent;
+    border: none;
+}
+QFrame#TaskDropIndicator {
+    min-height: 3px;
+    max-height: 3px;
+    background: #2563eb;
+    border: none;
+    border-radius: 2px;
+}
 QLabel#TaskItemTitle {
     color: #111827;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 400;
+}
+QProgressBar#TaskProgressBar {
+    min-height: 5px;
+    max-height: 5px;
+    border: none;
+    border-radius: 3px;
+    background: #e5e7eb;
+}
+QProgressBar#TaskProgressBar::chunk {
+    border-radius: 3px;
+    background: #22c55e;
+}
+QLabel#TaskProgressPercent {
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 400;
+}
+QToolButton#TaskIconButton,
+QToolButton#TaskDragHandleButton {
+    min-width: 22px;
+    min-height: 22px;
+    max-width: 22px;
+    max-height: 22px;
+    padding: 0;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+}
+QToolButton#TaskIconButton:hover,
+QToolButton#TaskDragHandleButton:hover {
+    background: #f3f4f6;
+    border-color: #d1d5db;
 }
 QPushButton#TaskMiniButton {
     min-width: 38px;

@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ..widgets.history_tree import HistoryTreeWidget
@@ -16,7 +15,6 @@ class HistorySidebarControls:
 
     notebook_selector: QComboBox
     history_tree: HistoryTreeWidget
-    empty_history_label: QLabel
 
 
 def build_history_sidebar(
@@ -44,18 +42,12 @@ def build_history_sidebar(
     history_tree = HistoryTreeWidget()
     history_tree.record_selected.connect(lambda record_key: select_history_item(record_key))
 
-    empty_history_label = QLabel("暂无录音")
-    empty_history_label.setObjectName("Muted")
-    empty_history_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
     layout.addWidget(title)
     layout.addWidget(notebook_selector)
     layout.addWidget(history_tree, stretch=1)
-    layout.addWidget(empty_history_label)
 
     controls = HistorySidebarControls(
         notebook_selector=notebook_selector,
         history_tree=history_tree,
-        empty_history_label=empty_history_label,
     )
     return sidebar, controls

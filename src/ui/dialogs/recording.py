@@ -1,6 +1,7 @@
 """录音控制对话框。"""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout, QWidget
 
 
@@ -10,6 +11,8 @@ class RecordingDialog(QDialog):
     def __init__(self, recording_page: QWidget, start_stop_button: QPushButton, parent=None):
         super().__init__(parent)
         self.setWindowTitle("录音")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setMinimumSize(440, 360)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

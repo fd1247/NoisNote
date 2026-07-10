@@ -17,6 +17,11 @@ class SummaryWorker(QThread):
         super().__init__(parent)
         self.text = text
         self.config = config
+        self._cancel_requested = False
+
+    def request_cancel(self) -> None:
+        self._cancel_requested = True
+        self.requestInterruption()
 
     def run(self) -> None:
         try:
@@ -27,6 +32,10 @@ class SummaryWorker(QThread):
                 on_progress=self.progress.emit,
             )
             summarizer.cleanup()
+            if self._cancel_requested or self.isInterruptionRequested():
+                return
             self.completed.emit(summary)
         except Exception as exc:
+            if self._cancel_requested or self.isInterruptionRequested():
+                return
             self.failed.emit(str(exc))

@@ -256,6 +256,25 @@ def test_recorder_uses_selected_loopback_device_and_channels(monkeypatch, tmp_pa
 
 # ---- DeviceManager 测试 ----
 
+def test_recorder_duration_excludes_paused_time(monkeypatch, tmp_path) -> None:
+    recorder = AudioRecorder(output_dir=tmp_path)
+    current_time = 110.0
+    recorder._start_time = 100.0
+
+    monkeypatch.setattr(rec_module.time, "time", lambda: current_time)
+    assert recorder.get_duration() == 10.0
+
+    current_time = 112.0
+    recorder.pause_recording()
+    current_time = 120.0
+    assert recorder.get_duration() == 12.0
+
+    current_time = 125.0
+    recorder.resume_recording()
+    current_time = 135.0
+    assert recorder.get_duration() == 22.0
+
+
 def test_device_manager_start_no_output_device_raises(monkeypatch) -> None:
     """DeviceManager.start() 在无输出设备时抛出 RuntimeError。"""
     monkeypatch.setattr(dm_module, "_get_default_speaker", lambda: None)

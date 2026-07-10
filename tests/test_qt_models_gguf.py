@@ -152,16 +152,14 @@ def test_gguf_tool_dir_falls_back_to_bundled_runtime(monkeypatch, tmp_path: Path
     assert get_qwen3_asr_gguf_tool_dir(config) == bundled
 
 
-def test_default_config_includes_task_queue_settings(tmp_path: Path, monkeypatch) -> None:
+def test_default_config_does_not_include_task_queue_settings(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path / "config")
     monkeypatch.setattr(config_module, "CONFIG_FILE", tmp_path / "config" / "config.json")
     monkeypatch.setattr(config_module, "DEFAULT_DATA_ROOT", tmp_path / "data")
 
     config = config_module.get_config()
 
-    assert config["tasks"]["max_queue_size"] == 20
-    assert config["tasks"]["max_remote_imports"] == 2
-    assert config["tasks"]["completed_keep_limit"] == 50
+    assert "tasks" not in config
 
 
 def test_validate_downloaded_incomplete_and_available_models(tmp_path: Path) -> None:

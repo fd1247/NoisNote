@@ -97,6 +97,46 @@ def test_remote_audio_import_falls_back_when_no_subtitle(monkeypatch, tmp_path: 
     assert scanned.source_kind == "remote_audio"
 
 
+def test_remote_audio_progress_combines_download_and_normalize(monkeypatch, tmp_path: Path) -> None:
+    service = HistoryService(tmp_path)
+
+    class ProgressClient(FakeClient):
+        def download_audio(self, info: RemoteMediaInfo, target_dir: Path, progress_callback=None) -> Path:
+            if progress_callback:
+                progress_callback("下载音频中", 50)
+            return super().download_audio(info, target_dir)
+
+    client = ProgressClient(subtitle_text=None)
+    remote = RemoteImportService(service, client=client)
+    info = client.probe("https://www.bilibili.com/video/BVdemo")
+    record = service.create_remote_record(info)
+    events: list[tuple[str, int | None]] = []
+
+    def fake_normalize(request, progress_callback=None, config=None):
+        if progress_callback:
+            progress_callback("正在转换音频", 50)
+        normalized = request.record_dir / "audio.normalized.wav"
+        normalized.write_bytes(b"normalized")
+        return SimpleNamespace(
+            normalized_audio_path=normalized,
+            duration_seconds=60.0,
+            sample_rate=16000,
+            channels=1,
+            source_format="m4a",
+        )
+
+    monkeypatch.setattr("src.remote_import.service.normalize_audio", fake_normalize)
+
+    remote.import_url(record, info, RemoteImportOptions(url=info.url), progress_callback=lambda text, percent=None: events.append((text, percent)))
+
+    assert events == [
+        ("下载音频中", 0),
+        ("下载音频中", 40),
+        ("下载音频中", 90),
+        ("下载音频中", 100),
+    ]
+
+
 def test_remote_audio_import_falls_back_when_subtitle_download_fails(monkeypatch, tmp_path: Path) -> None:
     service = HistoryService(tmp_path)
     client = FakeClient(subtitle_text="1\n00:00:00,000 --> 00:00:01,000\n你好\n", fail_subtitle=True)
@@ -125,6 +165,39 @@ def test_remote_audio_import_falls_back_when_subtitle_download_fails(monkeypatch
     assert not (result.record.record_dir / "audio.normalized.wav").exists()
     assert not (result.record.record_dir / "remote_audio.m4a").exists()
     assert "subtitle_error" in metadata_text
+
+
+def test_remote_audio_fallback_does_not_emit_subtitle_stage(monkeypatch, tmp_path: Path) -> None:
+    service = HistoryService(tmp_path)
+    client = FakeClient(subtitle_text="1\n00:00:00,000 --> 00:00:01,000\n你好\n", fail_subtitle=True)
+    remote = RemoteImportService(service, client=client)
+    info = client.probe("https://youtube.com/watch?v=demo")
+    record = service.create_remote_record(info)
+    events: list[str] = []
+
+    def fake_normalize(request, progress_callback=None, config=None):
+        normalized = request.record_dir / "audio.normalized.wav"
+        normalized.write_bytes(b"normalized")
+        return SimpleNamespace(
+            normalized_audio_path=normalized,
+            duration_seconds=60.0,
+            sample_rate=16000,
+            channels=1,
+            source_format="m4a",
+        )
+
+    monkeypatch.setattr("src.remote_import.service.normalize_audio", fake_normalize)
+
+    result = remote.import_url(
+        record,
+        info,
+        RemoteImportOptions(url=info.url),
+        progress_callback=lambda text, percent=None: events.append(text),
+    )
+
+    assert result.mode == "audio"
+    assert "下载音频中" in events
+    assert "提取字幕中" not in events
 
 
 def test_remote_audio_fallback_cleans_partial_subtitle_outputs(monkeypatch, tmp_path: Path) -> None:

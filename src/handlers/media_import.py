@@ -38,6 +38,9 @@ class ImportHandlers:
     def _import_media_path(self, file_path: Path) -> None:
         """导入单个本地音视频文件，供按钮和拖拽复用。"""
         path = file_path.expanduser()
+        if not self.has_processing_queue_capacity():
+            self._show_error("队列已满，请先移除任务或等待任务完成")
+            return
         if not path.exists() or not path.is_file():
             log_event(
                 "record.import.failed",
@@ -94,6 +97,10 @@ class ImportHandlers:
             "source_format": probe.source_format,
         }
 
+        if not self.has_processing_queue_capacity():
+            self._show_error("队列已满，请先移除任务或等待任务完成")
+            return
+
         try:
             record = self.history_service.import_audio_file(
                 path,
@@ -145,16 +152,24 @@ class ImportHandlers:
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        paths = self._supported_drop_paths(event.mimeData())
+        local_paths = self._local_drop_paths(event.mimeData())
+        paths = [path for path in local_paths if is_supported_media(path, self.config)]
         if not paths:
             event.ignore()
             return
         event.acceptProposedAction()
-        if len(paths) > 1:
-            self._set_status("已拖入多个文件，本次只导入第一个支持的音视频文件")
-        self._import_media_path(paths[0])
+        unsupported_count = max(0, len(local_paths) - len(paths))
+        for path in paths:
+            self._import_media_path(path)
+        if unsupported_count:
+            self._set_status(f"已导入 {len(paths)} 个文件，跳过 {unsupported_count} 个不支持的文件")
+        elif len(paths) > 1:
+            self._set_status(f"已导入 {len(paths)} 个文件")
 
     def _supported_drop_paths(self, mime_data) -> list[Path]:
+        return [path for path in self._local_drop_paths(mime_data) if is_supported_media(path, self.config)]
+
+    def _local_drop_paths(self, mime_data) -> list[Path]:
         if not mime_data or not mime_data.hasUrls():
             return []
         paths: list[Path] = []
@@ -162,8 +177,7 @@ class ImportHandlers:
             if not url.isLocalFile():
                 continue
             path = Path(url.toLocalFile())
-            if is_supported_media(path, self.config):
-                paths.append(path)
+            paths.append(path)
         return paths
 
     def _needs_audio_preprocess(self, record: HistoryRecord | None) -> bool:
@@ -244,6 +258,7 @@ class ImportHandlers:
             },
         )
         worker = AudioPreprocessWorker(request, self, config=self.config)
+        self.preprocess_worker = worker
         worker.progress.connect(self._on_audio_preprocess_progress)
         worker.completed.connect(
             lambda result, r=record, s=source, label=status_after_success, qid=queue_task_id: self._on_audio_preprocess_completed(
@@ -251,7 +266,7 @@ class ImportHandlers:
             )
         )
         worker.failed.connect(lambda error, r=record, qid=queue_task_id: self._on_audio_preprocess_failed(r, error, qid))
-        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        worker.finished.connect(lambda qid=queue_task_id: self._cleanup_cancellable_worker(worker, qid))
         self.active_workers.append(worker)
         worker.start()
 
@@ -271,7 +286,7 @@ class ImportHandlers:
         status_after_success: str,
         queue_task_id: str = "",
     ) -> None:
-        if self._consume_cancelled_processing_task(queue_task_id):
+        if self._finish_cancelled_queue_task_if_needed(queue_task_id):
             return
         record = self.history_service.save_preprocess_result(record, result)
         task_id = self.active_task_ids.pop("preprocess", "")
@@ -306,7 +321,7 @@ class ImportHandlers:
         error: AudioInputError,
         queue_task_id: str = "",
     ) -> None:
-        if self._consume_cancelled_processing_task(queue_task_id):
+        if self._finish_cancelled_queue_task_if_needed(queue_task_id):
             return
         was_selected = bool(self.current_record and self.current_record.record_key == record.record_key)
         record = self.history_service.mark_input_error(record, error)
@@ -362,6 +377,17 @@ class ImportHandlers:
         self._select_record_by_key(record.record_key)
 
         if self.config["audio"].get("auto_transcribe", True):
+            if source == "recording" and not self.has_processing_queue_capacity():
+                self.add_queue_full_recording_task(record)
+                self.record_button.setText("开始录音")
+                self.record_button.setObjectName("RecordButton")
+                self.record_button.style().unpolish(self.record_button)
+                self.record_button.style().polish(self.record_button)
+                self.recording_hint_label.setText("音频已保存，可手动转录")
+                self._set_processing_ui(False)
+                self._update_recording_entry()
+                self._set_status(f"{status}，队列已满，可稍后手动转录")
+                return
             task = self.enqueue_record_processing(record, source=source)
             if task is not None:
                 self._set_status(f"{status}，已加入处理队列")

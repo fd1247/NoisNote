@@ -255,11 +255,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "root_dir": str(DEFAULT_DATA_ROOT / "models"),
         "downloaded": {},
     },
-    "tasks": {
-        "max_queue_size": 20,
-        "max_remote_imports": 2,
-        "completed_keep_limit": 50,
-    },
 }
 
 
@@ -453,8 +448,14 @@ def _create_default_config() -> dict:
 def save_config(config: dict) -> None:
     """保存配置到文件。"""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+    temporary_path = CONFIG_FILE.with_suffix(f"{CONFIG_FILE.suffix}.tmp")
+    try:
+        with open(temporary_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        temporary_path.replace(CONFIG_FILE)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def update_config(key: str, value, sub_key: str | None = None) -> dict:
@@ -544,16 +545,6 @@ def _normalize_storage_paths(config: dict) -> tuple[dict, bool]:
         audio["output_dir"] = str((data_root / "data").expanduser())
         changed = True
 
-    tasks = config.setdefault("tasks", {})
-    if "max_queue_size" not in tasks:
-        tasks["max_queue_size"] = 20
-        changed = True
-    if "max_remote_imports" not in tasks:
-        tasks["max_remote_imports"] = 2
-        changed = True
-    if "completed_keep_limit" not in tasks:
-        tasks["completed_keep_limit"] = 50
-        changed = True
     return config, changed
 
 

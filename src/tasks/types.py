@@ -28,6 +28,9 @@ class TaskStage(str, Enum):
     """处理任务当前阶段。"""
 
     WAITING = "waiting"
+    PARSING_LINK = "parsing_link"
+    EXTRACTING_SUBTITLE = "extracting_subtitle"
+    DOWNLOADING_AUDIO = "downloading_audio"
     PREPROCESSING = "preprocessing"
     TRANSCRIBING = "transcribing"
     SUMMARIZING = "summarizing"
@@ -72,6 +75,8 @@ class AppTask:
     notebook_id: str = "default"
     record_id: str = ""
     source: str = "manual"
+    input_url: str = ""
+    restart_stage: TaskStage | None = None
     title: str = ""
     message: str = ""
     progress_percent: int | None = None
@@ -87,6 +92,7 @@ class AppTask:
         data["kind"] = self.kind.value
         data["status"] = self.status.value
         data["stage"] = self.stage.value
+        data["restart_stage"] = self.restart_stage.value if self.restart_stage is not None else None
         data["options"] = self.options.to_dict()
         return data
 
@@ -101,6 +107,8 @@ class AppTask:
             notebook_id=str(value.get("notebook_id") or "default"),
             record_id=str(value.get("record_id") or ""),
             source=str(value.get("source") or "manual"),
+            input_url=str(value.get("input_url") or ""),
+            restart_stage=(TaskStage(str(value["restart_stage"])) if value.get("restart_stage") else None),
             title=str(value.get("title") or ""),
             message=str(value.get("message") or ""),
             progress_percent=value.get("progress_percent") if value.get("progress_percent") is not None else None,
