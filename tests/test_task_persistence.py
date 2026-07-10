@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+from src.history.service import HistoryRecord
+from src.handlers.task_queue import TaskQueueHandlers
+from src.tasks.persistence import TaskQueueStore
+from src.tasks.types import AppTask, TaskKind, TaskOptions, TaskStage, TaskStatus
+
+
+class FakeHistoryService:
+    def __init__(self, records: dict[str, HistoryRecord]):
+        self.records = records
+
+    def get_record_by_key(self, record_key: str) -> HistoryRecord | None:
+        return self.records.get(record_key)
+
+
+def _record(tmp_path: Path, record_id: str, *, transcript: bool = False, audio: bool = True) -> HistoryRecord:
+    record_dir = tmp_path / record_id
+    record_dir.mkdir()
+    audio = record_dir / "audio.wav"
+    transcript_path = record_dir / "transcript.txt"
+    summary = record_dir / "summary.md"
+    metadata = record_dir / "metadata.json"
+    if audio:
+        audio.write_bytes(b"fake")
+    if transcript:
+        transcript_path.write_text("done", encoding="utf-8")
+    metadata.write_text("{}", encoding="utf-8")
+    return HistoryRecord(
+        record_id=record_id,
+        layout="folder",
+        record_dir=record_dir,
+        audio_path=audio,
+        transcript_path=transcript_path,
+        summary_path=summary,
+        markdown_path=summary,
+        metadata_path=metadata,
+        created_at=datetime(2026, 7, 8, 12, 0, 0),
+        duration_seconds=1.0,
+        audio_size_bytes=4,
+        total_size_bytes=4,
+        notebook_id="default",
+        notebook_name="默认笔记本",
+    )
+
+
+def _task(
+    record: HistoryRecord,
+    *,
+    overwrite: bool = False,
+    summary_only: bool = False,
+    status: TaskStatus = TaskStatus.QUEUED,
+) -> AppTask:
+    return AppTask(
+        task_id=f"task-{record.record_id}",
+        kind=TaskKind.PROCESS_RECORD,
+        status=status,
+        stage=TaskStage.WAITING,
+        record_key=record.record_key,
+        notebook_id=record.notebook_id,
+        record_id=record.record_id,
+        title=record.display_name,
+        created_at="2026-07-08T12:00:00",
+        queued_at="2026-07-08T12:00:00",
+        options=TaskOptions(overwrite_existing=overwrite, summary_only=summary_only),
+    )
+
+
+def test_store_round_trips_queued_tasks(tmp_path: Path) -> None:
+    record = _record(tmp_path, "a")
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+
+    store.save([_task(record)])
+    loaded = store.load(FakeHistoryService({record.record_key: record}))
+
+    assert len(loaded) == 1
+    assert loaded[0].record_key == record.record_key
+    assert loaded[0].status is TaskStatus.QUEUED
+
+
+def test_store_replaces_snapshot_atomically(monkeypatch, tmp_path: Path) -> None:
+    record = _record(tmp_path, "a")
+    path = tmp_path / "task_queue.json"
+    store = TaskQueueStore(path)
+    path.write_text('{"version": 1, "tasks": []}', encoding="utf-8")
+    replacements: list[tuple[Path, Path]] = []
+    original_replace = Path.replace
+
+    def track_replace(source: Path, target: Path):
+        replacements.append((source, target))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", track_replace)
+
+    store.save([_task(record)])
+
+    assert replacements == [(path.with_suffix(".json.tmp"), path)]
+    assert not path.with_suffix(".json.tmp").exists()
+    assert len(store.load(FakeHistoryService({record.record_key: record}))) == 1
+
+
+def test_store_filters_missing_records(tmp_path: Path) -> None:
+    record = _record(tmp_path, "a")
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+    store.save([_task(record)])
+
+    loaded = store.load(FakeHistoryService({}))
+
+    assert loaded == []
+
+
+def test_store_keeps_queued_task_with_existing_transcript_for_exit_recovery(tmp_path: Path) -> None:
+    record = _record(tmp_path, "a", transcript=True)
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+    store.save([_task(record, overwrite=False)])
+
+    loaded = store.load(FakeHistoryService({record.record_key: record}))
+
+    assert len(loaded) == 1
+    assert loaded[0].record_key == record.record_key
+
+
+def test_store_keeps_overwrite_task_for_finished_record(tmp_path: Path) -> None:
+    record = _record(tmp_path, "a", transcript=True)
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+    store.save([_task(record, overwrite=True)])
+
+    loaded = store.load(FakeHistoryService({record.record_key: record}))
+
+    assert len(loaded) == 1
+    assert loaded[0].options.overwrite_existing is True
+
+
+def test_store_round_trips_summary_only_task_without_audio(tmp_path: Path) -> None:
+    record = _record(tmp_path, "a", transcript=True, audio=False)
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+
+    store.save([_task(record, summary_only=True)])
+    loaded = store.load(FakeHistoryService({record.record_key: record}))
+
+    assert len(loaded) == 1
+    assert loaded[0].record_key == record.record_key
+    assert loaded[0].options.summary_only is True
+
+
+def test_store_discards_queued_remote_import_without_record(tmp_path: Path) -> None:
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+    task = AppTask(
+        task_id="remote-1",
+        kind=TaskKind.REMOTE_IMPORT,
+        status=TaskStatus.QUEUED,
+        stage=TaskStage.WAITING,
+        input_url="https://example.com/video",
+        title="https://example.com/video",
+        created_at="2026-07-08T12:00:00",
+        queued_at="2026-07-08T12:00:00",
+    )
+
+    store.save([task])
+    loaded = store.load(FakeHistoryService({}))
+
+    assert loaded == []
+
+
+def test_store_saves_queued_running_and_terminal_tasks(tmp_path: Path) -> None:
+    queued = _record(tmp_path, "queued")
+    running = _record(tmp_path, "running")
+    failed = _record(tmp_path, "failed")
+    store = TaskQueueStore(tmp_path / "task_queue.json")
+
+    store.save([
+        _task(queued),
+        _task(running, status=TaskStatus.RUNNING),
+        _task(failed, status=TaskStatus.FAILED),
+    ])
+    loaded = store.load(
+        FakeHistoryService({
+            queued.record_key: queued,
+            running.record_key: running,
+            failed.record_key: failed,
+        })
+    )
+
+    assert [(task.record_key, task.status) for task in loaded] == [
+        (queued.record_key, TaskStatus.QUEUED),
+        (running.record_key, TaskStatus.RUNNING),
+        (failed.record_key, TaskStatus.FAILED),
+    ]
+
+
+def test_task_queue_path_uses_patched_config_dir(monkeypatch, tmp_path: Path) -> None:
+    from src.app import config as config_module
+
+    patched_config_dir = tmp_path / "patched-config"
+    monkeypatch.setattr(config_module, "CONFIG_DIR", patched_config_dir)
+
+    assert TaskQueueHandlers._task_queue_path(object()) == patched_config_dir / "task_queue.json"

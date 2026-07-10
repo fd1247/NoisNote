@@ -46,7 +46,7 @@ def test_progress_reporter_maps_vendor_chunk_progress() -> None:
         )
     )
 
-    assert [event.percent for event in events] == [41, 95]
+    assert [event.percent for event in events] == [33, 100]
     assert events[0].processed_seconds == 40
 
 

@@ -448,8 +448,14 @@ def _create_default_config() -> dict:
 def save_config(config: dict) -> None:
     """保存配置到文件。"""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+    temporary_path = CONFIG_FILE.with_suffix(f"{CONFIG_FILE.suffix}.tmp")
+    try:
+        with open(temporary_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        temporary_path.replace(CONFIG_FILE)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def update_config(key: str, value, sub_key: str | None = None) -> dict:
@@ -538,6 +544,7 @@ def _normalize_storage_paths(config: dict) -> tuple[dict, bool]:
     if output_dir and _is_transient_test_path(Path(str(output_dir))):
         audio["output_dir"] = str((data_root / "data").expanduser())
         changed = True
+
     return config, changed
 
 

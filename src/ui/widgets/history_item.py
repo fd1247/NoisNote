@@ -1,6 +1,7 @@
 """历史记录相关 Qt 控件。"""
 from __future__ import annotations
 
+from html import escape
 from typing import Protocol
 
 from PySide6.QtCore import QSize, Qt
@@ -36,10 +37,37 @@ class ElidedLabel(QLabel):
         super().resizeEvent(event)
         self._update_elided_text()
 
+    def set_full_text(self, text: str) -> None:
+        self._full_text = text
+        self.setToolTip(text)
+        self._update_elided_text()
+
     def _update_elided_text(self) -> None:
         width = max(0, self.width())
         metrics = self.fontMetrics()
         self.setText(metrics.elidedText(self._full_text, Qt.ElideRight, width))
+
+
+class ElidedLinkLabel(ElidedLabel):
+    """使用同一套动态省略逻辑显示可点击链接。"""
+
+    def __init__(self, text: str, url: str):
+        self._url = url
+        super().__init__(text)
+        self.setTextFormat(Qt.RichText)
+        self.setOpenExternalLinks(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._update_elided_text()
+
+    def _update_elided_text(self) -> None:
+        width = max(0, self.width())
+        metrics = self.fontMetrics()
+        display_text = metrics.elidedText(self._full_text, Qt.ElideRight, width)
+        safe_url = escape(self._url, quote=True)
+        safe_display = escape(display_text)
+        self.setText(f'<a href="{safe_url}" style="color:#2563eb;text-decoration:none;">{safe_display}</a>')
 
 
 class HistoryActions(Protocol):

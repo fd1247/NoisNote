@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import wave
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -708,7 +709,18 @@ def test_adopt_audio_file_moves_recording_into_folder(tmp_path: Path) -> None:
     assert record.audio_path.exists()
     assert not source.exists()
     assert (record.record_dir / "metadata.json").exists()
-    assert service.scan()[0].record_id == "20260618_120000"
+    assert service.scan()[0].record_id == "录音_20260618_120000"
+    assert service.scan()[0].display_name == "录音_20260618_120000"
+
+
+def test_adopted_record_uses_record_creation_time_instead_of_audio_timestamp(tmp_path: Path) -> None:
+    source = tmp_path / "capture.wav"
+    write_wav(source)
+    os.utime(source, (946684800, 946684800))
+
+    record = HistoryService(tmp_path / "records").adopt_audio_file(source)
+
+    assert record.created_at > datetime(2025, 1, 1)
 
 
 def test_import_audio_file_records_source_path_without_copying(tmp_path: Path) -> None:
@@ -740,6 +752,16 @@ def test_import_audio_file_records_source_path_without_copying(tmp_path: Path) -
     metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
     assert metadata["source_type"] == "imported"
     assert metadata["storage_mode"] == "reference"
+
+
+def test_imported_record_uses_record_creation_time_instead_of_source_timestamp(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "meeting.wav"
+    write_wav(source)
+    os.utime(source, (946684800, 946684800))
+
+    record = HistoryService(tmp_path / "records").import_audio_file(source)
+
+    assert record.created_at > datetime(2025, 1, 1)
 
 
 def test_import_audio_file_preserves_non_wav_extension(tmp_path: Path) -> None:
@@ -804,6 +826,16 @@ def test_copy_imported_audio_file_preserves_extension_and_duration(tmp_path: Pat
     assert metadata["audio_file"] == "测试音频.mp3"
     assert metadata["duration_seconds"] == 49.2
     assert metadata["storage_mode"] == "copied"
+
+
+def test_copied_import_record_uses_record_creation_time_instead_of_source_timestamp(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "meeting.wav"
+    write_wav(source)
+    os.utime(source, (946684800, 946684800))
+
+    record = HistoryService(tmp_path / "records").copy_imported_audio_file(source)
+
+    assert record.created_at > datetime(2025, 1, 1)
 
 
 def test_import_audio_file_uses_unique_folder_for_duplicate_names(tmp_path: Path) -> None:

@@ -57,15 +57,23 @@ class YtDlpClient:
             raise remote_error_from_exception(exc) from exc
         return target_path
 
-    def download_audio(self, info: RemoteMediaInfo, target_dir: Path) -> Path:
+    def download_audio(self, info: RemoteMediaInfo, target_dir: Path, progress_callback=None) -> Path:
         self.ensure_available()
         target_dir.mkdir(parents=True, exist_ok=True)
+        _clear_stale_audio_downloads(target_dir)
         before = {path.resolve(strict=False) for path in target_dir.glob("*") if path.is_file()}
         outtmpl = str(target_dir / "remote_audio.%(ext)s")
         try:
             import yt_dlp
 
-            with yt_dlp.YoutubeDL(self._build_options(info.webpage_url or info.url, outtmpl=outtmpl, audio_only=True)) as ydl:
+            with yt_dlp.YoutubeDL(
+                self._build_options(
+                    info.webpage_url or info.url,
+                    outtmpl=outtmpl,
+                    audio_only=True,
+                    progress_callback=progress_callback,
+                )
+            ) as ydl:
                 ydl.extract_info(info.webpage_url or info.url, download=True)
         except Exception as exc:
             raise self._remote_error_from_ytdlp_exception(info.webpage_url or info.url, exc) from exc
@@ -88,6 +96,7 @@ class YtDlpClient:
         skip_download: bool = False,
         outtmpl: str | None = None,
         audio_only: bool = False,
+        progress_callback=None,
     ) -> dict[str, Any]:
         opts: dict[str, Any] = {
             "quiet": True,
@@ -104,6 +113,9 @@ class YtDlpClient:
             opts["outtmpl"] = outtmpl
         if audio_only:
             opts["format"] = "bestaudio/best"
+            opts["continuedl"] = False
+        if progress_callback:
+            opts["progress_hooks"] = [_yt_dlp_progress_hook(progress_callback)]
 
         cookie_file = self.cookie_file_for_url(url)
         if cookie_file:
@@ -114,6 +126,7 @@ class YtDlpClient:
             opts["remote_components"] = {"ejs:github"}
 
         return opts
+
 
     def cookie_file_for_url(self, url: str) -> Path | None:
         site = site_key_for_url(url)
@@ -153,6 +166,31 @@ class YtDlpClient:
             )
             return RemoteImportError(RemoteImportErrorKind.LOGIN_REQUIRED, message_for_kind(RemoteImportErrorKind.LOGIN_REQUIRED), detail)
         return remote_error_from_exception(exc)
+
+
+def _clear_stale_audio_downloads(target_dir: Path) -> None:
+    """移除当前记录内可再生的 yt-dlp 音频下载产物，避免重试续传旧分片。"""
+    for path in target_dir.glob("remote_audio.*"):
+        if path.is_file():
+            path.unlink()
+
+
+def _yt_dlp_progress_hook(callback):
+    def hook(status: dict[str, Any]) -> None:
+        state = status.get("status")
+        if state == "finished":
+            callback("下载音频中", 100)
+            return
+        if state != "downloading":
+            return
+        total = status.get("total_bytes") or status.get("total_bytes_estimate")
+        downloaded = status.get("downloaded_bytes")
+        if not total or not downloaded:
+            return
+        percent = int(max(0, min(100, round(float(downloaded) * 100 / float(total)))))
+        callback("下载音频中", percent)
+
+    return hook
 
 
 def site_key_for_url(url: str) -> str | None:

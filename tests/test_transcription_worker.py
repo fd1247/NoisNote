@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections import deque
 
@@ -56,3 +57,95 @@ def test_hidden_creationflags_adds_create_no_window(monkeypatch) -> None:
     monkeypatch.setattr(transcription_worker.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
 
     assert _hidden_creationflags(0x00000004) == 0x08000004
+
+
+def test_transcription_worker_request_cancel_terminates_process() -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+            self.stdout = iter(())
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout=None) -> int:
+            if timeout is not None:
+                raise TimeoutError()
+            return -15
+
+    worker = TranscriptionWorker("audio.wav")
+    process = FakeProcess()
+    worker.process = process
+
+    worker.request_cancel()
+
+    assert worker.cancel_requested is True
+    assert process.terminated is True
+    assert process.killed is True
+
+
+def test_transcription_worker_does_not_emit_cancelled_after_completed(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    worker = TranscriptionWorker("audio.wav")
+    events: list[tuple[str, str]] = []
+    worker.completed.connect(lambda text, diagnostics: events.append(("completed", text)))
+    worker.cancelled.connect(lambda text, diagnostics: events.append(("cancelled", text)))
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(
+                [
+                    json.dumps(
+                        {
+                            "kind": "completed",
+                            "text": "done",
+                            "diagnostics": {},
+                        }
+                    )
+                ]
+            )
+
+        def wait(self, timeout=None) -> int:
+            worker.request_cancel()
+            return 0
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(transcription_worker.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+
+    worker.run()
+    app.processEvents()
+
+    assert events == [("completed", "done")]
+
+
+def test_transcription_worker_cancelled_before_launch_emits_only_cancelled(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    worker = TranscriptionWorker("audio.wav")
+    events: list[tuple[str, str]] = []
+    launch_attempts = 0
+    worker.completed.connect(lambda text, diagnostics: events.append(("completed", text)))
+    worker.cancelled.connect(lambda text, diagnostics: events.append(("cancelled", text)))
+    worker.failed.connect(lambda text, diagnostics: events.append(("failed", text)))
+
+    def fail_popen(*args, **kwargs):
+        nonlocal launch_attempts
+        launch_attempts += 1
+        raise AssertionError("subprocess should not start after pre-launch cancellation")
+
+    monkeypatch.setattr(transcription_worker.subprocess, "Popen", fail_popen)
+
+    worker.request_cancel()
+    worker.run()
+    app.processEvents()
+
+    assert launch_attempts == 0
+    assert events == [("cancelled", "已取消转录")]

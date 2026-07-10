@@ -5,7 +5,6 @@ import os
 import sys
 import uuid
 from datetime import datetime
-from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,6 +40,7 @@ from ..handlers.recording import RecordingHandlers
 from ..handlers.remote_import import RemoteImportHandlers
 from ..handlers.settings import SettingsHandlers
 from ..handlers.summary import SummaryHandlers
+from ..handlers.task_queue import TaskQueueHandlers
 from ..handlers.timeline_view import TimelineViewHandlers
 from ..handlers.transcription import TranscriptionHandlers
 from ..ui.widgets.dialogs import alert_without_icon, confirm_without_icon, prompt_text_without_icon
@@ -48,8 +48,8 @@ from ..history.service import HistoryRecord, HistoryService
 from ..model_registry.downloader import ModelDownloadManager
 from ..ui.pages.settings import SettingsPanel
 from ..ui.pages.content import HistoryPageCallbacks, build_history_page
-from ..ui.detail.formatting import elide_metadata_value
 from ..ui.detail.models import build_metadata_fields
+from ..ui.widgets.history_item import ElidedLabel, ElidedLinkLabel
 from ..ui.pages.sidebar import build_history_sidebar
 from ..ui.core.icons import make_action_icon, make_app_icon
 from ..ui.pages.recording import build_recording_page
@@ -81,6 +81,7 @@ class MainWindow(
     TimelineViewHandlers,
     PlaybackHandlers,
     ExportHandlers,
+    TaskQueueHandlers,
     QMainWindow,
 ):
     """NoisNote主窗口。"""
@@ -97,6 +98,9 @@ class MainWindow(
         self.recorder: AudioRecorder | None = None
         self.current_record: HistoryRecord | None = None
         self.processing_record: HistoryRecord | None = None
+        self.task_manager = None
+        self.current_processing_task = None
+        self.summary_worker = None
         self.all_history_items: list[HistoryRecord] = []
         self.current_items: list[HistoryRecord] = []
         self.current_notebook_id = str(self.config.get("active_notebook_id") or "default")
@@ -104,6 +108,8 @@ class MainWindow(
         self.is_recording = False
         self.is_processing = False
         self.processing_source: str | None = None
+        self.active_remote_imports: dict[str, dict[str, object]] = {}
+        self._closing_for_exit = False
         self.previous_content_widget: QWidget | None = None
         self.processing_started_at: dict[str, float] = {}
         self.latest_transcription_percent: int | None = None
@@ -133,6 +139,7 @@ class MainWindow(
         self._updating_playback_slider = False
         self.settings_dialog: SettingsDialog | None = None
         self.recording_dialog = None
+        self._stopping_recording = False
         self.detail_metadata_expanded = False
         self._detail_metadata_animation: QPropertyAnimation | None = None
         self._detail_metadata_discard_parent: QWidget | None = None
@@ -160,9 +167,11 @@ class MainWindow(
         self.model_download_manager.models_changed.connect(self._refresh_settings_after_model_change)
         self._init_recorder()
         self.load_recordings()
+        self._init_task_queue()
         self._import_demo_audio_if_empty()
         self._restore_last_selected_record()
-        self._set_status("")
+        if not self.status_label.text():
+            self._set_status("")
         log_event(
             "app.window.ready",
             module="ui",
@@ -267,7 +276,6 @@ class MainWindow(
         )
         self.notebook_selector = controls.notebook_selector
         self.history_tree = controls.history_tree
-        self.empty_history_label = controls.empty_history_label
         self._refresh_notebook_selector()
         self.notebook_selector.currentIndexChanged.connect(self._on_notebook_selection_changed)
         self.history_tree.rename_requested.connect(self._rename_record_by_key)
@@ -576,34 +584,21 @@ class MainWindow(
 
             field_label = str(field.get("label") or "")
             field_value = str(field.get("value") or "--")
-            display_value = elide_metadata_value(field_value)
             label = QLabel(field_label)
             label.setObjectName("DetailMetadataLabel")
-            value = QLabel(display_value)
+            if field_label == "网址" and field_value != "--":
+                value = ElidedLinkLabel(field_value, field_value)
+                value.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+            else:
+                value = ElidedLabel(field_value)
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setObjectName("DetailMetadataValue")
-            if display_value != field_value:
-                value.setToolTip(field_value)
+            value.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             value.setWordWrap(False)
             value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            value_alignment = Qt.AlignmentFlag.AlignLeft
-            if field_label == "网址" and field_value != "--":
-                safe_url = escape(field_value, quote=True)
-                safe_display = escape(display_value)
-                value.setText(
-                    f'<a href="{safe_url}" style="color:#2563eb;text-decoration:none;">{safe_display}</a>'
-                )
-                value.setTextFormat(Qt.TextFormat.RichText)
-                value.setOpenExternalLinks(False)
-                value.setCursor(Qt.CursorShape.PointingHandCursor)
-                value.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
-                value.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
-                value.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            else:
-                value.setTextFormat(Qt.TextFormat.PlainText)
-                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
             layout.addWidget(label, row, label_column)
-            layout.addWidget(value, row, value_column, alignment=value_alignment)
+            layout.addWidget(value, row, value_column)
             label.show()
             value.show()
 
@@ -1012,6 +1007,9 @@ class MainWindow(
         self._delete_record(self.current_record, clear_current=True)
 
     def _delete_record(self, record: HistoryRecord, clear_current: bool) -> None:
+        if getattr(self, "_record_has_running_task", lambda _record: False)(record):
+            self._show_error("正在处理，删除前先取消任务")
+            return
         confirmed = confirm_without_icon(
             self,
             "删除历史记录",
@@ -1055,13 +1053,18 @@ class MainWindow(
         )
 
         if clear_current:
-            self.new_recording()
+            self._clear_missing_current_record()
+        if hasattr(self, "_discard_tasks_for_deleted_record"):
+            self._discard_tasks_for_deleted_record(record.record_key)
         self.load_recordings()
         self._set_status(result.message)
 
     def _delete_records(self, records: list[HistoryRecord]) -> None:
         """批量删除历史记录，只弹出一次确认。"""
         if not records:
+            return
+        if any(getattr(self, "_record_has_running_task", lambda _record: False)(record) for record in records):
+            self._show_error("正在处理，删除前先取消任务")
             return
         confirmed = confirm_without_icon(
             self,
@@ -1110,6 +1113,8 @@ class MainWindow(
                 record_id=record.record_id,
                 context={"deleted_count": len(result.deleted_paths), "skipped_count": len(result.skipped_paths)},
             )
+            if hasattr(self, "_discard_tasks_for_deleted_record"):
+                self._discard_tasks_for_deleted_record(record.record_key)
 
         if clear_current:
             self._clear_missing_current_record()
@@ -1140,8 +1145,6 @@ class MainWindow(
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.stop_playback()
-        if self.is_recording and self.recorder:
-            self.recorder.stop_recording()
         if self.model_download_manager.has_active_downloads():
             confirmed = confirm_without_icon(
                 self,
@@ -1152,15 +1155,25 @@ class MainWindow(
                 event.ignore()
                 return
             self.model_download_manager.cancel_all_downloads()
-        if self.active_workers:
+        has_task_queue_work = bool(getattr(self, "task_manager", None) and self.task_manager.has_unfinished_tasks())
+        has_recording_work = bool(self.is_recording and self.recorder)
+        has_remote_import_work = bool(getattr(self, "active_remote_imports", {}))
+        if has_recording_work or has_remote_import_work or has_task_queue_work or self.active_workers:
             confirmed = confirm_without_icon(
                 self,
                 "后台任务仍在运行",
-                "转录或总结仍在运行，确定退出吗?",
+                "仍有任务正在运行或排队，退出应用会中断运行中的任务并保留排队任务。确定退出吗?",
             )
             if not confirmed:
                 event.ignore()
                 return
+            self._closing_for_exit = True
+            if has_recording_work:
+                self.stop_recording()
+            if hasattr(self, "prepare_remote_imports_for_close"):
+                self.prepare_remote_imports_for_close()
+            if hasattr(self, "prepare_task_queue_for_close"):
+                self.prepare_task_queue_for_close()
         if self.recorder:
             self.recorder.cleanup()
         event.accept()

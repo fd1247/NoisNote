@@ -16,6 +16,7 @@ from ..audio.preprocess import (
 )
 from ..utils.logging import file_context, log_event, record_context
 from ..history.service import HistoryRecord
+from ..tasks import TaskStage
 from ..workers.preprocess import AudioPreprocessWorker
 
 
@@ -24,14 +25,6 @@ class ImportHandlers:
 
     def import_audio_recording(self) -> None:
         """导入本地音视频文件并创建历史记录。"""
-        if self.is_recording:
-            self.show_recording_dialog()
-            self._set_status("正在录音，完成后再导入")
-            return
-        if self.is_processing:
-            self._set_status("正在处理中，请稍后重试")
-            return
-
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "导入本地音视频",
@@ -44,15 +37,10 @@ class ImportHandlers:
 
     def _import_media_path(self, file_path: Path) -> None:
         """导入单个本地音视频文件，供按钮和拖拽复用。"""
-        if self.is_recording:
-            self.show_recording_dialog()
-            self._set_status("正在录音，完成后再导入")
-            return
-        if self.is_processing:
-            self._set_status("正在处理中，请稍后重试")
-            return
-
         path = file_path.expanduser()
+        if not self.has_processing_queue_capacity():
+            self._show_error("队列已满，请先移除任务或等待任务完成")
+            return
         if not path.exists() or not path.is_file():
             log_event(
                 "record.import.failed",
@@ -109,6 +97,10 @@ class ImportHandlers:
             "source_format": probe.source_format,
         }
 
+        if not self.has_processing_queue_capacity():
+            self._show_error("队列已满，请先移除任务或等待任务完成")
+            return
+
         try:
             record = self.history_service.import_audio_file(
                 path,
@@ -160,16 +152,24 @@ class ImportHandlers:
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        paths = self._supported_drop_paths(event.mimeData())
+        local_paths = self._local_drop_paths(event.mimeData())
+        paths = [path for path in local_paths if is_supported_media(path, self.config)]
         if not paths:
             event.ignore()
             return
         event.acceptProposedAction()
-        if len(paths) > 1:
-            self._set_status("已拖入多个文件，本次只导入第一个支持的音视频文件")
-        self._import_media_path(paths[0])
+        unsupported_count = max(0, len(local_paths) - len(paths))
+        for path in paths:
+            self._import_media_path(path)
+        if unsupported_count:
+            self._set_status(f"已导入 {len(paths)} 个文件，跳过 {unsupported_count} 个不支持的文件")
+        elif len(paths) > 1:
+            self._set_status(f"已导入 {len(paths)} 个文件")
 
     def _supported_drop_paths(self, mime_data) -> list[Path]:
+        return [path for path in self._local_drop_paths(mime_data) if is_supported_media(path, self.config)]
+
+    def _local_drop_paths(self, mime_data) -> list[Path]:
         if not mime_data or not mime_data.hasUrls():
             return []
         paths: list[Path] = []
@@ -177,8 +177,7 @@ class ImportHandlers:
             if not url.isLocalFile():
                 continue
             path = Path(url.toLocalFile())
-            if is_supported_media(path, self.config):
-                paths.append(path)
+            paths.append(path)
         return paths
 
     def _needs_audio_preprocess(self, record: HistoryRecord | None) -> bool:
@@ -226,6 +225,10 @@ class ImportHandlers:
         self.is_processing = True
         task_id = self._new_task_id("preprocess")
         self.active_task_ids["preprocess"] = task_id
+        queue_task = self._queue_task_for_record(record)
+        queue_task_id = queue_task.task_id if queue_task else ""
+        if queue_task is not None:
+            self.task_manager.mark_running(queue_task.task_id, TaskStage.PREPROCESSING, "正在处理音频")
         self.recording_hint_label.setText("处理音频")
         self._set_processing_ui(True)
         self.load_recordings()
@@ -255,19 +258,22 @@ class ImportHandlers:
             },
         )
         worker = AudioPreprocessWorker(request, self, config=self.config)
+        self.preprocess_worker = worker
         worker.progress.connect(self._on_audio_preprocess_progress)
         worker.completed.connect(
-            lambda result, r=record, s=source, label=status_after_success: self._on_audio_preprocess_completed(
-                r, result, s, label
+            lambda result, r=record, s=source, label=status_after_success, qid=queue_task_id: self._on_audio_preprocess_completed(
+                r, result, s, label, qid
             )
         )
-        worker.failed.connect(lambda error, r=record: self._on_audio_preprocess_failed(r, error))
-        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        worker.failed.connect(lambda error, r=record, qid=queue_task_id: self._on_audio_preprocess_failed(r, error, qid))
+        worker.finished.connect(lambda qid=queue_task_id: self._cleanup_cancellable_worker(worker, qid))
         self.active_workers.append(worker)
         worker.start()
 
     def _on_audio_preprocess_progress(self, text: str, percent: int | None = None) -> None:
         message = (text or "处理音频").strip()
+        if hasattr(self, "_sync_running_task_stage"):
+            self._sync_running_task_stage(TaskStage.PREPROCESSING, message, percent)
         self._set_status(message)
         self._refresh_history_status_indicators()
         self._sync_detail_processing_view()
@@ -278,7 +284,10 @@ class ImportHandlers:
         result: AudioPreprocessResult,
         source: str,
         status_after_success: str,
+        queue_task_id: str = "",
     ) -> None:
+        if self._finish_cancelled_queue_task_if_needed(queue_task_id):
+            return
         record = self.history_service.save_preprocess_result(record, result)
         task_id = self.active_task_ids.pop("preprocess", "")
         log_event(
@@ -301,12 +310,19 @@ class ImportHandlers:
         self.processing_record = None
         self._set_processing_ui(False)
         self.current_record = record
-        if source == "manual":
+        if source == "manual" or self._queue_task_for_record(record):
             self.start_transcription(record.audio_path, record, source=source)
             return
         self._handle_audio_record_ready(record, status_after_success, source=source)
 
-    def _on_audio_preprocess_failed(self, record: HistoryRecord, error: AudioInputError) -> None:
+    def _on_audio_preprocess_failed(
+        self,
+        record: HistoryRecord,
+        error: AudioInputError,
+        queue_task_id: str = "",
+    ) -> None:
+        if self._finish_cancelled_queue_task_if_needed(queue_task_id):
+            return
         was_selected = bool(self.current_record and self.current_record.record_key == record.record_key)
         record = self.history_service.mark_input_error(record, error)
         task_id = self.active_task_ids.pop("preprocess", "")
@@ -340,6 +356,8 @@ class ImportHandlers:
             self._show_error(self._audio_preprocess_failure_message(record, error))
         else:
             self._set_status(error.message)
+        if self._queue_task_for_record(record):
+            self._finish_queue_task_failed(error.message)
 
     def _audio_preprocess_failure_message(self, record: HistoryRecord, error: AudioInputError) -> str:
         """把音视频预处理错误转为用户当下可操作的提示。"""
@@ -359,7 +377,20 @@ class ImportHandlers:
         self._select_record_by_key(record.record_key)
 
         if self.config["audio"].get("auto_transcribe", True):
-            self.start_transcription(record.audio_path, record, source=source)
+            if source == "recording" and not self.has_processing_queue_capacity():
+                self.add_queue_full_recording_task(record)
+                self.record_button.setText("开始录音")
+                self.record_button.setObjectName("RecordButton")
+                self.record_button.style().unpolish(self.record_button)
+                self.record_button.style().polish(self.record_button)
+                self.recording_hint_label.setText("音频已保存，可手动转录")
+                self._set_processing_ui(False)
+                self._update_recording_entry()
+                self._set_status(f"{status}，队列已满，可稍后手动转录")
+                return
+            task = self.enqueue_record_processing(record, source=source)
+            if task is not None:
+                self._set_status(f"{status}，已加入处理队列")
             return
 
         self.record_button.setText("开始录音")

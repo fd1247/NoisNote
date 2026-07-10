@@ -1,7 +1,6 @@
 """主窗口共享处理状态辅助逻辑。"""
 from __future__ import annotations
 
-from html import escape
 import time
 from typing import Any
 
@@ -20,29 +19,12 @@ class ProcessingHandlers:
         )
 
     def _sync_detail_processing_view(self) -> None:
-        """让详情区顶部任务状态只跟随当前选中的处理记录。"""
-        html = self._detail_processing_status_html()
-        self.detail_processing_status_label.setText(html)
-        self.detail_processing_status_label.setVisible(bool(html))
+        """详情区不再展示处理进度，统一由任务管理面板呈现。"""
+        self.detail_processing_status_label.setText("")
+        self.detail_processing_status_label.hide()
 
     def _detail_processing_status_html(self) -> str:
-        if not (self.is_processing and self._is_current_record_processing()):
-            return ""
-        if self.processing_started_at.get("summary") is not None:
-            return (
-                '<span style="color:#15803d;">转录完成</span>'
-                '<span style="color:#9ca3af;"> → </span>'
-                '<span style="color:#374151;">正在总结</span>'
-            )
-        percent = self.latest_transcription_percent if self.latest_transcription_percent is not None else 0
-        text = f"正在转录: {percent}%"
-        if self.config.get("audio", {}).get("auto_summarize", True):
-            return (
-                f'<span style="color:#374151;">{escape(text)}</span>'
-                '<span style="color:#9ca3af;"> → </span>'
-                '<span style="color:#6b7280;">等待总结</span>'
-            )
-        return f'<span style="color:#374151;">{escape(text)}</span>'
+        return ""
 
     def _history_subtitle_for_record(self, record: HistoryRecord) -> str:
         if self.is_processing and self.processing_record and record.record_key == self.processing_record.record_key:
@@ -155,7 +137,7 @@ class ProcessingHandlers:
         return time.perf_counter() - started_at
 
     def _set_processing_ui(self, processing: bool) -> None:
-        self.record_button.setEnabled(not processing and bool(self.recorder))
+        self.record_button.setEnabled(bool(self.recorder))
         self._sync_sidebar_actions()
 
     def _finish_processing(self, record: HistoryRecord | None, status: str) -> None:

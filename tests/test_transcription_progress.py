@@ -42,3 +42,15 @@ def test_progress_reporter_maps_model_loading_text() -> None:
 
     assert events[0].stage == "loading_asr_model"
     assert events[0].message == "正在加载ASR模型"
+
+
+def test_progress_reporter_keeps_transcription_progress_independent_from_loading() -> None:
+    events: list[TranscriptionProgress] = []
+    reporter = ProgressReporter(events.append, total_seconds=100)
+
+    reporter.emit_text("正在加载 Qwen3-ASR GGUF 模型")
+    reporter.emit("transcribing", 0, "正在转录", 0)
+    reporter.emit("transcribing", 1, "正在转录", 1)
+
+    transcription_events = [event for event in events if event.stage == "transcribing"]
+    assert [event.percent for event in transcription_events] == [0, 1]

@@ -18,12 +18,23 @@ class AudioPreprocessWorker(QThread):
         self.request = request
         self.normalizer = normalizer
         self.config = config
+        self._cancel_requested = False
+
+    def request_cancel(self) -> None:
+        self._cancel_requested = True
+        self.requestInterruption()
 
     def run(self) -> None:
         try:
             result = self.normalizer(self.request, progress_callback=self.progress.emit, config=self.config)
+            if self._cancel_requested or self.isInterruptionRequested():
+                return
             self.completed.emit(result)
         except AudioInputError as exc:
+            if self._cancel_requested or self.isInterruptionRequested():
+                return
             self.failed.emit(exc)
         except Exception as exc:
+            if self._cancel_requested or self.isInterruptionRequested():
+                return
             self.failed.emit(AudioInputError("transcode_failed", "转码失败。", str(exc)))

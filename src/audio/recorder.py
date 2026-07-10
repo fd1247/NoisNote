@@ -72,6 +72,8 @@ class AudioRecorder:
         self._is_running = False
         self._stop_requested = False
         self._is_paused = False
+        self._pause_started_at: float | None = None
+        self._paused_duration = 0.0
         self._start_time: float | None = None
         self._record_thread: threading.Thread | None = None
         self._recording_rate = _SYSTEM_SAMPLE_RATE
@@ -128,7 +130,11 @@ class AudioRecorder:
         """获取当前录音时长（秒）。"""
         if self._start_time is None:
             return 0.0
-        return time.time() - self._start_time
+        now = time.time()
+        paused_duration = self._paused_duration
+        if self._is_paused and self._pause_started_at is not None:
+            paused_duration += max(0.0, now - self._pause_started_at)
+        return max(0.0, now - self._start_time - paused_duration)
 
     @property
     def volume_callback(self) -> VolumeCallback | None:
@@ -192,6 +198,8 @@ class AudioRecorder:
         self._buffer = []
         self._stop_requested = False
         self._is_paused = False
+        self._pause_started_at = None
+        self._paused_duration = 0.0
         self._start_time = time.time()
 
         # 麦克风模式：直接查找设备
@@ -250,6 +258,10 @@ class AudioRecorder:
 
     def stop_recording(self) -> str | None:
         """停止录音，返回保存的 WAV 文件路径。"""
+        if self._is_paused and self._pause_started_at is not None:
+            self._paused_duration += max(0.0, time.time() - self._pause_started_at)
+        self._is_paused = False
+        self._pause_started_at = None
         self._stop_requested = True
         self._is_running = False
 
@@ -284,10 +296,20 @@ class AudioRecorder:
         return str(output_file)
 
     def pause_recording(self) -> None:
+        if self._is_paused:
+            return
         self._is_paused = True
+        self._pause_started_at = time.time()
+        with self._rms_lock:
+            self._rms_level = 0
 
     def resume_recording(self) -> None:
+        if not self._is_paused:
+            return
+        if self._pause_started_at is not None:
+            self._paused_duration += max(0.0, time.time() - self._pause_started_at)
         self._is_paused = False
+        self._pause_started_at = None
 
     def cleanup(self) -> None:
         """清理资源。"""

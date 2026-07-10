@@ -40,6 +40,13 @@ class HistoryService(HistoryStorageMixin):
         ]
         self.active_notebook_id = active_notebook_id
 
+    def get_record_by_key(self, record_key: str) -> HistoryRecord | None:
+        """按 notebook_id:record_id 查找历史记录。"""
+        for record in self.scan():
+            if record.record_key == record_key:
+                return record
+        return None
+
     @classmethod
     def from_notebooks(
         cls,
@@ -177,7 +184,8 @@ class HistoryService(HistoryStorageMixin):
         """把录音文件纳入独立记录文件夹。"""
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         source = Path(audio_path)
-        record_id = self._unique_record_id(source.stem or datetime.now().strftime("%Y%m%d_%H%M%S"))
+        base_record_id = source.stem or datetime.now().strftime("%Y%m%d_%H%M%S")
+        record_id = self._unique_record_id(f"录音_{base_record_id}")
         record_dir = self.recordings_dir / record_id
         target = record_dir / self.FOLDER_AUDIO
 
@@ -187,7 +195,7 @@ class HistoryService(HistoryStorageMixin):
         record_dir.mkdir(parents=True, exist_ok=False)
         shutil.move(str(source), str(target))
 
-        created_at = self._parse_timestamp(record_id) or datetime.fromtimestamp(target.stat().st_mtime)
+        created_at = datetime.now()
         metadata = {
             "version": self.METADATA_VERSION,
             "record_id": record_id,
@@ -233,7 +241,7 @@ class HistoryService(HistoryStorageMixin):
 
         record_dir.mkdir(parents=True, exist_ok=False)
 
-        created_at = datetime.fromtimestamp(source.stat().st_mtime)
+        created_at = datetime.now()
         metadata = {
             "version": self.METADATA_VERSION,
             "record_id": record_id,
@@ -288,7 +296,7 @@ class HistoryService(HistoryStorageMixin):
         metadata = {
             "version": self.METADATA_VERSION,
             "record_id": record_id,
-            "created_at": datetime.fromtimestamp(source.stat().st_mtime).isoformat(timespec="seconds"),
+            "created_at": datetime.now().isoformat(timespec="seconds"),
             "duration_seconds": duration_seconds,
             "audio_file": target.name,
             "transcript_file": self.FOLDER_TRANSCRIPT,

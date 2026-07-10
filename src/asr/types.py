@@ -161,6 +161,7 @@ class ProgressReporter:
         self.callback = callback
         self.total_seconds = total_seconds
         self._last_percent = 0
+        self._last_transcribing_percent = 0
 
     def emit(
         self,
@@ -169,7 +170,12 @@ class ProgressReporter:
         message: str,
         processed_seconds: float | None = None,
     ) -> None:
-        value = max(self._last_percent, min(100, int(percent)))
+        raw_value = min(100, int(percent))
+        if stage == "transcribing":
+            value = max(self._last_transcribing_percent, max(0, raw_value))
+            self._last_transcribing_percent = value
+        else:
+            value = max(0, raw_value)
         self._last_percent = value
         if self.callback:
             self.callback(
@@ -184,16 +190,21 @@ class ProgressReporter:
 
     def emit_vendor_progress(self, progress) -> None:
         total_seconds = progress.total_seconds or self.total_seconds
-        if progress.total_chunks <= 0 or not total_seconds:
+        if total_seconds:
+            ratio = progress.processed_seconds / total_seconds
+        elif progress.total_chunks > 0:
+            ratio = progress.current_chunk / progress.total_chunks
+        else:
+            ratio = 0.0
+        percent = int(max(0.0, min(1.0, ratio)) * 100)
+        if progress.total_chunks <= 0 and not total_seconds:
             self.emit(
                 progress.stage or "transcribing",
-                max(self._last_percent, 15),
+                percent,
                 progress.message or "正在转录音频",
                 progress.processed_seconds,
             )
             return
-        ratio = max(0.0, min(1.0, progress.processed_seconds / total_seconds))
-        percent = 15 + int(ratio * 80)
         self.emit(
             progress.stage or "transcribing",
             percent,
@@ -209,10 +220,10 @@ class ProgressReporter:
         if not value:
             return
         if "加载" in value and "模型" in value:
-            self.emit("loading_asr_model", max(self._last_percent, 5), "正在加载ASR模型")
+            self.emit("loading_asr_model", 5, "正在加载ASR模型")
         elif "完成" in value:
             self.emit("completed", 100, value)
         elif "转录" in value:
-            self.emit("transcribing", max(self._last_percent, 15), value)
+            self.emit("transcribing", self._last_transcribing_percent, value)
         elif self.callback:
             self.callback(value)

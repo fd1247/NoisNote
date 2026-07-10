@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QElapsedTimer, QItemSelectionModel, QPoint, Qt
-from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton
+from PySide6.QtCore import QElapsedTimer, QItemSelectionModel, QMimeData, QPoint, QPointF, Qt
+from PySide6.QtGui import QDropEvent, QKeyEvent
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QFileDialog, QFrame, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton, QProgressBar
 from PySide6.QtWidgets import QDialog
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
@@ -22,7 +22,11 @@ from src.history.service import HistoryService
 from src.history.types import format_size
 from src.app.main_window import MainWindow
 from src.remote_import import RemoteMediaInfo
+from src.tasks import AppTask, TaskKind, TaskOptions, TaskSnapshot, TaskStage, TaskStatus
+from src.ui.core.styles import APP_STYLESHEET
 from src.ui.pages.content import PlaybackRateCombo, SeekSlider
+from src.ui.pages.workbench import TaskItemWidget
+from src.ui.widgets.history_item import ElidedLabel
 
 
 def write_wav(path: Path, frames: int = 16000, rate: int = 16000) -> None:
@@ -70,6 +74,7 @@ def make_window_with_config(monkeypatch, config: dict) -> MainWindow:
     monkeypatch.setattr("src.app.main_window.save_config", lambda _config: None)
     monkeypatch.setattr("src.handlers.history_view.save_config", lambda _config: None)
     monkeypatch.setattr("src.handlers.settings.save_config", lambda _config: None)
+    monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
     monkeypatch.setattr("src.app.main_window.ensure_dirs", lambda _config=None: None)
     monkeypatch.setattr("src.app.main_window.AudioRecorder", lambda output_dir: None)
     app = QApplication.instance() or QApplication([])
@@ -215,6 +220,189 @@ def test_recording_task_button_opens_dialog_without_switching_main_page(monkeypa
         app.processEvents()
 
 
+def test_close_cancel_keeps_active_recording_running(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    class FakeRecorder:
+        stopped = False
+
+        def stop_recording(self):
+            self.stopped = True
+            return str(tmp_path / "close.wav")
+
+        def cleanup(self):
+            return None
+
+    try:
+        recorder = FakeRecorder()
+        window.recorder = recorder
+        window.is_recording = True
+        window.active_task_ids["recording"] = "record-test"
+        prompts: list[str] = []
+        monkeypatch.setattr(
+            "src.app.main_window.confirm_without_icon",
+            lambda _parent, title, *_args, **_kwargs: prompts.append(title) or False,
+        )
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.ignored is True
+        assert event.accepted is False
+        assert recorder.stopped is False
+        assert window.is_recording is True
+        assert prompts
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_confirm_saves_active_recording_and_persists_queue(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self) -> None:
+            self.accepted = True
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    class FakeRecorder:
+        def __init__(self, output_file: Path) -> None:
+            self.output_file = output_file
+            self.stopped = False
+            self.cleaned = False
+
+        def get_device_name(self):
+            return "test device"
+
+        def capture_source_label(self):
+            return "系统声音"
+
+        def stop_recording(self):
+            self.stopped = True
+            return str(self.output_file)
+
+        def cleanup(self):
+            self.cleaned = True
+
+    try:
+        output_file = tmp_path / "close.wav"
+        write_wav(output_file)
+        recorder = FakeRecorder(output_file)
+        window.recorder = recorder
+        window.is_recording = True
+        window.active_task_ids["recording"] = "record-test"
+        window.config["audio"]["auto_transcribe"] = True
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+        saved: list[list[str]] = []
+        monkeypatch.setattr(window.task_queue_store, "save", lambda tasks: saved.append([task.record_key for task in tasks]))
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.accepted is True
+        assert event.ignored is False
+        assert recorder.stopped is True
+        assert recorder.cleaned is True
+        assert window.is_recording is False
+        assert len(window.history_service.scan()) == 1
+        assert saved
+        assert saved[-1]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_import_entry_allowed_while_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.is_processing = True
+        selected = tmp_path / "clip.wav"
+        write_wav(selected)
+        imported: list[Path] = []
+        monkeypatch.setattr(
+            "src.handlers.media_import.QFileDialog.getOpenFileName",
+            lambda *args, **kwargs: (str(selected), ""),
+        )
+        monkeypatch.setattr(window, "_import_media_path", lambda path: imported.append(path))
+
+        window.import_audio_recording()
+
+        assert imported == [selected]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_remote_entry_allowed_while_recording(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.is_recording = True
+        started: list[str] = []
+        monkeypatch.setattr(
+            "src.handlers.remote_import.prompt_text_without_icon",
+            lambda *args, **kwargs: ("https://example.com/video", True),
+        )
+        monkeypatch.setattr(window, "_start_remote_import", lambda url: started.append(url))
+
+        window.import_remote_url()
+
+        assert started == ["https://example.com/video"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_new_recording_entry_allowed_while_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.is_processing = True
+        shown: list[bool] = []
+        monkeypatch.setattr(window, "show_recording_dialog", lambda: shown.append(True))
+
+        window.new_recording()
+
+        assert shown == [True]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_processing_ui_keeps_record_button_enabled_when_recorder_exists(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.recorder is not None
+        window.record_button.setEnabled(False)
+
+        window._set_processing_ui(True)
+
+        assert window.record_button.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_main_workbench_starts_on_history_detail(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -316,16 +504,24 @@ def test_detail_action_menu_transcribe_missing_audio_shows_reason(monkeypatch, t
         app.processEvents()
 
 
-def test_detail_action_menu_transcribe_while_processing_shows_reason(monkeypatch, tmp_path: Path) -> None:
+def test_detail_action_menu_transcribe_while_processing_queues_task(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     messages: list[str] = []
+    enqueued: list[tuple[str, str, bool, bool]] = []
     try:
         service = HistoryService(tmp_path / "records")
         write_wav(tmp_path / "records" / "meeting" / "audio.wav")
         record = service.scan()[0]
         window.history_service = service
         monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(
+                (record.record_key, source, overwrite_existing, manual)
+            ),
+        )
 
         window._load_history_record(record)
         window.is_processing = True
@@ -333,12 +529,45 @@ def test_detail_action_menu_transcribe_while_processing_shows_reason(monkeypatch
         window.detail_transcribe_action.trigger()
 
         assert window.detail_transcribe_action.isEnabled()
-        assert messages == ["正在处理中，请稍后重试"]
+        assert messages == []
+        assert enqueued == [(record.record_key, "manual", True, True)]
 
         window.is_processing = False
         window._sync_detail_action_menu()
 
         assert window.detail_transcribe_action.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_detail_action_menu_transcribe_when_idle_queues_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    enqueued: list[tuple[str, str, bool, bool]] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        window.history_service = service
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(
+                (record.record_key, source, overwrite_existing, manual)
+            ),
+        )
+
+        window._load_history_record(record)
+        window.is_processing = False
+        window._sync_detail_action_menu()
+        window.detail_transcribe_action.trigger()
+
+        assert window.detail_transcribe_action.isEnabled()
+        assert messages == []
+        assert enqueued == [(record.record_key, "manual", True, True)]
     finally:
         window.close()
         app.processEvents()
@@ -810,7 +1039,10 @@ def test_metadata_long_values_are_single_line_elided_with_tooltips(monkeypatch, 
         ]
         url_label = next(label for label in values if label.toolTip() == long_url)
 
-        assert "..." in url_label.text()
+        assert isinstance(url_label, ElidedLabel)
+        url_label.resize(120, url_label.height())
+        app.processEvents()
+        assert "…" in url_label.text()
         assert url_label.wordWrap() is False
         assert "<a " in url_label.text()
         assert "color:#2563eb" in url_label.text()
@@ -841,8 +1073,119 @@ def test_metadata_long_values_are_single_line_elided_with_tooltips(monkeypatch, 
             if label.objectName() == "DetailMetadataValue"
         ]
         path_label = next(label for label in values if label.toolTip() == str(long_path))
-        assert path_label.text().endswith("...")
+        assert isinstance(path_label, ElidedLabel)
+        path_label.resize(120, path_label.height())
+        app.processEvents()
+        assert path_label.text().endswith("…")
+        assert str(long_path) not in path_label.text()
         assert path_label.wordWrap() is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_elided_values_expand_when_task_panel_shrinks(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "remote" / "audio.wav")
+        long_url = "https://example.com/watch?v=demo&list=" + "a" * 80
+
+        remote_record = next(item for item in service.scan() if item.record_id == "remote")
+        remote_record.metadata_path.write_text(
+            json.dumps(
+                {
+                    "source_kind": "remote_url",
+                    "remote": {"webpage_url": long_url},
+                }
+            ),
+            encoding="utf-8",
+        )
+        remote_record = next(item for item in service.scan() if item.record_id == "remote")
+        window.history_service = service
+        window.resize(1200, 800)
+        window.show()
+        app.processEvents()
+
+        def metadata_value(full_text: str) -> ElidedLabel:
+            values = [
+                label
+                for label in window.detail_metadata_panel.findChildren(QLabel)
+                if label.objectName() == "DetailMetadataValue"
+            ]
+            return next(label for label in values if label.toolTip() == full_text)
+
+        def assert_expands_with_detail_area(record, full_text: str) -> None:
+            window.workbench_splitter.setSizes([240, 420, 540])
+            app.processEvents()
+            window._load_history_record(record)
+            window.detail_metadata_expanded = False
+            window.show_metadata_details()
+            app.processEvents()
+            label = metadata_value(full_text)
+
+            narrow_width = label.width()
+            narrow_text = label.text()
+
+            window.workbench_splitter.setSizes([240, 760, 240])
+            app.processEvents()
+
+            assert label.width() > narrow_width
+            assert len(label.text()) > len(narrow_text)
+
+        assert_expands_with_detail_area(remote_record, long_url)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_metadata_file_path_expands_when_task_panel_shrinks(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "local" / "audio.wav")
+        long_path = tmp_path / "media" / "projects" / "nested-folder" / "nested-folder"
+        long_path = long_path / "nested-folder" / "meeting-source-video-with-long-name.wav"
+        long_path.parent.mkdir(parents=True)
+        long_path.write_bytes(b"audio")
+
+        record = service.scan()[0]
+        record.metadata_path.write_text(
+            json.dumps(
+                {
+                    "source_kind": "local_video",
+                    "original_file_path": str(long_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        record = service.scan()[0]
+        window.history_service = service
+        window.resize(1200, 800)
+        window.show()
+        app.processEvents()
+        window.workbench_splitter.setSizes([240, 420, 540])
+        app.processEvents()
+        window._load_history_record(record)
+        window.show_metadata_details()
+        app.processEvents()
+
+        values = [
+            label
+            for label in window.detail_metadata_panel.findChildren(QLabel)
+            if label.objectName() == "DetailMetadataValue"
+        ]
+        path_label = next(label for label in values if label.toolTip() == str(long_path))
+        narrow_width = path_label.width()
+        narrow_text = path_label.text()
+
+        window.workbench_splitter.setSizes([240, 760, 240])
+        app.processEvents()
+
+        assert path_label.width() > narrow_width
+        assert len(path_label.text()) > len(narrow_text)
     finally:
         window.close()
         app.processEvents()
@@ -938,6 +1281,81 @@ def test_recording_dialog_reopens_with_recording_page_visible(monkeypatch, tmp_p
     finally:
         window.close()
         app.processEvents()
+
+
+def test_recording_dialog_is_modal(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        window.show_recording_dialog()
+        app.processEvents()
+
+        assert window.recording_dialog.isModal()
+        assert window.recording_dialog.windowModality() == Qt.WindowModality.ApplicationModal
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_stop_recording_closes_recording_dialog_and_ignores_reentry(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        output = tmp_path / "recording.wav"
+        write_wav(output)
+
+        class SlowRecorder:
+            def __init__(self):
+                self.stop_count = 0
+
+            def configure(self, *_args, **_kwargs):
+                return None
+
+            def start_recording(self):
+                return None
+
+            def stop_recording(self):
+                self.stop_count += 1
+                return str(output)
+
+            def get_device_name(self):
+                return "fake"
+
+            def capture_source_label(self):
+                return "系统声音"
+
+            def get_recording_error(self):
+                return None
+
+            def get_duration(self):
+                return 1.0
+
+            def get_rms_level(self):
+                return 0
+
+            def cleanup(self):
+                return None
+
+        recorder = SlowRecorder()
+        window.recorder = recorder
+        monkeypatch.setattr(window, "_handle_audio_record_ready", lambda *_args, **_kwargs: None)
+
+        window.show_recording_dialog()
+        window.start_recording()
+        app.processEvents()
+
+        assert window.recording_dialog.isVisible()
+
+        window.stop_recording()
+        window.stop_recording()
+        app.processEvents()
+
+        assert recorder.stop_count == 1
+        assert not window.recording_dialog.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
 
 def test_view_menu_toggles_workbench_regions(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
@@ -1670,7 +2088,7 @@ def test_processing_notice_clicks_to_record_and_then_hides(monkeypatch, tmp_path
         app.processEvents()
 
 
-def test_detail_progress_follows_selected_processing_record(monkeypatch, tmp_path: Path) -> None:
+def test_detail_progress_stays_hidden_for_processing_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -1686,19 +2104,21 @@ def test_detail_progress_follows_selected_processing_record(monkeypatch, tmp_pat
         window.processing_started_at["transcription"] = 1.0
 
         window._sync_detail_processing_view()
-        assert not window.detail_processing_status_label.isHidden()
+        assert window.detail_processing_status_label.isHidden()
+        assert window.detail_processing_status_label.text() == ""
 
         window._load_history_record(records["b"])
         assert window.detail_processing_status_label.isHidden()
 
         window._load_history_record(records["a"])
-        assert not window.detail_processing_status_label.isHidden()
+        assert window.detail_processing_status_label.isHidden()
+        assert window.detail_processing_status_label.text() == ""
     finally:
         window.close()
         app.processEvents()
 
 
-def test_summary_processing_status_restores_after_switching_records(monkeypatch, tmp_path: Path) -> None:
+def test_summary_processing_status_stays_hidden_after_switching_records(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -1719,15 +2139,15 @@ def test_summary_processing_status_restores_after_switching_records(monkeypatch,
         assert window.detail_processing_status_label.isHidden()
 
         window._load_history_record(records["a"])
-        assert not window.detail_processing_status_label.isHidden()
-        assert "正在总结" in window.detail_processing_status_label.text()
+        assert window.detail_processing_status_label.isHidden()
+        assert window.detail_processing_status_label.text() == ""
         assert not hasattr(window, "manual_summary_button")
     finally:
         window.close()
         app.processEvents()
 
 
-def test_transcription_text_progress_keeps_generic_processing_status(monkeypatch, tmp_path: Path) -> None:
+def test_transcription_text_progress_keeps_detail_status_hidden(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -1742,13 +2162,14 @@ def test_transcription_text_progress_keeps_generic_processing_status(monkeypatch
 
         window._on_transcription_progress("正在加载 Qwen3-ASR GGUF 模型")
 
-        assert "正在转录: 0%" in window.detail_processing_status_label.text()
+        assert window.detail_processing_status_label.text() == ""
+        assert window.detail_processing_status_label.isHidden()
     finally:
         window.close()
         app.processEvents()
 
 
-def test_summary_processing_status_uses_static_detail_text(monkeypatch, tmp_path: Path) -> None:
+def test_summary_processing_status_keeps_detail_text_empty(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -1765,7 +2186,8 @@ def test_summary_processing_status_uses_static_detail_text(monkeypatch, tmp_path
 
         window._sync_detail_processing_view()
 
-        assert "正在总结" in window.detail_processing_status_label.text()
+        assert window.detail_processing_status_label.text() == ""
+        assert window.detail_processing_status_label.isHidden()
     finally:
         window.close()
         app.processEvents()
@@ -1860,6 +2282,106 @@ def test_unselected_summary_failure_does_not_update_current_detail(monkeypatch, 
         assert window.current_record.record_id == "b"
         assert window.summary_status.text() == "B 详情状态"
         assert not hasattr(window, "manual_summary_button")
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_summary_failure_does_not_show_modal(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "转录内容")
+        record = service.scan()[0]
+        window.history_service = service
+        window.current_record = record
+        window.processing_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window.enqueue_record_processing(record, source="import")
+        window._on_summary_failed("API timeout")
+
+        assert messages == []
+        assert window.task_manager.snapshot().completed[0].status is TaskStatus.FAILED
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_cancelled_running_summary_late_completion_does_not_update_next_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def emit(self, *args) -> None:
+            for callback in list(self.callbacks):
+                callback(*args)
+
+    class FakeSummaryWorker:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.completed = FakeSignal()
+            self.failed = FakeSignal()
+            self.finished = FakeSignal()
+            self.cancelled = False
+            FakeSummaryWorker.instances.append(self)
+
+        def request_cancel(self) -> None:
+            self.cancelled = True
+
+        def start(self) -> None:
+            return None
+
+        def deleteLater(self) -> None:
+            return None
+
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "first" / "audio.wav")
+        write_wav(tmp_path / "records" / "second" / "audio.wav")
+        records = {record.record_id: record for record in service.scan()}
+        service.save_transcript(records["first"], "first transcript")
+        service.save_transcript(records["second"], "second transcript")
+        records = {record.record_id: record for record in service.scan()}
+        window.history_service = service
+        window.config["audio"]["auto_summarize"] = False
+        monkeypatch.setattr("src.handlers.summary.SummaryWorker", FakeSummaryWorker)
+
+        first_task = window.enqueue_record_processing(records["first"], source="manual", summary_only=True)
+        second_task = window.enqueue_record_processing(records["second"], source="manual", summary_only=True)
+
+        assert first_task is not None
+        assert second_task is not None
+        assert len(FakeSummaryWorker.instances) == 1
+        window.cancel_processing_task(first_task.task_id)
+        assert FakeSummaryWorker.instances[0].cancelled is True
+        assert window.task_manager.snapshot().running[0].message == "正在取消"
+        assert len(FakeSummaryWorker.instances) == 1
+
+        FakeSummaryWorker.instances[0].finished.emit()
+        assert len(FakeSummaryWorker.instances) == 2
+
+        FakeSummaryWorker.instances[0].completed.emit("late first summary")
+
+        refreshed = {record.record_id: record for record in service.scan()}
+        assert not refreshed["first"].summary_path.exists()
+        assert not refreshed["second"].summary_path.exists()
+        running = window.task_manager.running_process_task()
+        assert running is not None
+        assert running.task_id == second_task.task_id
     finally:
         window.close()
         app.processEvents()
@@ -2084,6 +2606,82 @@ def test_empty_speech_transcription_failure_shows_lightweight_reason(monkeypatch
         app.processEvents()
 
 
+def test_queued_transcription_failure_does_not_show_modal(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+
+        window.enqueue_record_processing(record, source="import")
+        window.processing_record = record
+        window.is_processing = True
+        window._on_transcription_failed("模型未下载", {"error": {"error_type": "MissingModelDirectory"}})
+
+        assert messages == ["转录失败：模型未下载，请先在设置 > 模型中下载 ASR 模型。"]
+        assert window.task_manager.snapshot().paused_reason == ""
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_retry_transcription_queues_when_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: None)
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(record.record_key),
+        )
+
+        window.retry_transcription()
+
+        assert enqueued == [record.record_key]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_retry_transcription_busy_missing_audio_shows_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        record.audio_path.unlink()
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(record.record_key),
+        )
+
+        window.retry_transcription()
+
+        assert messages == ["当前记录没有可转录的音频文件"]
+        assert enqueued == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -2115,6 +2713,50 @@ def test_retry_transcription_confirmation_clears_generated_files(monkeypatch, tm
         assert not record.transcript_path.exists()
         assert not record.summary_path.exists()
         assert not record.markdown_path.exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_retry_transcription_clears_generated_files_before_start(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "meeting" / "audio.wav")
+        record = service.scan()[0]
+        service.save_transcript(record, "old transcript")
+        service.save_summary(record, "old summary")
+        record.markdown_path.write_text("old markdown", encoding="utf-8")
+        record.record_dir.joinpath("timeline.json").write_text("[]", encoding="utf-8")
+        record.record_dir.joinpath("transcript.srt").write_text("1", encoding="utf-8")
+        record = service.scan()[0]
+        window.history_service = service
+
+        started: list[tuple[Path, str]] = []
+
+        def fake_start(audio_file, record=None, source="manual") -> None:
+            assert record is not None
+            assert not record.transcript_path.exists()
+            assert not record.summary_path.exists()
+            assert not record.markdown_path.exists()
+            assert not record.record_dir.joinpath("timeline.json").exists()
+            assert not record.record_dir.joinpath("transcript.srt").exists()
+            started.append((audio_file, source))
+
+        monkeypatch.setattr(window, "start_transcription", fake_start)
+
+        task = window.task_manager.enqueue_process_record(
+            record,
+            source="manual",
+            auto_summarize=False,
+            overwrite_existing=True,
+            manual=True,
+        )
+
+        window._execute_processing_task(task)
+
+        assert started == [(record.audio_path, "manual")]
     finally:
         window.close()
         app.processEvents()
@@ -2293,6 +2935,136 @@ def test_menu_delete_non_current_record_keeps_current_selection(monkeypatch, tmp
         assert [record.record_id for record in window.current_items] == ["selected"]
         assert window.history_tree.currentItem().data(0, Qt.ItemDataRole.UserRole + 1) == window.current_record.record_key
         assert window.content_stack.currentWidget() == window.history_page
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_delete_history_record_removes_matching_queued_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "selected" / "audio.wav")
+        write_wav(tmp_path / "records" / "target" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        assert window._select_record_by_id("selected")
+        target = next(record for record in window.current_items if record.record_id == "target")
+        task = AppTask(
+            task_id="queued-target",
+            kind=TaskKind.PROCESS_RECORD,
+            status=TaskStatus.QUEUED,
+            stage=TaskStage.WAITING,
+            record_key=target.record_key,
+            notebook_id=target.notebook_id,
+            record_id=target.record_id,
+            title=target.display_name,
+        )
+        window.task_manager.load_tasks([task])
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *_args, **_kwargs: True)
+
+        window.delete_history_record(next(index for index, record in enumerate(window.current_items) if record.record_id == "target"))
+
+        assert window.task_manager.snapshot().queued == ()
+        assert not target.record_dir.exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_delete_history_record_removes_matching_completed_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "selected" / "audio.wav")
+        write_wav(tmp_path / "records" / "target" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        assert window._select_record_by_id("selected")
+        target = next(record for record in window.current_items if record.record_id == "target")
+        task = AppTask(
+            task_id="completed-target",
+            kind=TaskKind.PROCESS_RECORD,
+            status=TaskStatus.FAILED,
+            stage=TaskStage.FAILED,
+            record_key=target.record_key,
+            notebook_id=target.notebook_id,
+            record_id=target.record_id,
+            title=target.display_name,
+            message="转录失败",
+            error_message="转录失败",
+        )
+        window.task_manager.load_tasks([task])
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *_args, **_kwargs: True)
+
+        window.delete_history_record(next(index for index, record in enumerate(window.current_items) if record.record_id == "target"))
+
+        assert window.task_manager.snapshot().completed == ()
+        assert not target.record_dir.exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_delete_history_record_blocks_running_matching_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "target" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        target = window.current_items[0]
+        running = AppTask(
+            task_id="running-target",
+            kind=TaskKind.PROCESS_RECORD,
+            status=TaskStatus.RUNNING,
+            stage=TaskStage.TRANSCRIBING,
+            record_key=target.record_key,
+            notebook_id=target.notebook_id,
+            record_id=target.record_id,
+            title=target.display_name,
+        )
+        window.task_manager._running.append(running)
+        window.task_manager._emit_changed()
+        confirmations: list[str] = []
+        errors: list[str] = []
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *_args, **_kwargs: confirmations.append("confirm") or True)
+        monkeypatch.setattr(window, "_show_error", lambda message: errors.append(message))
+
+        window.delete_history_record(0)
+
+        assert confirmations == []
+        assert errors == ["正在处理，删除前先取消任务"]
+        assert target.record_dir.exists()
+        assert window.task_manager.snapshot().running == (running,)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_delete_current_record_while_processing_clears_detail_without_opening_recording_dialog(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        service = HistoryService(tmp_path / "records")
+        write_wav(tmp_path / "records" / "target" / "audio.wav")
+        window.history_service = service
+        window.load_recordings()
+        assert window._select_record_by_id("target")
+        target_dir = window.current_record.record_dir
+        shown: list[bool] = []
+        monkeypatch.setattr(window, "show_recording_dialog", lambda: shown.append(True))
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *_args, **_kwargs: True)
+        window.is_processing = True
+
+        window.delete_current_record()
+
+        assert shown == []
+        assert window.current_record is None
+        assert not target_dir.exists()
     finally:
         window.close()
         app.processEvents()
@@ -2893,6 +3665,59 @@ def test_manual_summary_uses_cached_or_record_transcript(monkeypatch, tmp_path: 
         app.processEvents()
 
 
+def test_manual_summarize_queues_when_processing(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        record.transcript_path.write_text("hello", encoding="utf-8")
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: None)
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(f"{record.record_key}:{summary_only}"),
+        )
+
+        window.manual_summarize()
+
+        assert enqueued == [f"{record.record_key}:True"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_manual_summarize_busy_missing_transcript_shows_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    messages: list[str] = []
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        window.current_record = record
+        window.is_processing = True
+        monkeypatch.setattr(window, "_show_error", lambda message: messages.append(message))
+        enqueued: list[str] = []
+        monkeypatch.setattr(
+            window,
+            "enqueue_record_processing",
+            lambda record, source, overwrite_existing=False, manual=False, summary_only=False: enqueued.append(record.record_key),
+        )
+
+        window.manual_summarize()
+
+        assert messages == ["当前记录没有可总结的转录文本"]
+        assert enqueued == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_manual_summary_existing_summary_requires_overwrite_confirmation(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
@@ -2929,7 +3754,7 @@ def test_manual_summary_existing_summary_requires_overwrite_confirmation(monkeyp
         app.processEvents()
 
 
-def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_path: Path) -> None:
+def test_detail_tabs_keep_available_empty_results_blank(monkeypatch, tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     window = make_window(monkeypatch, tmp_path)
     try:
@@ -2941,7 +3766,7 @@ def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_p
         window._load_history_record(record)
 
         assert not window.transcript_tab_button.isHidden()
-        assert not window.timeline_tab_button.isHidden()
+        assert window.timeline_tab_button.isHidden()
         assert not window.summary_tab_button.isHidden()
         assert window.transcript_status.text() == ""
         assert window.timeline_status.text() == ""
@@ -2952,12 +3777,6 @@ def test_detail_tabs_stay_visible_and_empty_results_are_blank(monkeypatch, tmp_p
         app.processEvents()
         assert window.detail_webview.current_payload["mode"] == "summary"
         assert window.detail_webview.current_payload["content"] == ""
-
-        window.timeline_tab_button.click()
-        app.processEvents()
-        assert window.detail_webview.current_payload["mode"] == "timeline"
-        assert window.detail_webview.current_payload["content"] == ""
-        assert window.detail_webview.current_payload["timeline"] == []
     finally:
         window.close()
         app.processEvents()
@@ -3676,3 +4495,1282 @@ def test_seek_slider_click_jumps_to_clicked_position() -> None:
 
     assert moved
     assert 450 <= moved[-1] <= 550
+
+
+def test_cancel_running_processing_task_requests_worker_cancel(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "start_transcription", lambda audio_file, record=None, source="manual": None)
+
+        task = window.enqueue_record_processing(record, source="manual")
+        assert task is not None
+
+        class FakeWorker:
+            def __init__(self) -> None:
+                self.cancelled = False
+
+            def request_cancel(self) -> None:
+                self.cancelled = True
+
+        worker = FakeWorker()
+        window.transcription_worker = worker
+
+        window.cancel_processing_task(task.task_id)
+
+        assert worker.cancelled is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_queued_tasks_prompts_and_persists(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        saved: list[list[str]] = []
+        confirm_calls: list[bool] = []
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+        monkeypatch.setattr(window.task_queue_store, "save", lambda tasks: saved.append([item.task_id for item in tasks]))
+        monkeypatch.setattr(
+            "src.app.main_window.confirm_without_icon",
+            lambda *args, **kwargs: (confirm_calls.append(True), True)[1],
+        )
+
+        window.enqueue_record_processing(record, source="import")
+        saved.clear()
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.accepted is True
+        assert confirm_calls == [True]
+        assert saved
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_running_summary_task_marks_summary_failed(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+
+        def fake_execute(task) -> None:
+            window.current_processing_task = task
+            window.processing_record = window.history_service.mark_processing_started(record, "summary")
+            window.processing_source = "import"
+            window.task_manager.mark_running(task.task_id, TaskStage.SUMMARIZING, "正在总结")
+
+        monkeypatch.setattr(window, "_execute_processing_task", fake_execute)
+        window.enqueue_record_processing(record, source="import", summary_only=True)
+        assert window.current_processing_task is not None
+        assert window.current_processing_task.stage == TaskStage.SUMMARIZING
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        event = Event()
+        window.closeEvent(event)
+
+        metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+        assert event.accepted is True
+        assert metadata["processing"]["summary"]["status"] == "failed"
+        assert metadata["processing"]["transcription"]["status"] != "failed"
+        assert metadata["last_error"]["stage"] == "summary"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_running_preprocess_task_uses_input_error(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+
+        def fake_execute(task) -> None:
+            window.current_processing_task = task
+            window.processing_record = record
+            window.processing_source = "preprocess"
+            window.task_manager.mark_running(task.task_id, TaskStage.PREPROCESSING, "正在处理音频")
+
+        monkeypatch.setattr(window, "_execute_processing_task", fake_execute)
+        window.enqueue_record_processing(record, source="import")
+        assert window.current_processing_task is not None
+        assert window.current_processing_task.stage == TaskStage.PREPROCESSING
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        event = Event()
+        window.closeEvent(event)
+
+        metadata = json.loads(record.metadata_path.read_text(encoding="utf-8"))
+        assert event.accepted is True
+        assert metadata["input_error"]["message"] == "应用退出，任务已中断"
+        assert metadata["last_error"]["stage"] == "input"
+        assert metadata["processing"]["transcription"]["status"] == "pending"
+        assert metadata["processing"]["summary"]["status"] == "pending"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_active_remote_import_marks_record_interrupted(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.ignored = True
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self.interruption_requested = False
+            self.quit_called = False
+            self.wait_calls: list[int] = []
+            self.terminate_called = False
+
+        def requestInterruption(self) -> None:
+            self.interruption_requested = True
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+        def wait(self, timeout: int = 0) -> bool:
+            self.wait_calls.append(timeout)
+            return False
+
+        def terminate(self) -> None:
+            self.terminate_called = True
+
+    try:
+        info = RemoteMediaInfo(
+            url="https://example.com/video",
+            extractor="generic",
+            webpage_url="https://example.com/video",
+            title="Remote Import",
+            duration_seconds=60,
+        )
+        record = window.history_service.create_remote_record(info)
+        worker = FakeWorker()
+        window.active_remote_imports = {
+            "remote-import": {
+                "record": record,
+                "phase": "import",
+                "worker": worker,
+                "url": info.url,
+            }
+        }
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+
+        event = Event()
+        window.closeEvent(event)
+
+        refreshed = window.history_service.get_record_by_key(record.record_key)
+        assert event.accepted is True
+        assert refreshed is not None
+        assert refreshed.input_error is not None
+        assert refreshed.input_error["message"] == "应用退出，远程导入已中断"
+        assert window.active_remote_imports == {}
+        assert worker.interruption_requested is True
+        assert worker.quit_called is True
+        assert worker.wait_calls
+        assert worker.terminate_called is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_close_with_probe_only_remote_entry_clears_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+
+    class Event:
+        accepted = False
+        ignored = False
+
+        def accept(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.ignored = True
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self.interruption_requested = False
+            self.quit_called = False
+            self.wait_calls: list[int] = []
+            self.terminate_called = False
+
+        def requestInterruption(self) -> None:
+            self.interruption_requested = True
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+        def wait(self, timeout: int = 0) -> bool:
+            self.wait_calls.append(timeout)
+            return True
+
+        def terminate(self) -> None:
+            self.terminate_called = True
+
+    try:
+        worker = FakeWorker()
+        window.active_remote_imports = {
+            "remote-probe": {
+                "record": None,
+                "phase": "probe",
+                "worker": worker,
+                "url": "https://example.com/probe",
+            }
+        }
+        monkeypatch.setattr("src.app.main_window.confirm_without_icon", lambda *args, **kwargs: True)
+
+        event = Event()
+        window.closeEvent(event)
+
+        assert event.accepted is True
+        assert window.active_remote_imports == {}
+        assert window.history_service.scan() == []
+        assert worker.interruption_requested is True
+        assert worker.quit_called is True
+        assert worker.wait_calls
+        assert worker.terminate_called is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_has_three_sections(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert window.task_panel_title.text() == "任务管理"
+        assert window.task_panel_title.objectName() == "NotebookSectionTitle"
+        assert window.running_task_title.text().startswith("处理中")
+        assert window.queued_task_title.text().startswith("排队中")
+        assert window.completed_task_title.text().startswith("已处理")
+        assert window.running_task_list.count() >= 1
+        assert window.queued_task_list.count() >= 1
+        assert window.completed_task_list.count() >= 1
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_updates_counts(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        monkeypatch.setattr(window, "_execute_processing_task", lambda task: None)
+
+        window.enqueue_record_processing(record, source="import")
+
+        assert "1" in window.running_task_title.text()
+        assert "0" in window.queued_task_title.text()
+        assert "0" in window.completed_task_title.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_renders_snapshot_items_and_actions(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="运行中任务",
+                    message="正在转录",
+                    progress_percent=45,
+                ),
+            ),
+            queued=(
+                AppTask(
+                    task_id="queued-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.QUEUED,
+                    stage=TaskStage.WAITING,
+                    title="排队任务",
+                    message="等待处理",
+                ),
+            ),
+            completed=(
+                AppTask(
+                    task_id="done-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.FAILED,
+                    stage=TaskStage.FAILED,
+                    title="失败任务",
+                    record_key="record-1",
+                    message="处理失败",
+                    error_message="处理失败",
+                    options=TaskOptions(manual=True),
+                ),
+            ),
+        )
+
+        window._refresh_task_panel(snapshot)
+        window.show()
+        app.processEvents()
+
+        running_item = window.running_task_list.itemAt(0).widget()
+        queued_item = window.queued_task_list.itemAt(0).widget()
+        completed_item = window.completed_task_list.itemAt(0).widget()
+
+        assert isinstance(running_item, QFrame)
+        assert isinstance(queued_item, QFrame)
+        assert isinstance(completed_item, QFrame)
+        assert {button.text() for button in running_item.findChildren(QPushButton)} == set()
+        assert {button.toolTip() for button in running_item.findChildren(QToolButton)} == {"取消"}
+        assert {button.toolTip() for button in queued_item.findChildren(QToolButton)} == {
+            "拖动排序",
+            "移出队列但保留记录",
+            "移出队列并删除记录文件",
+        }
+        assert not any(button.toolTip() in {"上移", "下移"} for button in queued_item.findChildren(QToolButton))
+        assert {button.text() for button in completed_item.findChildren(QPushButton)} == set()
+        retry_buttons = [button for button in completed_item.findChildren(QToolButton) if button.toolTip() == "重试"]
+        assert len(retry_buttons) == 1
+        retry_button = retry_buttons[0]
+        assert retry_button.size().width() >= 30
+        assert retry_button.iconSize().width() >= 18
+        assert abs(retry_button.geometry().center().y() - completed_item.rect().center().y()) <= 3
+        labels = completed_item.findChildren(QLabel)
+        assert any(label.text() == "失败任务" for label in labels)
+        assert any(label.text() == "处理失败" for label in labels)
+        queued_labels = queued_item.findChildren(QLabel)
+        assert not any(label.text() == "等待处理" for label in queued_labels)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_waiting_task_does_not_render_waiting_message(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-waiting",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.WAITING,
+                    title="导入音频",
+                    message="等待处理",
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        running_item = window.running_task_list.itemAt(0).widget()
+        labels = running_item.findChildren(QLabel)
+        assert not any(label.text() in {"等待处理", "等待中", "准备处理"} for label in labels)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_task_item_width_does_not_grow_when_message_appears(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        waiting_snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-width",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.WAITING,
+                    title="imported-audio-with-long-name",
+                    message="",
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+        progressing_snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-width",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="imported-audio-with-long-name",
+                    message="Transcribing",
+                    progress_percent=23,
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+
+        window._refresh_task_panel(waiting_snapshot)
+        app.processEvents()
+        waiting_item = window.running_task_list.itemAt(0).widget()
+        assert isinstance(waiting_item, TaskItemWidget)
+        waiting_hint_width = waiting_item.sizeHint().width()
+
+        window._refresh_task_panel(progressing_snapshot)
+        app.processEvents()
+        progressing_item = window.running_task_list.itemAt(0).widget()
+        assert isinstance(progressing_item, TaskItemWidget)
+
+        assert progressing_item.sizeHint().width() <= waiting_hint_width
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_local_task_shows_overall_progress_bar(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-progress",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="导入音频",
+                    message="转录中",
+                    progress_percent=60,
+                    options=TaskOptions(auto_summarize=True),
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        running_item = window.running_task_list.itemAt(0).widget()
+        progress_bar = running_item.findChild(QProgressBar, "TaskProgressBar")
+        percent_label = next(label for label in running_item.findChildren(QLabel) if label.objectName() == "TaskProgressPercent")
+        labels = [label.text() for label in running_item.findChildren(QLabel)]
+
+        assert progress_bar is not None
+        assert progress_bar.value() == 60
+        assert percent_label.text() == "60%"
+        assert "转录中" in labels
+        assert "转录中 60%" not in labels
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_remote_download_maps_download_progress_to_overall_progress(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="remote-progress",
+                    kind=TaskKind.REMOTE_IMPORT,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.DOWNLOADING_AUDIO,
+                    title="https://example.com/video",
+                    message="下载音频中",
+                    progress_percent=50,
+                    options=TaskOptions(auto_summarize=True),
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        running_item = window.running_task_list.itemAt(0).widget()
+        progress_bar = running_item.findChild(QProgressBar, "TaskProgressBar")
+        percent_label = next(label for label in running_item.findChildren(QLabel) if label.objectName() == "TaskProgressPercent")
+
+        assert progress_bar is not None
+        assert progress_bar.value() == 32
+        assert percent_label.text() == "32%"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_running_preprocess_uses_action_message_not_low_level_status(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        for low_level_message in ("正在转换音频", "音频已标准化"):
+            snapshot = TaskSnapshot(
+                running=(
+                    AppTask(
+                        task_id=f"preprocess-{low_level_message}",
+                        kind=TaskKind.PROCESS_RECORD,
+                        status=TaskStatus.RUNNING,
+                        stage=TaskStage.PREPROCESSING,
+                        title="导入视频",
+                        message=low_level_message,
+                        progress_percent=50,
+                    ),
+                ),
+                queued=(),
+                completed=(),
+            )
+
+            window._refresh_task_panel(snapshot)
+            app.processEvents()
+
+            running_item = window.running_task_list.itemAt(0).widget()
+            labels = [label.text() for label in running_item.findChildren(QLabel)]
+
+            assert "音频预处理" in labels
+            assert low_level_message not in labels
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_preserves_completed_retry_button_when_running_progress_updates(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        first_snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="正在处理的任务",
+                    message="转录中",
+                    progress_percent=12,
+                ),
+            ),
+            queued=(),
+            completed=(
+                AppTask(
+                    task_id="done-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.FAILED,
+                    stage=TaskStage.FAILED,
+                    title="失败任务",
+                    record_key="record-1",
+                    message="转录失败",
+                    error_message="转录失败",
+                    options=TaskOptions(manual=True),
+                ),
+            ),
+        )
+        refreshed_snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="正在处理的任务",
+                    message="转录中",
+                    progress_percent=68,
+                ),
+            ),
+            queued=(),
+            completed=first_snapshot.completed,
+        )
+
+        window._refresh_task_panel(first_snapshot)
+        app.processEvents()
+        completed_item = window.completed_task_list.itemAt(0).widget()
+        retry_button = next(button for button in completed_item.findChildren(QToolButton) if button.toolTip() == "重试")
+
+        window._refresh_task_panel(refreshed_snapshot)
+        app.processEvents()
+
+        refreshed_completed_item = window.completed_task_list.itemAt(0).widget()
+        refreshed_retry_button = next(
+            button for button in refreshed_completed_item.findChildren(QToolButton) if button.toolTip() == "重试"
+        )
+        assert refreshed_completed_item is completed_item
+        assert refreshed_retry_button is retry_button
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_preserves_running_cancel_button_when_progress_updates(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        first_snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="正在处理的任务",
+                    message="转录中",
+                    progress_percent=12,
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+        refreshed_snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="正在处理的任务",
+                    message="转录中",
+                    progress_percent=68,
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+
+        window._refresh_task_panel(first_snapshot)
+        app.processEvents()
+        running_item = window.running_task_list.itemAt(0).widget()
+        cancel_button = next(button for button in running_item.findChildren(QToolButton) if button.toolTip() == "取消")
+
+        window._refresh_task_panel(refreshed_snapshot)
+        app.processEvents()
+
+        refreshed_running_item = window.running_task_list.itemAt(0).widget()
+        refreshed_cancel_button = next(
+            button for button in refreshed_running_item.findChildren(QToolButton) if button.toolTip() == "取消"
+        )
+        assert refreshed_running_item is running_item
+        assert refreshed_cancel_button is cancel_button
+        assert any(label.text() == "转录中" for label in refreshed_running_item.findChildren(QLabel))
+        assert refreshed_running_item.findChild(QProgressBar, "TaskProgressBar").value() == 71
+        assert any(label.text() == "71%" for label in refreshed_running_item.findChildren(QLabel))
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_completed_success_task_shows_title_and_done_icon_without_status_message(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(),
+            queued=(),
+            completed=(
+                AppTask(
+                    task_id="done-success",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.COMPLETED,
+                    stage=TaskStage.COMPLETED,
+                    title="很长很长的已完成任务名称用于验证省略号显示",
+                    record_key="record-1",
+                    message="总结完成",
+                    progress_percent=100,
+                ),
+            ),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        completed_item = window.completed_task_list.itemAt(0).widget()
+        assert isinstance(completed_item, TaskItemWidget)
+        assert completed_item.message_label is None
+        assert completed_item.title_label.toolTip() == "很长很长的已完成任务名称用于验证省略号显示"
+        assert [label.objectName() for label in completed_item.findChildren(QLabel)].count("TaskStatusIcon") == 1
+        assert not any(label.text() in {"总结完成", "总结完成 100%", "已完成 100%"} for label in completed_item.findChildren(QLabel))
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_removes_old_items_before_modal_event_loop(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.REMOTE_IMPORT,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.PARSING_LINK,
+                    title="https://example.com/missing",
+                    message="解析链接中",
+                ),
+            ),
+            queued=(),
+            completed=(),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+        stale_item = window.running_task_list.itemAt(0).widget()
+        assert isinstance(stale_item, TaskItemWidget)
+
+        window._refresh_task_panel(TaskSnapshot(running=(), queued=(), completed=()))
+
+        assert stale_item.isHidden()
+        assert stale_item.parentWidget() is None
+        direct_items = window.running_task_body.findChildren(
+            TaskItemWidget,
+            options=Qt.FindChildOption.FindDirectChildrenOnly,
+        )
+        assert direct_items == []
+        labels = [label.text() for label in window.running_task_body.findChildren(QLabel)]
+        assert "暂无任务" not in labels
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_single_click_views_tasks(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        viewed: list[str] = []
+        monkeypatch.setattr(window, "_view_task", lambda task: viewed.append(task.task_id))
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="运行中任务",
+                ),
+            ),
+            queued=(
+                AppTask(
+                    task_id="queued-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.QUEUED,
+                    stage=TaskStage.WAITING,
+                    title="排队任务",
+                ),
+            ),
+            completed=(
+                AppTask(
+                    task_id="done-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.COMPLETED,
+                    stage=TaskStage.COMPLETED,
+                    title="完成任务",
+                ),
+            ),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        for layout in (window.running_task_list, window.queued_task_list, window.completed_task_list):
+            widget = layout.itemAt(0).widget()
+            QTest.mouseClick(widget, Qt.LeftButton, pos=widget.rect().center())
+            app.processEvents()
+
+        assert viewed == ["running-1", "queued-1", "done-1"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_action_button_click_does_not_view_recording_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        shown: list[bool] = []
+        monkeypatch.setattr(window, "show_recording_dialog", lambda: shown.append(True))
+        snapshot = TaskSnapshot(
+            running=(),
+            queued=(),
+            completed=(
+                AppTask(
+                    task_id="cancelled-recording",
+                    kind=TaskKind.RECORDING,
+                    status=TaskStatus.CANCELLED,
+                    stage=TaskStage.CANCELLED,
+                    title="录音_会议",
+                    message="已取消录音",
+                ),
+            ),
+        )
+
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        completed_item = window.completed_task_list.itemAt(0).widget()
+        retry_button = next(button for button in completed_item.findChildren(QToolButton) if button.toolTip() == "重试")
+        QTest.mouseClick(retry_button, Qt.LeftButton, pos=retry_button.rect().center())
+        app.processEvents()
+
+        assert shown == []
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_task_move_out_keeps_record_and_marks_completed(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        task = AppTask(
+            task_id="queued-1",
+            kind=TaskKind.PROCESS_RECORD,
+            status=TaskStatus.QUEUED,
+            stage=TaskStage.WAITING,
+            record_key=record.record_key,
+            notebook_id=record.notebook_id,
+            record_id=record.record_id,
+            title=record.display_name,
+            message="等待处理",
+        )
+        window.task_manager.load_tasks([task])
+        app.processEvents()
+
+        queued_item = window.queued_task_list.itemAt(0).widget()
+        button = next(button for button in queued_item.findChildren(QToolButton) if button.toolTip() == "移出队列但保留记录")
+        button.click()
+        app.processEvents()
+
+        assert window.task_manager.snapshot().queued == ()
+        completed = window.task_manager.snapshot().completed
+        assert len(completed) == 1
+        assert completed[0].status is TaskStatus.CANCELLED
+        assert completed[0].message == "从排队列表中移出"
+        assert record.record_dir.exists()
+        completed_item = window.completed_task_list.itemAt(0).widget()
+        assert any(label.text() == "从排队列表中移出" for label in completed_item.findChildren(QLabel))
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_task_delete_removes_task_and_record_after_confirm(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        source = tmp_path / "audio.wav"
+        write_wav(source)
+        record = window.history_service.adopt_audio_file(source)
+        record_dir = record.record_dir
+        task = AppTask(
+            task_id="queued-1",
+            kind=TaskKind.PROCESS_RECORD,
+            status=TaskStatus.QUEUED,
+            stage=TaskStage.WAITING,
+            record_key=record.record_key,
+            notebook_id=record.notebook_id,
+            record_id=record.record_id,
+            title=record.display_name,
+            message="等待处理",
+        )
+        confirmations: list[tuple[str, str, str]] = []
+
+        def fake_confirm(parent, title, text, confirm_text="确认", cancel_text="取消"):
+            confirmations.append((title, text, confirm_text))
+            return True
+
+        monkeypatch.setattr("src.handlers.task_queue.confirm_without_icon", fake_confirm)
+        window.task_manager.load_tasks([task])
+        app.processEvents()
+
+        queued_item = window.queued_task_list.itemAt(0).widget()
+        button = next(button for button in queued_item.findChildren(QToolButton) if button.toolTip() == "移出队列并删除记录文件")
+        button.click()
+        app.processEvents()
+
+        assert confirmations == [
+            (
+                "删除任务和记录",
+                "删除该任务和对应历史记录？\n本地导入的原始文件不会被删除；录音或远程导入生成的应用内音频会随历史记录删除。",
+                "删除",
+            )
+        ]
+        assert window.task_manager.snapshot().queued == ()
+        assert not record_dir.exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_task_delete_missing_record_shows_error_and_removes_task(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        task = AppTask(
+            task_id="queued-missing",
+            kind=TaskKind.PROCESS_RECORD,
+            status=TaskStatus.QUEUED,
+            stage=TaskStage.WAITING,
+            record_key="default:missing",
+            notebook_id="default",
+            record_id="missing",
+            title="已删除记录",
+            message="等待处理",
+        )
+        errors: list[str] = []
+        monkeypatch.setattr(window, "_show_error", lambda message: errors.append(message))
+        window.task_manager.load_tasks([task])
+        app.processEvents()
+
+        queued_item = window.queued_task_list.itemAt(0).widget()
+        button = next(button for button in queued_item.findChildren(QToolButton) if button.toolTip() == "移出队列并删除记录文件")
+        button.click()
+        app.processEvents()
+
+        assert errors == ["历史记录不存在，已移出队列"]
+        assert window.task_manager.snapshot().queued == ()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_tasks_can_be_reordered_by_drop(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        tasks = [
+            AppTask(
+                task_id=task_id,
+                kind=TaskKind.PROCESS_RECORD,
+                status=TaskStatus.QUEUED,
+                stage=TaskStage.WAITING,
+                record_key=f"default:{task_id}",
+                notebook_id="default",
+                record_id=task_id,
+                title=title,
+                message="等待处理",
+            )
+            for task_id, title in (("queued-a", "A"), ("queued-b", "B"), ("queued-c", "C"))
+        ]
+        saved: list[list[str]] = []
+        monkeypatch.setattr(window.task_queue_store, "save", lambda tasks: saved.append([task.task_id for task in tasks]))
+        window.task_manager.load_tasks(tasks)
+        app.processEvents()
+
+        target = window.queued_task_list.itemAt(0).widget()
+        mime = QMimeData()
+        mime.setData("application/x-noisnote-queued-task-id", b"queued-c")
+        event = QDropEvent(
+            QPointF(target.width() / 2, 1),
+            Qt.MoveAction,
+            mime,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+
+        target.dropEvent(event)
+        app.processEvents()
+
+        assert [task.task_id for task in window.task_manager.snapshot().queued] == [
+            "queued-c",
+            "queued-a",
+            "queued-b",
+        ]
+        assert saved[-1] == ["queued-c", "queued-a", "queued-b"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_queued_tasks_can_be_reordered_from_drag_handle(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        tasks = [
+            AppTask(
+                task_id=task_id,
+                kind=TaskKind.PROCESS_RECORD,
+                status=TaskStatus.QUEUED,
+                stage=TaskStage.WAITING,
+                record_key=f"default:{task_id}",
+                notebook_id="default",
+                record_id=task_id,
+                title=title,
+                message="等待处理",
+            )
+            for task_id, title in (("queued-a", "A"), ("queued-b", "B"), ("queued-c", "C"))
+        ]
+        saved: list[list[str]] = []
+        monkeypatch.setattr(window.task_queue_store, "save", lambda tasks: saved.append([task.task_id for task in tasks]))
+        window.task_manager.load_tasks(tasks)
+        app.processEvents()
+
+        source = window.queued_task_list.itemAt(2).widget()
+        target = window.queued_task_list.itemAt(0).widget()
+        source._drag_start_pos = QPoint(0, 0)
+
+        drag_pos = target.mapToGlobal(target.rect().center())
+        assert source._start_drag_if_ready(drag_pos, Qt.LeftButton)
+        assert [task.task_id for task in window.task_manager.snapshot().queued] == [
+            "queued-a",
+            "queued-b",
+            "queued-c",
+        ]
+        assert saved == []
+        previews = [widget for widget in window.findChildren(QFrame) if widget.objectName() == "TaskDragPreview"]
+        assert len(previews) == 1
+        assert not previews[0].isHidden()
+        assert previews[0].width() <= source.width()
+        assert previews[0].findChildren(QLabel)
+        list_x = previews[0].parentWidget().mapFromGlobal(window.queued_task_body.mapToGlobal(QPoint(0, 0))).x()
+        assert previews[0].x() < list_x
+        assert list_x - previews[0].x() <= 32
+        assert previews[0].graphicsEffect().__class__.__name__ == "QGraphicsDropShadowEffect"
+        assert source.property("dragging") is True
+        assert source.isHidden()
+        placeholders = [
+            widget
+            for widget in window.queued_task_body.findChildren(QFrame)
+            if widget.objectName() == "TaskDropPlaceholder"
+        ]
+        assert len(placeholders) == 1
+        assert not placeholders[0].isHidden()
+        assert placeholders[0].height() >= source.height()
+        assert window.queued_task_list.indexOf(placeholders[0]) == 0
+        indicators = placeholders[0].findChildren(QFrame, "TaskDropIndicator")
+        assert len(indicators) == 1
+        assert not indicators[0].isHidden()
+
+        assert source._commit_drag_reorder()
+        assert previews[0].isHidden()
+        assert source.property("dragging") is False
+        assert source.isHidden()
+        assert source.parentWidget() is None
+        assert window.queued_task_list.indexOf(placeholders[0]) < 0
+
+        assert [task.task_id for task in window.task_manager.snapshot().queued] == [
+            "queued-c",
+            "queued-a",
+            "queued-b",
+        ]
+        assert not window.queued_task_list.itemAt(0).widget().isHidden()
+        assert window.queued_task_list.itemAt(0).widget().task_id == "queued-c"
+        assert saved[-1] == ["queued-c", "queued-a", "queued-b"]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_starting_new_queue_drag_hides_previous_preview(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        tasks = [
+            AppTask(
+                task_id=task_id,
+                kind=TaskKind.PROCESS_RECORD,
+                status=TaskStatus.QUEUED,
+                stage=TaskStage.WAITING,
+                record_key=f"default:{task_id}",
+                notebook_id="default",
+                record_id=task_id,
+                title=title,
+                message="等待处理",
+            )
+            for task_id, title in (("queued-a", "A"), ("queued-b", "B"), ("queued-c", "C"))
+        ]
+        window.task_manager.load_tasks(tasks)
+        app.processEvents()
+
+        first = window.queued_task_list.itemAt(0).widget()
+        second = window.queued_task_list.itemAt(1).widget()
+        target = window.queued_task_list.itemAt(2).widget()
+        drag_pos = target.mapToGlobal(target.rect().center())
+
+        first._drag_start_pos = QPoint(0, 0)
+        assert first._start_drag_if_ready(drag_pos, Qt.LeftButton)
+        second._drag_start_pos = QPoint(0, 0)
+        assert second._start_drag_if_ready(drag_pos, Qt.LeftButton)
+
+        visible_previews = [
+            widget
+            for widget in window.findChildren(QFrame)
+            if widget.objectName() == "TaskDragPreview" and not widget.isHidden()
+        ]
+        assert len(visible_previews) == 1
+        assert visible_previews[0] is second._drag_preview_widget
+        assert first.property("dragging") is False
+        assert not first.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_panel_refresh_preserves_queue_drag_preview(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        snapshot = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="运行中任务",
+                    message="正在转录",
+                    progress_percent=10,
+                ),
+            ),
+            queued=(
+                AppTask(
+                    task_id="queued-a",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.QUEUED,
+                    stage=TaskStage.WAITING,
+                    title="A",
+                ),
+                AppTask(
+                    task_id="queued-b",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.QUEUED,
+                    stage=TaskStage.WAITING,
+                    title="B",
+                ),
+            ),
+            completed=(),
+        )
+        window._refresh_task_panel(snapshot)
+        app.processEvents()
+
+        source = window.queued_task_list.itemAt(0).widget()
+        target = window.queued_task_list.itemAt(1).widget()
+        source._drag_start_pos = QPoint(0, 0)
+        assert source._start_drag_if_ready(target.mapToGlobal(target.rect().center()), Qt.LeftButton)
+
+        refreshed = TaskSnapshot(
+            running=(
+                AppTask(
+                    task_id="running-1",
+                    kind=TaskKind.PROCESS_RECORD,
+                    status=TaskStatus.RUNNING,
+                    stage=TaskStage.TRANSCRIBING,
+                    title="运行中任务",
+                    message="正在转录",
+                    progress_percent=60,
+                ),
+            ),
+            queued=snapshot.queued,
+            completed=(),
+        )
+        window._refresh_task_panel(refreshed)
+        app.processEvents()
+
+        assert window.queued_task_list.indexOf(source) >= 0
+        assert source.property("dragging") is True
+        assert source.isHidden()
+        visible_previews = [
+            widget
+            for widget in window.findChildren(QFrame)
+            if widget.objectName() == "TaskDragPreview" and not widget.isHidden()
+        ]
+        assert len(visible_previews) == 1
+        visible_placeholders = [
+            widget
+            for widget in window.queued_task_body.findChildren(QFrame)
+            if widget.objectName() == "TaskDropPlaceholder" and not widget.isHidden()
+        ]
+        assert len(visible_placeholders) == 1
+        running_item = window.running_task_list.itemAt(0).widget()
+        assert any(label.text() == "转录中" for label in running_item.findChildren(QLabel))
+        assert running_item.findChild(QProgressBar, "TaskProgressBar").value() == 65
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_task_items_highlight_blue_border_on_hover() -> None:
+    assert "QFrame#TaskItem:hover {\n    border: 2px solid #2563eb;\n}" in APP_STYLESHEET
+
+
+def test_task_drop_indicator_uses_blue_line_style() -> None:
+    assert "QFrame#TaskDropPlaceholder" in APP_STYLESHEET
+    assert "QFrame#TaskDropIndicator" in APP_STYLESHEET
+    assert "background: #2563eb" in APP_STYLESHEET
+    assert "min-height: 3px" in APP_STYLESHEET
+
+
+def test_task_panel_sections_can_collapse_and_keep_state_on_refresh(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(monkeypatch, tmp_path)
+    try:
+        assert not window.queued_task_body.isHidden()
+
+        window.queued_task_title.click()
+        app.processEvents()
+
+        assert window.queued_task_body.isHidden()
+        window._refresh_task_panel(window.task_manager.snapshot())
+        app.processEvents()
+
+        assert window.queued_task_body.isHidden()
+        assert window.queued_task_title.text().startswith("排队中")
+    finally:
+        window.close()
+        app.processEvents()

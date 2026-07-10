@@ -8,6 +8,7 @@ from ..audio.preprocess import SilenceDetectionResult, detect_silence
 from ..ui.widgets.dialogs import confirm_without_icon
 from ..utils.logging import file_context, log_event, record_context
 from ..history.service import HistoryRecord
+from ..tasks import TaskStage
 from ..workers.transcription import TranscriptionWorker
 from ..asr.engine import TranscriptionProgress
 
@@ -87,21 +88,43 @@ class TranscriptionHandlers:
         )
 
         worker = TranscriptionWorker(str(audio_file), self)
+        self.transcription_worker = worker
         worker.progress.connect(self._on_transcription_progress)
         worker.completed.connect(self._on_transcription_completed)
         worker.failed.connect(self._on_transcription_failed)
+        worker.cancelled.connect(self._on_transcription_cancelled)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         self.active_workers.append(worker)
         worker.start()
 
     def _on_transcription_progress(self, progress: object) -> None:
+        active_task = getattr(self, "current_processing_task", None)
+        if active_task is not None and active_task.task_id in getattr(self, "_cancelled_processing_task_ids", set()):
+            return
         if isinstance(progress, TranscriptionProgress):
-            self.latest_transcription_percent = progress.percent
+            is_loading_model = progress.stage == "loading_asr_model"
+            if not is_loading_model:
+                self.latest_transcription_percent = progress.percent
+            if hasattr(self, "_sync_running_task_stage"):
+                self._sync_running_task_stage(
+                    TaskStage.TRANSCRIBING,
+                    "正在加载ASR模型" if is_loading_model else "转录中",
+                    None if is_loading_model else progress.percent,
+                )
+        elif isinstance(progress, str) and hasattr(self, "_sync_running_task_stage"):
+            message = progress.strip() or "正在转录"
+            is_loading_model = "加载" in message and "模型" in message
+            self._sync_running_task_stage(
+                TaskStage.TRANSCRIBING,
+                "正在加载ASR模型" if is_loading_model else "转录中",
+                None if is_loading_model else self.latest_transcription_percent,
+            )
         if self._is_current_record_processing():
             self._sync_detail_processing_view()
         self._refresh_history_status_indicators()
 
     def _on_transcription_completed(self, text: str, diagnostics: dict | None = None) -> None:
+        self.transcription_worker = None
         record = self.processing_record
         if not text.strip():
             self._on_transcription_failed("未识别到有效语音内容", diagnostics)
@@ -147,12 +170,15 @@ class TranscriptionHandlers:
                 "asr": self._asr_processing_context(diagnostics),
             },
         )
-        if text.strip() and self.config["audio"].get("auto_summarize", True):
+        if text.strip() and self._current_task_auto_summarize_enabled():
             self.start_summarization(text, record)
         else:
             self._finish_processing(record, "转录完成")
+            if getattr(self, "current_processing_task", None):
+                self._finish_queue_task_success("转录完成")
 
     def _on_transcription_failed(self, error: str, diagnostics: dict | None = None) -> None:
+        self.transcription_worker = None
         record = self.processing_record
         was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
         error = self._normalize_transcription_error(error)
@@ -203,13 +229,77 @@ class TranscriptionHandlers:
             self.load_recordings()
             if was_selected:
                 self._select_record_by_key(record.record_key)
-        dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
-        if dialog_message:
-            self._show_error(dialog_message)
-        elif error == "未识别到有效语音内容":
-            self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
+        is_queue_task = self._active_queue_task() is not None
+        pause_queue = is_queue_task and self._is_systemic_transcription_error(error, diagnostics)
+        if not is_queue_task:
+            dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
+            if dialog_message:
+                self._show_error(dialog_message)
+            elif error == "未识别到有效语音内容":
+                self._set_status("未识别到有效语音内容，请换一段有声音的音频后重试。")
+            else:
+                self._show_error("转录失败，请查看日志或尝试更换设备。")
+        elif pause_queue:
+            dialog_message = self._transcription_failure_dialog_message(error, diagnostics)
+            if self.task_manager.snapshot().queued:
+                dialog_message = f"{dialog_message}\n\n修复后可手动恢复排队任务。"
+            self._show_error(dialog_message or "转录失败，请修复 ASR 配置后重试。")
         else:
-            self._show_error("转录失败，请查看日志或尝试更换设备。")
+            self._set_status(f"任务失败：{error}")
+        if is_queue_task:
+            self._finish_queue_task_failed(error, pause_queue=pause_queue)
+
+    def _on_transcription_cancelled(self, message: str, diagnostics: dict | None = None) -> None:
+        self.transcription_worker = None
+        record = self.processing_record
+        was_selected = bool(record and self.current_record and self.current_record.record_key == record.record_key)
+        task_id = self.active_task_ids.pop("transcription", "")
+        log_event(
+            "asr.transcribe.cancelled",
+            level="WARNING",
+            module="asr",
+            message="音频转录已取消",
+            task_id=task_id,
+            record_id=(record.record_id if record else None),
+            context={
+                "record": record_context(record),
+                "diagnostics": diagnostics or {},
+            },
+        )
+        self.is_processing = False
+        self.processing_source = None
+        self.processing_record = None
+        self.latest_transcription_percent = None
+        if was_selected:
+            self.transcript_status.setText(message or "已取消转录")
+            if hasattr(self, "_refresh_detail_payload"):
+                self._refresh_detail_payload()
+        self.record_button.setText("开始录音")
+        self.recording_hint_label.setText("转录已取消，可重新创建录音")
+        self._set_processing_ui(False)
+        self._update_recording_entry()
+        if record:
+            record = self.history_service.mark_error(
+                record,
+                message or "已取消转录",
+                step="transcription",
+                elapsed_seconds=self._elapsed_seconds("transcription"),
+            )
+            if diagnostics:
+                record = self.history_service.save_asr_metadata(record, diagnostics)
+            self.load_recordings()
+            if was_selected:
+                self._select_record_by_key(record.record_key)
+        if getattr(self, "current_processing_task", None):
+            task = self.current_processing_task
+            if hasattr(self, "_cancelled_processing_task_ids"):
+                self._cancelled_processing_task_ids.discard(task.task_id)
+            self.current_processing_task = None
+            self.task_manager.cancel_running(task.task_id, message or "已取消转录")
+            self._persist_queued_tasks()
+            self._start_next_processing_task()
+            return
+        self._set_status(message or "已取消转录")
 
     def _transcription_failure_dialog_message(self, error: str, diagnostics: dict | None = None) -> str:
         error_type = str(((diagnostics or {}).get("error") or {}).get("error_type") or "")
@@ -240,11 +330,19 @@ class TranscriptionHandlers:
             return "未识别到有效语音内容"
         return value
 
+    def _is_systemic_transcription_error(self, error: str, diagnostics: dict | None = None) -> bool:
+        error_type = str(((diagnostics or {}).get("error") or {}).get("error_type") or "")
+        return error_type in {
+            "MissingModelDirectory",
+            "MissingModelFile",
+            "MissingGgufToolDir",
+            "MissingRuntimeDependency",
+            "InvalidModelName",
+            "InvalidAsrModel",
+        } or "模型未下载" in error or "运行时依赖" in error
+
     def retry_transcription(self) -> None:
         """重新转录当前历史记录中的录音文件。"""
-        if self.is_processing:
-            self._show_error("正在处理中，请稍后重试")
-            return
         if not self.current_record:
             self._show_error("请先选择一条历史记录")
             return
@@ -254,15 +352,14 @@ class TranscriptionHandlers:
         if self.current_record.has_transcript and not self._confirm_retranscription(self.current_record):
             self._set_status("已取消重新转录")
             return
-        if self.current_record.has_transcript:
-            try:
-                self.current_record = self.history_service.clear_generated_results(self.current_record)
-            except Exception as exc:
-                self._show_error(f"清理旧结果失败：{exc}")
-                return
-            self.load_recordings()
-            self._select_record_by_key(self.current_record.record_key)
-        self.start_transcription(self.current_record.audio_path, self.current_record, source="manual")
+        task = self.enqueue_record_processing(
+            self.current_record,
+            source="manual",
+            overwrite_existing=True,
+            manual=True,
+        )
+        if task is not None:
+            self._set_status("已加入处理队列")
 
     def _confirm_retranscription(self, record: HistoryRecord) -> bool:
         """确认重新转录会覆盖当前生成结果。"""

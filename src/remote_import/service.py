@@ -1,6 +1,7 @@
 """远程链接导入主流程。"""
 from __future__ import annotations
 
+from inspect import signature
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,6 @@ class RemoteImportService:
         subtitle_error: str = ""
         if subtitle:
             try:
-                _emit(progress_callback, "正在下载字幕", 30)
                 raw_suffix = f".{subtitle.extension.lower().lstrip('.') or 'vtt'}"
                 raw_path = record.record_dir / f"external_subtitle.raw{raw_suffix}"
                 self.client.download_subtitle(subtitle, raw_path)
@@ -58,7 +58,7 @@ class RemoteImportService:
                 metadata = _remote_metadata(info, "subtitle", subtitle)
                 self.history_service.save_remote_metadata(record, metadata)
                 refreshed = self.history_service.mark_processing_completed(record, "transcription", context=metadata)
-                _emit(progress_callback, "字幕已导入", 100)
+                _emit(progress_callback, "提取字幕中", 100)
                 return RemoteImportResult(
                     mode="subtitle",
                     record=refreshed,
@@ -70,12 +70,13 @@ class RemoteImportService:
             except Exception as exc:
                 subtitle_error = str(exc)
                 _cleanup_failed_subtitle_import(record, raw_path, record.external_subtitle_path)
-                _emit(progress_callback, "字幕下载失败，正在下载音频", 35)
 
         if not subtitle:
-            _emit(progress_callback, "未找到字幕，正在下载音频", 25)
+            _emit(progress_callback, "下载音频中", 0)
+        elif subtitle_error:
+            _emit(progress_callback, "下载音频中", 0)
         try:
-            downloaded_audio = self.client.download_audio(info, record.record_dir)
+            downloaded_audio = _download_audio_with_progress(self.client, info, record.record_dir, progress_callback)
             preprocessing = (self.config or {}).get("audio", {}).get("preprocessing", {})
             request = AudioPreprocessRequest(
                 source_path=downloaded_audio,
@@ -84,7 +85,15 @@ class RemoteImportService:
                 target_sample_rate=int(preprocessing.get("target_sample_rate") or 16000),
                 target_channels=int(preprocessing.get("target_channels") or 1),
             )
-            result = normalize_audio(request, progress_callback=progress_callback, config=self.config)
+            result = normalize_audio(
+                request,
+                progress_callback=lambda text, percent=None: _emit(
+                    progress_callback,
+                    "下载音频中",
+                    _scale_percent(percent, 80, 100),
+                ),
+                config=self.config,
+            )
         except AudioInputError as exc:
             raise RemoteImportError(RemoteImportErrorKind.FFMPEG_FAILED, message_for_kind(RemoteImportErrorKind.FFMPEG_FAILED), exc.details) from exc
         except Exception as exc:
@@ -108,7 +117,7 @@ class RemoteImportService:
             metadata=metadata,
         )
         _cleanup_downloaded_audio(downloaded_audio, record.record_dir, audio_path)
-        _emit(progress_callback, "音频已导入", 100)
+        _emit(progress_callback, "下载音频中", 100)
         return RemoteImportResult(mode="audio", record=refreshed, audio_path=audio_path, metadata=metadata)
 
 
@@ -145,6 +154,26 @@ def _remote_metadata(info: RemoteMediaInfo, strategy: str, subtitle: Any | None)
 def _emit(callback, text: str, percent: int | None = None) -> None:
     if callback:
         callback(text, percent)
+
+
+def _download_audio_with_progress(client: YtDlpClient, info: RemoteMediaInfo, target_dir: Path, progress_callback=None) -> Path:
+    def download_progress(_text: str, percent: int | None = None) -> None:
+        _emit(progress_callback, "下载音频中", _scale_percent(percent, 0, 80))
+
+    try:
+        params = signature(client.download_audio).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "progress_callback" in params:
+        return client.download_audio(info, target_dir, progress_callback=download_progress)
+    return client.download_audio(info, target_dir)
+
+
+def _scale_percent(percent: int | None, start: int, end: int) -> int:
+    if percent is None:
+        return start
+    clamped = max(0, min(100, int(percent)))
+    return max(0, min(100, int(round(start + (end - start) * clamped / 100))))
 
 
 def _cleanup_failed_subtitle_import(record: HistoryRecord, *paths: Path) -> None:

@@ -69,7 +69,6 @@ class TranscriptionEngine:
         audio_path = Path(audio_file)
         reporter = ProgressReporter(on_progress, _wav_duration(audio_path))
         try:
-            reporter.emit("preparing_audio", 0, "准备音频", 0.0)
             if not self.is_loaded:
                 self.load_model(reporter.emit_text)
             if self.runtime is None:
@@ -78,9 +77,7 @@ class TranscriptionEngine:
                     "runtime is None after load_model",
                     "RuntimeNotInitialized",
                 )
-            reporter.emit("transcribing", 15, "正在转录 15%", 0.0)
             result = self.runtime.transcribe(audio_file, reporter.emit_text)
-            reporter.emit("writing_result", 95, "写入结果", reporter.total_seconds)
             self.last_diagnostics = result.diagnostics
             reporter.emit("completed", 100, "转录完成", reporter.total_seconds)
             return result.text

@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ class TranscriptionWorker(QThread):
     progress = Signal(object)
     completed = Signal(str, object)
     failed = Signal(str, object)
+    cancelled = Signal(str, object)
 
     def __init__(self, audio_file: str, parent=None):
         super().__init__(parent)
@@ -27,7 +29,25 @@ class TranscriptionWorker(QThread):
         self.process: subprocess.Popen[str] | None = None
         self._completed = False
         self._failed = False
+        self._terminal_signal_emitted = False
+        self.cancel_requested = False
         self._output_tail: deque[str] = deque(maxlen=30)
+        self._process_lock = threading.Lock()
+
+    def request_cancel(self) -> None:
+        with self._process_lock:
+            self.cancel_requested = True
+            process = self.process
+        if process is None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def run(self) -> None:
         command = _asr_worker_command(self.audio_file)
@@ -45,20 +65,30 @@ class TranscriptionWorker(QThread):
             creationflags = _hidden_creationflags()
             if creationflags:
                 popen_kwargs["creationflags"] = creationflags
-            self.process = subprocess.Popen(
-                command,
-                **popen_kwargs,
-            )
+            with self._process_lock:
+                if self.cancel_requested:
+                    self._emit_cancelled("已取消转录", {"cancelled": True})
+                    return
+                self.process = subprocess.Popen(
+                    command,
+                    **popen_kwargs,
+                )
             # 记录启动信息用于诊断
             self._output_tail.append(f"[cmd] {' '.join(command)}")
             self._read_worker_output()
             exit_code = self.process.wait()
-            if not self._completed and not self._failed:
-                self.failed.emit(_crash_message(exit_code), _crash_diagnostics(exit_code, self._output_tail))
+            if self.cancel_requested:
+                self._emit_cancelled("已取消转录", {"cancelled": True})
+            elif not self._completed and not self._failed:
+                self._emit_failed(_crash_message(exit_code), _crash_diagnostics(exit_code, self._output_tail))
         except Exception as exc:
-            self.failed.emit(str(exc), {})
+            if self.cancel_requested:
+                self._emit_cancelled("已取消转录", {"cancelled": True})
+            else:
+                self._emit_failed(str(exc), {})
         finally:
-            self.process = None
+            with self._process_lock:
+                self.process = None
 
     def _read_worker_output(self) -> None:
         if not self.process or not self.process.stdout:
@@ -91,12 +121,30 @@ class TranscriptionWorker(QThread):
             self.progress.emit(str(payload.get("message") or ""))
             return
         if kind == "completed":
-            self._completed = True
-            self.completed.emit(str(payload.get("text") or ""), payload.get("diagnostics") or {})
+            self._emit_completed(str(payload.get("text") or ""), payload.get("diagnostics") or {})
             return
         if kind == "failed":
-            self._failed = True
-            self.failed.emit(str(payload.get("error") or "转录失败"), payload.get("diagnostics") or {})
+            self._emit_failed(str(payload.get("error") or "转录失败"), payload.get("diagnostics") or {})
+
+    def _emit_completed(self, text: str, diagnostics: dict[str, Any]) -> None:
+        if self._terminal_signal_emitted:
+            return
+        self._completed = True
+        self._terminal_signal_emitted = True
+        self.completed.emit(text, diagnostics)
+
+    def _emit_failed(self, error: str, diagnostics: dict[str, Any]) -> None:
+        if self._terminal_signal_emitted:
+            return
+        self._failed = True
+        self._terminal_signal_emitted = True
+        self.failed.emit(error, diagnostics)
+
+    def _emit_cancelled(self, message: str, diagnostics: dict[str, Any]) -> None:
+        if self._terminal_signal_emitted or self._completed or self._failed:
+            return
+        self._terminal_signal_emitted = True
+        self.cancelled.emit(message, diagnostics)
 
 
 def _asr_worker_command(audio_file: str) -> list[str]:
